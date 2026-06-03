@@ -46,18 +46,19 @@ function showWildcardFlyout(anchorEl, keys, onPick) {
   fly.className = "db-wc-flyout";
   fly.style.cssText =
     "position:fixed;z-index:10000;background:#1a1320;border:1px solid #3a2a48;" +
-    "border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);" +
-    "width:240px;max-height:320px;display:flex;flex-direction:column;gap:6px;";
+    "border-radius:8px;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.6);" +
+    "width:300px;max-height:420px;display:flex;flex-direction:column;gap:8px;" +
+    "font-family:'Segoe UI',Arial,sans-serif;";
 
   const search = document.createElement("input");
   search.placeholder = "Filter wildcards…";
   search.style.cssText =
-    "background:#0d0a12;border:1px solid #3a2a48;border-radius:6px;color:#eee;" +
-    "padding:6px 8px;font-size:12px;outline:none;";
+    "background:#0d0a12;border:1px solid #3a2a48;border-radius:6px;color:#fff;" +
+    "padding:8px 10px;font-size:14px;outline:none;";
   fly.appendChild(search);
 
   const list = document.createElement("div");
-  list.style.cssText = "overflow-y:auto;display:flex;flex-direction:column;gap:2px;";
+  list.style.cssText = "overflow-y:auto;display:flex;flex-direction:column;gap:3px;";
   fly.appendChild(list);
 
   function render(filter) {
@@ -75,18 +76,19 @@ function showWildcardFlyout(anchorEl, keys, onPick) {
       const row = document.createElement("div");
       row.textContent = `__${k}__`;
       row.style.cssText =
-        "color:#e9d7f5;font-size:12px;padding:5px 8px;border-radius:5px;cursor:pointer;" +
+        "color:#ffffff;font-size:14px;font-weight:600;line-height:1.5;padding:8px 10px;" +
+        "border-radius:5px;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,.8);" +
         "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-      row.addEventListener("mouseenter", () => row.style.background = "#2a1d38");
-      row.addEventListener("mouseleave", () => row.style.background = "transparent");
+      row.addEventListener("mouseenter", () => { row.style.background = "#4a3568"; });
+      row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
       row.addEventListener("click", () => { onPick(`__${k}__`); close(); });
       list.appendChild(row);
     });
   }
 
   const r = anchorEl.getBoundingClientRect();
-  fly.style.left = `${Math.min(r.left, window.innerWidth - 252)}px`;
-  fly.style.top  = `${Math.min(r.bottom + 4, window.innerHeight - 332)}px`;
+  fly.style.left = `${Math.min(r.left, window.innerWidth - 312)}px`;
+  fly.style.top  = `${Math.min(r.bottom + 4, window.innerHeight - 432)}px`;
 
   function close() { fly.remove(); document.removeEventListener("mousedown", onDoc, true); }
   function onDoc(e) { if (!fly.contains(e.target) && e.target !== anchorEl) close(); }
