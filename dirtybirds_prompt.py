@@ -182,7 +182,11 @@ class DirtyBirdsPrompt:
                 # reroll_each_run is off. A plain widget, so it stays typeable
                 # and can be right-click "Convert to input" if upstream control
                 # is ever wanted.
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                # control_after_generate is disabled: ComfyUI auto-adds it to any
+                # INT widget named "seed", but reroll_each_run already covers the
+                # random/fixed choice, so the dropdown would be redundant.
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff,
+                                 "control_after_generate": False}),
                 # When on, wildcards re-roll randomly every run (ignores seed).
                 # When off, the seed above gives a fixed, reproducible roll.
                 "reroll_each_run": ("BOOLEAN", {"default": True}),
