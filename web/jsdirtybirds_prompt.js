@@ -1,16 +1,19 @@
 /**
  * DirtyBirds Playhouse – Prompt (Dirty Talk) Node UI
  *
- * Native positive / negative multiline widgets + a "Load Wildcards" button that
- * lists wildcard keys (from the node's wildcards/*.yaml folder, expanded by
- * the pack's built-in processor) and inserts __key__ tokens at the cursor. After a run
- * the resolved (wildcard-expanded) prompts are shown in a read-only preview.
+ * Native positive / negative multiline widgets + a "Load Wildcards" button.
+ * Clicking it opens a native LiteGraph context menu listing wildcard keys from
+ * the node's wildcards/*.yaml folder; picking one inserts a __key__ token at
+ * the cursor of the last focused prompt box. The menu is drawn by ComfyUI
+ * itself (not a custom DOM flyout), so it stays legible and zoom-aware.
  */
 
 import { app } from "../../../scripts/app.js";
 import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel } from "./db_shared.js";
 
 ensureStylesheet();
+
+const REFRESH = "🔄  Refresh list";
 
 // Resolve the underlying <textarea> for a multiline STRING widget across
 // ComfyUI versions (element may be the textarea or a wrapper containing one).
@@ -36,68 +39,6 @@ function insertAtCursor(textarea, widget, token) {
   textarea.setSelectionRange(caret, caret);
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
   textarea.focus();
-}
-
-// Simple searchable flyout listing wildcard keys.
-function showWildcardFlyout(anchorEl, keys, onPick) {
-  document.querySelector(".db-wc-flyout")?.remove();
-
-  const fly = document.createElement("div");
-  fly.className = "db-wc-flyout";
-  fly.style.cssText =
-    "position:fixed;z-index:10000;background:#1a1320;border:1px solid #3a2a48;" +
-    "border-radius:8px;padding:8px;box-shadow:0 8px 24px rgba(0,0,0,.6);" +
-    "width:300px;max-height:420px;display:flex;flex-direction:column;gap:8px;" +
-    "font-family:'Segoe UI',Arial,sans-serif;";
-
-  const search = document.createElement("input");
-  search.placeholder = "Filter wildcards…";
-  search.style.cssText =
-    "background:#0d0a12;border:1px solid #3a2a48;border-radius:6px;color:#fff;" +
-    "padding:8px 10px;font-size:14px;outline:none;";
-  fly.appendChild(search);
-
-  const list = document.createElement("div");
-  list.style.cssText = "overflow-y:auto;display:flex;flex-direction:column;gap:3px;";
-  fly.appendChild(list);
-
-  function render(filter) {
-    list.innerHTML = "";
-    const f = (filter || "").toLowerCase();
-    const shown = keys.filter(k => k.includes(f));
-    if (!shown.length) {
-      const empty = document.createElement("div");
-      empty.textContent = keys.length ? "No matches" : "No wildcards found";
-      empty.style.cssText = "color:#777;font-size:12px;padding:6px;font-style:italic;";
-      list.appendChild(empty);
-      return;
-    }
-    shown.forEach(k => {
-      const row = document.createElement("div");
-      row.textContent = `__${k}__`;
-      row.style.cssText =
-        "color:#ffffff;font-size:14px;font-weight:600;line-height:1.5;padding:8px 10px;" +
-        "border-radius:5px;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,.8);" +
-        "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-      row.addEventListener("mouseenter", () => { row.style.background = "#4a3568"; });
-      row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
-      row.addEventListener("click", () => { onPick(`__${k}__`); close(); });
-      list.appendChild(row);
-    });
-  }
-
-  const r = anchorEl.getBoundingClientRect();
-  fly.style.left = `${Math.min(r.left, window.innerWidth - 312)}px`;
-  fly.style.top  = `${Math.min(r.bottom + 4, window.innerHeight - 432)}px`;
-
-  function close() { fly.remove(); document.removeEventListener("mousedown", onDoc, true); }
-  function onDoc(e) { if (!fly.contains(e.target) && e.target !== anchorEl) close(); }
-
-  search.addEventListener("input", () => render(search.value));
-  document.body.appendChild(fly);
-  document.addEventListener("mousedown", onDoc, true);
-  render("");
-  setTimeout(() => search.focus(), 10);
 }
 
 app.registerExtension({
@@ -140,28 +81,83 @@ app.registerExtension({
         if (ta) ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
       });
 
-      // ── "Load Wildcards" button (DOM widget) ─────────────────────────────
+      // ── "Load Wildcards" button → native LiteGraph context menu ──────────
+      node._dbWildcardKeys = [];
+
+      function insertKey(key) {
+        const target = node._dbLastPromptWidget || posWidget;
+        insertAtCursor(getTextarea(target), target, `__${key}__`);
+      }
+
+      // Build a nested tree from "parent/child/leaf" keys so the menu can show
+      // them as cascading submenus instead of long flat tokens.
+      function buildTree(keys) {
+        const root = { children: {} };
+        for (const key of keys) {
+          let cur = root;
+          const parts = key.split("/");
+          parts.forEach((p, i) => {
+            cur.children[p] = cur.children[p] || { children: {} };
+            cur = cur.children[p];
+            if (i === parts.length - 1) cur.key = key;  // leaf -> full token
+          });
+        }
+        return root;
+      }
+
+      // Turn a tree node into LiteGraph context-menu options (recursive).
+      function toItems(treeNode) {
+        return Object.keys(treeNode.children).sort().map(name => {
+          const child = treeNode.children[name];
+          const hasChildren = Object.keys(child.children).length > 0;
+          if (hasChildren) {
+            const options = toItems(child);
+            // A branch that is ALSO a wildcard itself gets a "(use this)" entry.
+            if (child.key) {
+              options.unshift({ content: "↳ use this", callback: () => insertKey(child.key) });
+            }
+            return { content: name, has_submenu: true, submenu: { options } };
+          }
+          return { content: name, callback: () => insertKey(child.key) };
+        });
+      }
+
+      function openMenu(event) {
+        const items = [
+          { content: REFRESH, callback: () => loadWildcards() },
+          null, // separator
+          ...toItems(buildTree(node._dbWildcardKeys)),
+        ];
+        if (!node._dbWildcardKeys.length) {
+          items.push({ content: "(no wildcards found)", disabled: true });
+        }
+        new LiteGraph.ContextMenu(items, {
+          event,
+          title: `🎲 Wildcards (${node._dbWildcardKeys.length})`,
+          scale: Math.max(1, app.canvas?.ds?.scale || 1),
+        });
+      }
+
       const btn = document.createElement("button");
       btn.className = "db-lib-btn db-lora-add-open-btn";
       btn.textContent = "🎲  Load Wildcards";
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
-      btn.addEventListener("click", async () => {
-        const data = await fetchJSON("/dirtybirds/wildcards");
-        const keys = data?.keys || [];
-        showWildcardFlyout(btn, keys, (token) => {
-          const target = node._dbLastPromptWidget || posWidget;
-          insertAtCursor(getTextarea(target), target, token);
-        });
-      });
+      btn.addEventListener("click", (e) => openMenu(e));
       node.addDOMWidget("db_wildcard_btn", "customhtml", btn, {
         serialize: false, height: 34, getMinHeight: () => 34,
       });
 
+      async function loadWildcards() {
+        const data = await fetchJSON("/dirtybirds/wildcards");
+        node._dbWildcardKeys = data?.keys || [];
+      }
+      loadWildcards();
+
       // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [scriptLabel, btn];
       function applyWidths() {
         const w = nodeInnerW(node);
-        domEls.forEach(el => { el.style.width = w + "px"; });
+        scriptLabel.style.width = w + "px";
+        btn.style.width = w + "px";
         node.widgets.forEach(ww => {
           if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width = w + "px";
         });
