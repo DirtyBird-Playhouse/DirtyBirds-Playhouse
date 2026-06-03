@@ -1,0 +1,30 @@
+adjectives:
+  appearance: ["{1-3$$, $$playful|delicate|cute|adorable|captivating|beautiful|gorgeous|stunning}"]
+  emotional: ["{1-2$$, $$shy|embarrassed|flustered|excited|confused|confident|relaxed}"]
+  sexualize: ["{1-2$$, $$alluring|enticing|irresistible|naughty|sexy|seductive|sensual|provocative|lewd|lustful|pervert|horny}"]
+
+girl:
+  ethnicity: ["{American|European|British|Canadian|Russian|Ukrainian|Czech|Polish|German|French|Italian|Spanish|Scandinavian|East-Nordic|West-European|South-Eastern-European}"]
+  age: ["{young women age 18-23|women age 24-32}"]
+  Skin: ["smooth {tanned|fair|} skin {and soft features|}"]
+  physique: ["{1-2$$, $$fit body|toned body|petite|slender|thin|slim|delicate body|youthful body|slender, youthful build}"]
+
+hair:
+  Length: ["{long|short|medium-length}"]
+  Color: ["{blonde|brunette|redhead|black-haired|light brown-haired|dark brown-haired|auburn-haired}"]
+  Style: ["{long, flowing hair|short bob cut|shoulder-length waves|straight hair with bangs|curly locks}"]
+  Additional: ["{soft, silky texture|shiny and healthy appearance|natural highlights|well-maintained look}"]
+  Accessories: ["{ribbons|bows|headbands|hair clips|flower crowns}"]
+
+Expression:
+  facial: ["{playful and engaging expression|innocent smile|playful smirk|shy glance|flirty gaze|confident look|relaxed expression}"]
+
+clothing:
+  Tops: ["{crop top|tub-top}"]
+  Bottoms: ["{denim shorts|mini skirt}"]
+  Dress: ["{skin-tight pencil dress|body-hugging mini dress|form-fitting dress}"]
+  Hosiery: 
+    Garter_belt: ["{lace garter belt with sheer thigh-high stockings|lace lingerie (briefs/thong style) with garter straps and sheer thigh-high stockings}"]
+    Socks: ["{sheer white polka-dot ankle socks|sheer black knee-high stockings|lacy ankle socks}"]
+  Footwear: ["{clear-strap high-heeled sandals|black high-heeled pumps|classic black Mary Janes}"]
+

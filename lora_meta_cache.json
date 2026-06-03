@@ -4400,6 +4400,123 @@
     "civitai_url": "https://civitai.red/models/2016580?modelVersionId=2345800",
     "remote_done": true
   },
+  "emb::FFF_after_mating_press.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "FFF_after_mating_press"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_FFF_after_mating_press.safetensors.jpg",
+    "model_name": "After mating press",
+    "sha256": "7e50248587ed3d19768a41f0310ca3b94c41b7e8e2a76e2584075fd487a698d9",
+    "civitai_url": "https://civitai.red/models/1840899?modelVersionId=2083278",
+    "remote_done": true
+  },
+  "emb::HDASexMachineXL.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDASexMachineXL"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDASexMachineXL.safetensors.jpg",
+    "model_name": "HDASexMachineXL",
+    "sha256": "711dc2da0d76e895e1dc03f77a1b0d106627b2d3dd32460526b9697e124378e3",
+    "civitai_url": "https://civitai.red/models/920931?modelVersionId=1030820",
+    "remote_done": true
+  },
+  "emb::HDA_AssFocus_XL_v1.2.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDA_AssFocus_XL_v1.2"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_AssFocus_XL_v1.2.safetensors.jpg",
+    "model_name": "HDA_AssFocusXL",
+    "sha256": "c7271834d2edbb74ef243c4649584d221c64a3f734dafa967515e71f548437ed",
+    "civitai_url": "https://civitai.red/models/960473?modelVersionId=1181837",
+    "remote_done": true
+  },
+  "emb::HDA_Bathing_IL.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDA_Bathing_IL"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_Bathing_IL.safetensors.jpg",
+    "model_name": "HDA_Bathing_IL",
+    "sha256": "1dec58b910a771680d8f771f440db971e339800bae7055e89cc4d1e5dbf57770",
+    "civitai_url": "https://civitai.red/models/1052937?modelVersionId=1181478",
+    "remote_done": true
+  },
+  "emb::HDA_Cunnilingus_SittingOnFace_XL.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDA_Cunnilingus_SittingOnFace_XL"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_Cunnilingus_SittingOnFace_XL.safetensors.jpg",
+    "model_name": "HDA_CunnilingusXL",
+    "sha256": "0c366f877614ed106cd19e40c02c47bbece1d17b745a769e9e26fed8dcb28c80",
+    "civitai_url": "https://civitai.red/models/458721?modelVersionId=1161266",
+    "remote_done": true
+  },
+  "emb::HDA_FingeringAhegaoXL.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDA_FingeringAhegaoXL"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_FingeringAhegaoXL.safetensors.jpg",
+    "model_name": "HDA_FingeringAhegaoXL",
+    "sha256": "0f4785a8876d1b493dcf897a40e76453489d2369aab86e0c6583065796deed5f",
+    "civitai_url": "https://civitai.red/models/398886?modelVersionId=463579",
+    "remote_done": true
+  },
+  "emb::HDA_MissionaryXL_v1.2.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "HDA_MissionaryXL_v1.2"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_MissionaryXL_v1.2.safetensors.jpg",
+    "model_name": "HDA_MissionaryXL",
+    "sha256": "2a666adce4a59605c634a69cbd38645d01b03ec482e87ff803e042bca3fc7160",
+    "civitai_url": "https://civitai.red/models/412083?modelVersionId=678576",
+    "remote_done": true
+  },
+  "emb::Lighting\\ehcinematic.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "ehcinematic"
+    ],
+    "has_preview": true,
+    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_Lighting_ehcinematic.safetensors.jpg",
+    "model_name": "Cinematic Lighting",
+    "sha256": "78121db630698b37770874c3e2f80afab42b35a1c75fe59d115a5e794651af6b",
+    "civitai_url": "https://civitai.red/models/2113434?modelVersionId=2403867",
+    "remote_done": true
+  },
+  "emb::Pony\\clothing\\nsfwEMPXL.safetensors": {
+    "v": 3,
+    "resolved": true,
+    "trigger_words": [
+      "nsfwEMPXL"
+    ],
+    "has_preview": false,
+    "preview_path": null,
+    "model_name": "NSFW Embedding",
+    "sha256": "d685951548315d2de7aa2f68eeefd376d833e35c55c6cc5f7d89fde0b9c3c7f2",
+    "civitai_url": "https://civitai.red/models/74506?modelVersionId=528519",
+    "remote_done": true
+  },
   "Adult\\PovBlow.safetensors": {
     "v": 3,
     "resolved": true,
@@ -5597,123 +5714,6 @@
     "model_name": "SDXL Lightning LoRAs",
     "sha256": "5aa30d94cdf7950a8b53a693682650ee061eddb128c5435a8f88defea73b2ac6",
     "civitai_url": "https://civitai.com/models/350450?modelVersionId=391999",
-    "remote_done": true
-  },
-  "emb::FFF_after_mating_press.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "FFF_after_mating_press"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_FFF_after_mating_press.safetensors.jpg",
-    "model_name": "After mating press",
-    "sha256": "7e50248587ed3d19768a41f0310ca3b94c41b7e8e2a76e2584075fd487a698d9",
-    "civitai_url": "https://civitai.red/models/1840899?modelVersionId=2083278",
-    "remote_done": true
-  },
-  "emb::HDASexMachineXL.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDASexMachineXL"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDASexMachineXL.safetensors.jpg",
-    "model_name": "HDASexMachineXL",
-    "sha256": "711dc2da0d76e895e1dc03f77a1b0d106627b2d3dd32460526b9697e124378e3",
-    "civitai_url": "https://civitai.red/models/920931?modelVersionId=1030820",
-    "remote_done": true
-  },
-  "emb::HDA_AssFocus_XL_v1.2.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDA_AssFocus_XL_v1.2"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_AssFocus_XL_v1.2.safetensors.jpg",
-    "model_name": "HDA_AssFocusXL",
-    "sha256": "c7271834d2edbb74ef243c4649584d221c64a3f734dafa967515e71f548437ed",
-    "civitai_url": "https://civitai.red/models/960473?modelVersionId=1181837",
-    "remote_done": true
-  },
-  "emb::HDA_Bathing_IL.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDA_Bathing_IL"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_Bathing_IL.safetensors.jpg",
-    "model_name": "HDA_Bathing_IL",
-    "sha256": "1dec58b910a771680d8f771f440db971e339800bae7055e89cc4d1e5dbf57770",
-    "civitai_url": "https://civitai.red/models/1052937?modelVersionId=1181478",
-    "remote_done": true
-  },
-  "emb::HDA_Cunnilingus_SittingOnFace_XL.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDA_Cunnilingus_SittingOnFace_XL"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_Cunnilingus_SittingOnFace_XL.safetensors.jpg",
-    "model_name": "HDA_CunnilingusXL",
-    "sha256": "0c366f877614ed106cd19e40c02c47bbece1d17b745a769e9e26fed8dcb28c80",
-    "civitai_url": "https://civitai.red/models/458721?modelVersionId=1161266",
-    "remote_done": true
-  },
-  "emb::HDA_FingeringAhegaoXL.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDA_FingeringAhegaoXL"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_FingeringAhegaoXL.safetensors.jpg",
-    "model_name": "HDA_FingeringAhegaoXL",
-    "sha256": "0f4785a8876d1b493dcf897a40e76453489d2369aab86e0c6583065796deed5f",
-    "civitai_url": "https://civitai.red/models/398886?modelVersionId=463579",
-    "remote_done": true
-  },
-  "emb::HDA_MissionaryXL_v1.2.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "HDA_MissionaryXL_v1.2"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_HDA_MissionaryXL_v1.2.safetensors.jpg",
-    "model_name": "HDA_MissionaryXL",
-    "sha256": "2a666adce4a59605c634a69cbd38645d01b03ec482e87ff803e042bca3fc7160",
-    "civitai_url": "https://civitai.red/models/412083?modelVersionId=678576",
-    "remote_done": true
-  },
-  "emb::Lighting\\ehcinematic.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "ehcinematic"
-    ],
-    "has_preview": true,
-    "preview_path": "C:\\Users\\mpick\\My_AI_Tools\\My_ComfyUI\\ComfyUI\\custom_nodes\\DirtyBirds-Playhouse\\web\\previews\\emb_Lighting_ehcinematic.safetensors.jpg",
-    "model_name": "Cinematic Lighting",
-    "sha256": "78121db630698b37770874c3e2f80afab42b35a1c75fe59d115a5e794651af6b",
-    "civitai_url": "https://civitai.red/models/2113434?modelVersionId=2403867",
-    "remote_done": true
-  },
-  "emb::Pony\\clothing\\nsfwEMPXL.safetensors": {
-    "v": 3,
-    "resolved": true,
-    "trigger_words": [
-      "nsfwEMPXL"
-    ],
-    "has_preview": false,
-    "preview_path": null,
-    "model_name": "NSFW Embedding",
-    "sha256": "d685951548315d2de7aa2f68eeefd376d833e35c55c6cc5f7d89fde0b9c3c7f2",
-    "civitai_url": "https://civitai.red/models/74506?modelVersionId=528519",
     "remote_done": true
   }
 }

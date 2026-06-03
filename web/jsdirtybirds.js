@@ -12,49 +12,11 @@
 
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
+import {
+  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel,
+} from "./db_shared.js";
 
-// ── Stylesheet (idempotent) ───────────────────────────────────────────────────
-(function () {
-  const HREF = "/extensions/DirtyBirds-Playhouse/css/style.css";
-  if (!document.querySelector(`link[href="${HREF}"]`)) {
-    const link = document.createElement("link");
-    link.rel  = "stylesheet";
-    link.href = HREF;
-    document.head.appendChild(link);
-  }
-})();
-
-// ── Node theme ────────────────────────────────────────────────────────────────
-const DB_COLOR   = "#1e1328";
-const DB_BGCOLOR = "#131313";
-
-// ── Shared helpers ────────────────────────────────────────────────────────────
-
-async function fetchJSON(url) {
-  try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  } catch (e) {
-    console.error("[DirtyBirds]", e);
-    return null;
-  }
-}
-
-function nodeInnerW(node) {
-  return Math.max(100, (node.size[0] || 380) - 32);
-}
-
-// ── Section label  ─────────── TITLE ─────────────────────────────────────────
-function makeSectionLabel(text) {
-  const el = document.createElement("div");
-  el.className = "db-section-label";
-  const l = document.createElement("span"); l.className = "db-sep-line";
-  const t = document.createElement("span"); t.className = "db-sep-text"; t.textContent = text;
-  const r = document.createElement("span"); r.className = "db-sep-line";
-  el.append(l, t, r);
-  return el;
-}
+ensureStylesheet();
 
 // ── Aspect-ratio SVG visual ───────────────────────────────────────────────────
 function makeAspectSVG(w, h) {
@@ -315,7 +277,9 @@ app.registerExtension({
       const twDataWidget    = hideWidget("trigger_words_data");
       // positive / negative are intentionally left as visible native widgets
 
-      let _randomActive = false;
+      // Random resolution is stored as the sentinel "__random__" in the
+      // dimension widget so Python re-picks a fresh size on every run.
+      const RANDOM_DIM = "__random__";
 
       // ── DOM widget helpers ───────────────────────────────────────────────
       function addFixed(name, el, h) {
@@ -381,7 +345,7 @@ app.registerExtension({
         const isT2I = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
         resSelect.disabled = !isT2I;
         resSelect.classList.toggle("db-disabled", !isT2I);
-        if (_randomActive) {
+        if (dimensionWidget?.value === RANDOM_DIM) {
           resSelect.innerHTML = '<span class="db-res-sel-glyph">🎲</span>' +
             '<span class="db-res-sel-label">Random</span><span class="db-res-sel-caret">▾</span>';
           return;
@@ -397,17 +361,13 @@ app.registerExtension({
 
       resSelect.addEventListener("click", () => {
         if (resSelect.disabled) return;
-        showResolutionFlyout(dimData, dimensionKeys, dimensionWidget?.value || dimensionKeys[0],
-          _randomActive, (value) => {
-            if (value === "__random__") {
-              _randomActive = true;
-              if (dimensionWidget) {
-                dimensionWidget.value = dimensionKeys[Math.floor(Math.random()*dimensionKeys.length)];
-              }
-            } else {
-              _randomActive = false;
-              if (dimensionWidget) dimensionWidget.value = value;
-            }
+        const isRandom = dimensionWidget?.value === RANDOM_DIM;
+        showResolutionFlyout(dimData, dimensionKeys,
+          isRandom ? dimensionKeys[0] : (dimensionWidget?.value || dimensionKeys[0]),
+          isRandom, (value) => {
+            // Store the sentinel as-is so Python randomizes each run; otherwise
+            // store the chosen resolution key.
+            if (dimensionWidget) dimensionWidget.value = (value === RANDOM_DIM) ? RANDOM_DIM : value;
             refreshResSelect();
             node.setDirtyCanvas(true);
           });
@@ -416,7 +376,10 @@ app.registerExtension({
 
       function updateResolutionState() {
         const isT2I = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
-        if (!isT2I) _randomActive = false;
+        // Random only applies to Text2Image; fall back to a concrete size for I2I.
+        if (!isT2I && dimensionWidget?.value === RANDOM_DIM) {
+          dimensionWidget.value = dimensionKeys[0];
+        }
         refreshResSelect();
       }
       refreshResSelect();
@@ -490,7 +453,11 @@ app.registerExtension({
       function syncTWToLoras() {
         const alive = new Set(loraEntries.map(e=>e.name));
         const before = twEntries.length;
-        twEntries = twEntries.filter(e=>alive.has(e.lora));
+        // Mutate in place (splice) so the array reference captured by
+        // buildTWPanel's closure stays valid — reassigning would orphan it.
+        for (let i = twEntries.length - 1; i >= 0; i--) {
+          if (!alive.has(twEntries[i].lora)) twEntries.splice(i, 1);
+        }
         if (twEntries.length !== before) { serializeTW(); twPanel.refresh(); syncTalentH(); }
       }
 
@@ -616,6 +583,22 @@ app.registerExtension({
               twPanel.refresh(); syncTalentH();
             }
           } catch (e) { console.warn("[DirtyBirds] Could not restore trigger words:", e); }
+        }
+      });
+
+      // ── Prune stale outputs from older workflows ─────────────────────────
+      // The node only exposes "pipe" and "latent". Saved graphs built against
+      // earlier versions may carry extra output sockets (e.g. "lora_stack",
+      // "trigger_words"); strip them so the node matches its current def.
+      requestAnimationFrame(() => {
+        const allowed = new Set(["pipe", "basic_pipe", "latent"]);
+        if (Array.isArray(node.outputs)) {
+          for (let i = node.outputs.length - 1; i >= 0; i--) {
+            if (!allowed.has(node.outputs[i]?.name)) {
+              try { node.removeOutput(i); } catch (e) {}
+            }
+          }
+          node.setDirtyCanvas(true, true);
         }
       });
 

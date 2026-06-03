@@ -145,10 +145,19 @@ class DirtyBirdsLoader:
             }
         }
 
-    RETURN_TYPES  = ("PIPE_LINE",)
-    RETURN_NAMES  = ("pipe",)
+    RETURN_TYPES  = ("PIPE_LINE", "BASIC_PIPE", "LATENT")
+    RETURN_NAMES  = ("pipe", "basic_pipe", "latent")
     FUNCTION      = "process"
     CATEGORY      = "DirtyBirds"
+
+    @classmethod
+    def IS_CHANGED(cls, dimension="", **kwargs):
+        # Force re-execution every run when resolution is randomized so a fresh
+        # size is picked each time, rather than caching a single random result.
+        if dimension == "__random__":
+            import random
+            return random.random()
+        return dimension
 
     def process(self, workflow, ckpt_name, vae_name, positive, negative,
                 pos_embedding, neg_embedding, dimension,
@@ -160,7 +169,7 @@ class DirtyBirdsLoader:
         if ckpt_path in _CHECKPOINT_CACHE:
             model, clip, vae = _CHECKPOINT_CACHE[ckpt_path]
         else:
-            model, clip, vae = load_checkpoint_guess_config(ckpt_path)
+            model, clip, vae = load_checkpoint_guess_config(ckpt_path)[:3]
             _CHECKPOINT_CACHE[ckpt_path] = (model, clip, vae)
 
         # ── VAE override (default keeps the checkpoint's baked VAE) ──────────
@@ -169,8 +178,8 @@ class DirtyBirdsLoader:
             if loaded is not None:
                 vae = loaded
 
-        device = next(model.parameters()).device
-        dtype  = next(model.parameters()).dtype
+        device = model.load_device
+        dtype  = model.model_dtype()
 
         # ── Build combined LoRA stack ────────────────────────────────────────
         combined_stack = []
@@ -202,6 +211,25 @@ class DirtyBirdsLoader:
 
         if combined_stack:
             model, clip = apply_lora_stack(model, clip, combined_stack)
+
+        # ── Trigger words (appended to positive before encoding) ─────────────
+        try:
+            tw_entries = json.loads(trigger_words_data) if isinstance(trigger_words_data, str) else []
+        except Exception as e:
+            logger.warning("[DirtyBirds] Malformed trigger_words_data JSON, skipping: %s", e)
+            tw_entries = []
+
+        trigger_terms = []
+        for entry in tw_entries:
+            if not entry.get("active", True):
+                continue
+            text = entry.get("text", "").strip()
+            if text:
+                trigger_terms.append(text)
+
+        trigger_words = ", ".join(trigger_terms)
+        if trigger_words:
+            positive = (positive + ", " + trigger_words) if positive.strip() else trigger_words
 
         # ── Encode prompts (after LoRA so clip modifications apply) ──────────
         # Embedding widget value is "name" or "name:strength" (set from Casting Coach).
@@ -242,6 +270,10 @@ class DirtyBirdsLoader:
             dims_data = {"1024x1024": [1024, 1024]}
 
         if workflow == "Text2Image":
+            if dimension == "__random__":
+                import random
+                dimension = random.choice(list(dims_data.keys())) if dims_data else "1024x1024"
+                logger.info("[DirtyBirds] Random resolution selected: %s", dimension)
             width, height = dims_data.get(dimension, [1024, 1024])
             latent_tensor = torch.zeros([1, 4, height // 8, width // 8], device=device, dtype=dtype)
             latent = {"samples": latent_tensor}
@@ -253,19 +285,23 @@ class DirtyBirdsLoader:
             if image.ndim != 4:
                 raise ValueError("Image input must be a 4D tensor.")
 
-            if image.shape[1] in (3, 4):
-                image_tensor = image[:, :3, :, :]
-            elif image.shape[3] in (3, 4):
-                image_tensor = image.permute(0, 3, 1, 2)[:, :3, :, :]
+            # ComfyUI IMAGE tensors are channels-last [B, H, W, C]; VAE.encode
+            # expects that layout (it moves channels internally). Do NOT permute
+            # to channels-first here or encode will scramble the spatial dims.
+            if image.shape[-1] in (3, 4):
+                image_bhwc = image[..., :3]
+            elif image.shape[1] in (3, 4):
+                # Fallback: an already channels-first [B, C, H, W] tensor
+                image_bhwc = image.permute(0, 2, 3, 1)[..., :3]
             else:
                 raise ValueError("Image tensor must have 3 or 4 channels.")
 
-            image_tensor = image_tensor.to(device=device, dtype=dtype)
-            latent_tensor = vae.encode(image_tensor)
+            image_bhwc = image_bhwc.to(device=device, dtype=dtype)
+            latent_tensor = vae.encode(image_bhwc)
             latent = {"samples": latent_tensor}
-            # Approximate dimensions for loader_settings
-            height = image_tensor.shape[2]
-            width  = image_tensor.shape[3]
+            # Dimensions for loader_settings (channels-last axes)
+            height = image_bhwc.shape[1]
+            width  = image_bhwc.shape[2]
 
         # ── PIPE_LINE dict (Easy_Use compatible) ─────────────────────────────
         pipe = {
@@ -297,8 +333,12 @@ class DirtyBirdsLoader:
             },
         }
 
+        # Standard BASIC_PIPE: (model, clip, vae, positive, negative)
+        basic_pipe = (model, clip, vae, positive_cond, negative_cond)
+
         # Send executed prompt text back to the node UI ("Dirty Talk" preview)
-        return {"ui": {"db_prompts": [positive, negative]}, "result": (pipe,)}
+        return {"ui": {"db_prompts": [positive, negative]},
+                "result": (pipe, basic_pipe, latent)}
 
 
 # ---------------------------------------------------------------------------
