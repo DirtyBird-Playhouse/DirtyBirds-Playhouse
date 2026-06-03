@@ -1,0 +1,9 @@
+# Local LLM model weights — far too large for git (download/place manually)
+*.gguf
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Runtime caches
+lora_meta_cache.json

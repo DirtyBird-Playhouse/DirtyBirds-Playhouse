@@ -147,6 +147,18 @@ app.registerExtension({
         serialize: false, height: 34, getMinHeight: () => 34,
       });
 
+      // ── "Edit Wildcards" button → opens the editor page in a new tab ─────
+      const editBtn = document.createElement("button");
+      editBtn.className = "db-lib-btn db-lora-add-open-btn";
+      editBtn.textContent = "✏️  Edit Wildcards";
+      editBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      editBtn.addEventListener("click", () => {
+        window.open("/dirtybirds/wildcard-editor", "_blank", "noopener");
+      });
+      node.addDOMWidget("db_wildcard_edit_btn", "customhtml", editBtn, {
+        serialize: false, height: 34, getMinHeight: () => 34,
+      });
+
       async function loadWildcards() {
         const data = await fetchJSON("/dirtybirds/wildcards");
         node._dbWildcardKeys = data?.keys || [];
@@ -158,6 +170,7 @@ app.registerExtension({
         const w = nodeInnerW(node);
         scriptLabel.style.width = w + "px";
         btn.style.width = w + "px";
+        editBtn.style.width = w + "px";
         node.widgets.forEach(ww => {
           if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width = w + "px";
         });

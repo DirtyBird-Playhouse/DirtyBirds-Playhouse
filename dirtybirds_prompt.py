@@ -1,8 +1,10 @@
 import os
 import re
+import json
 import random
 import logging
 
+import aiohttp
 from aiohttp import web
 from server import PromptServer
 
@@ -163,6 +165,415 @@ async def get_wildcards(request):
     return web.json_response({
         "keys": _list_wildcard_keys(),
     })
+
+
+# ---------------------------------------------------------------------------
+# Wildcard editor — standalone page + file/IO + LM Studio extraction
+# Self-contained: served by ComfyUI, talks to a local OpenAI-compatible
+# endpoint (LM Studio / Ollama / etc.) over plain HTTP. No external Python deps
+# beyond PyYAML (already used by the processor).
+# ---------------------------------------------------------------------------
+
+def _safe_wildcard_path(name, must_exist=False):
+    """Resolve `name` to a path strictly inside WILDCARDS_DIR, or None.
+
+    Guards against path traversal (../, absolute paths) and limits to YAML."""
+    if not name:
+        return None
+    name = str(name).strip().replace("\\", "/").lstrip("/")
+    full = os.path.normpath(os.path.join(WILDCARDS_DIR, name))
+    base = os.path.abspath(WILDCARDS_DIR)
+    if os.path.commonpath([os.path.abspath(full), base]) != base:
+        return None
+    if os.path.splitext(full)[1].lower() not in (".yaml", ".yml"):
+        return None
+    if must_exist and not os.path.isfile(full):
+        return None
+    return full
+
+
+def _list_wildcard_files():
+    """Relative paths of every YAML file in the wildcards folder."""
+    os.makedirs(WILDCARDS_DIR, exist_ok=True)
+    out = []
+    for root, _dirs, files in os.walk(WILDCARDS_DIR, followlinks=True):
+        for f in files:
+            if f.lower().endswith((".yaml", ".yml")):
+                out.append(os.path.relpath(os.path.join(root, f), WILDCARDS_DIR).replace("\\", "/"))
+    return sorted(out)
+
+
+@PromptServer.instance.routes.get("/dirtybirds/wildcard-editor")
+async def wildcard_editor_page(request):
+    """Serve the standalone wildcard editor page."""
+    html_path = os.path.join(os.path.dirname(__file__), "web", "wildcard_editor.html")
+    if not os.path.exists(html_path):
+        return web.Response(text="wildcard_editor.html not found", status=404)
+    with open(html_path, "r", encoding="utf-8") as f:
+        return web.Response(text=f.read(), content_type="text/html")
+
+
+@PromptServer.instance.routes.get("/dirtybirds/wildcard-files")
+async def wildcard_files(request):
+    """List editable wildcard YAML files."""
+    return web.json_response({"files": _list_wildcard_files()})
+
+
+@PromptServer.instance.routes.get("/dirtybirds/wildcard-file")
+async def wildcard_file_get(request):
+    """Return the raw text of one wildcard YAML file."""
+    path = _safe_wildcard_path(request.query.get("name"), must_exist=True)
+    if not path:
+        return web.json_response({"error": "invalid or missing file"}, status=400)
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        return web.json_response({"name": request.query.get("name"), "content": f.read()})
+
+
+@PromptServer.instance.routes.post("/dirtybirds/wildcard-file")
+async def wildcard_file_save(request):
+    """Save raw text to a wildcard YAML file. Creates it (and dirs) if new.
+
+    Body: { name, content }. Validates YAML before writing."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    path = _safe_wildcard_path(data.get("name"))
+    if not path:
+        return web.json_response({"error": "invalid file name (must be a .yaml/.yml inside wildcards/)"}, status=400)
+
+    content = data.get("content", "")
+    try:
+        import yaml
+        yaml.safe_load(content or "")  # reject syntactically broken YAML
+    except Exception as e:
+        return web.json_response({"error": f"YAML error: {e}"}, status=400)
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"success": True})
+
+
+def _parse_extraction_output(raw):
+    """Parse a model's raw reply into a clean [{text, category}] list.
+
+    Tolerant of reasoning models: strips <think> blocks and markdown fences,
+    then extracts the first top-level JSON array from the text."""
+    cleaned = (raw or "")
+    # Drop <think>...</think> reasoning blocks (Qwen3-style).
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    def _loads_any(s):
+        try:
+            return json.loads(s)
+        except Exception:
+            # Fall back to the outermost {...} or [...] anywhere in the text.
+            for o, c in (("{", "}"), ("[", "]")):
+                start, end = s.find(o), s.rfind(c)
+                if start != -1 and end > start:
+                    try:
+                        return json.loads(s[start:end + 1])
+                    except Exception:
+                        continue
+            raise
+
+    parsed = _loads_any(cleaned)
+    # Accept either a bare array or an object like {"items": [...]}.
+    if isinstance(parsed, dict):
+        items = parsed.get("items") or parsed.get("data") or []
+    else:
+        items = parsed
+
+    return [{"text": str(it.get("text", "")).strip(),
+             "category": str(it.get("category", "")).strip()}
+            for it in items if isinstance(it, dict) and it.get("text")]
+
+
+# ---------------------------------------------------------------------------
+# Embedded local model (llama-cpp-python) — optional, no separate app needed.
+# Loads the first .gguf found in this node folder, lazily and cached.
+# ---------------------------------------------------------------------------
+
+_LOCAL_LLM = None  # cached llama_cpp.Llama instance once loaded
+_CUDA_DLLS_READY = False
+
+
+def _find_gguf():
+    import glob
+    files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "*.gguf")))
+    return files[0] if files else None
+
+
+def _prepare_cuda_dlls():
+    """Make the pip-installed CUDA 12 runtime DLLs discoverable on Windows.
+
+    The prebuilt llama-cpp-python CUDA wheel bundles ggml-cuda.dll but not the
+    CUDA runtime it depends on (cudart64_12.dll / cublas64_12.dll). Those ship
+    as nvidia-*-cu12 pip packages; add their bin dirs to PATH + the DLL search
+    path so the transitive dependency load succeeds. Idempotent / best-effort."""
+    global _CUDA_DLLS_READY
+    if _CUDA_DLLS_READY or os.name != "nt":
+        return
+    import glob
+    import site
+    roots = []
+    try:
+        roots.extend(site.getsitepackages())
+    except Exception:
+        pass
+    roots.append(os.path.dirname(os.path.dirname(os.__file__)))  # fallback
+    seen = set()
+    for root in roots:
+        for b in glob.glob(os.path.join(root, "nvidia", "*", "bin")):
+            if b in seen or not os.path.isdir(b):
+                continue
+            seen.add(b)
+            os.environ["PATH"] = b + os.pathsep + os.environ.get("PATH", "")
+            try:
+                os.add_dll_directory(b)
+            except Exception:
+                pass
+    _CUDA_DLLS_READY = True
+
+
+def _local_model_status():
+    """Report availability without loading the model."""
+    _prepare_cuda_dlls()
+    try:
+        import llama_cpp  # noqa: F401
+        have_lib = True
+    except Exception:
+        have_lib = False
+    gguf = _find_gguf()
+    return {
+        "available": bool(have_lib and gguf),
+        "have_llama_cpp": have_lib,
+        "model": os.path.basename(gguf) if gguf else None,
+        "loaded": _LOCAL_LLM is not None,
+    }
+
+
+def _get_local_llm():
+    """Return (llm, error). Loads + caches the model on first call."""
+    global _LOCAL_LLM
+    if _LOCAL_LLM is not None:
+        return _LOCAL_LLM, None
+    _prepare_cuda_dlls()
+    try:
+        from llama_cpp import Llama
+    except Exception:
+        return None, ("llama-cpp-python is not installed. Install it with "
+                      "`pip install llama-cpp-python` to use the built-in model.")
+    path = _find_gguf()
+    if not path:
+        return None, "No .gguf model file found in the DirtyBirds-Playhouse folder."
+    try:
+        # n_gpu_layers=-1 offloads to GPU when a CUDA build is present; ignored
+        # by CPU-only builds. verbose off to keep the ComfyUI log clean.
+        _LOCAL_LLM = Llama(model_path=path, n_ctx=8192, n_gpu_layers=-1, verbose=False)
+    except Exception as e:
+        return None, f"Failed to load local model: {e}"
+    return _LOCAL_LLM, None
+
+
+@PromptServer.instance.routes.get("/dirtybirds/wildcard-local-status")
+async def wildcard_local_status(request):
+    return web.json_response(_local_model_status())
+
+
+@PromptServer.instance.routes.post("/dirtybirds/wildcard-extract-local")
+async def wildcard_extract_local(request):
+    """Extract phrases->categories using the embedded GGUF model (in-process)."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    text = (data.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "no text to extract"}, status=400)
+
+    llm, err = _get_local_llm()
+    if err:
+        return web.json_response({"error": err}, status=503)
+
+    messages = [
+        {"role": "system", "content": _extraction_system_prompt(data.get("categories") or [])},
+        {"role": "user", "content": f"Extract this data:\n{text}"},
+    ]
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    def _run():
+        # response_format with a schema constrains output to valid JSON from the
+        # first token — no reasoning prose possible, so parsing always succeeds.
+        return llm.create_chat_completion(
+            messages=messages, temperature=0.0, max_tokens=4096,
+            response_format={"type": "json_object", "schema": _EXTRACT_SCHEMA},
+        )
+
+    try:
+        # Run the blocking inference off the event loop so the server stays responsive.
+        resp = await loop.run_in_executor(None, _run)
+        raw = resp["choices"][0]["message"]["content"]
+        items = _parse_extraction_output(raw)
+    except Exception as e:
+        return web.json_response({"error": f"local model error: {e}"}, status=500)
+
+    return web.json_response({"items": items})
+
+
+def _extraction_system_prompt(categories):
+    bullets = "\n".join(f"- {c}" for c in categories) or "- (none yet)"
+    return (
+        "You are the Extraction Engine for a YAML Wildcard Manager. Your task is "
+        "to ingest unstructured text, break it into individual image-prompt phrases, "
+        "and assign each to a logical category path.\n\n"
+        f"Current Target Schema Categories:\n{bullets}\n\n"
+        "Instructions:\n"
+        "1. Isolate atomic phrases and preserve ComfyUI notations like {a|b} or {1-2$$, $$a|b}.\n"
+        "2. If a phrase fits an existing category above, use that exact category string.\n"
+        "3. If a phrase falls outside all categories, invent a logical nested path using "
+        "lowercase and forward slashes (e.g. 'lighting/neon', 'vehicle/sports-car').\n\n"
+        "Output ONLY a JSON object of the form {\"items\": [...]}, no prose, no markdown:\n"
+        '{"items": [{"text": "vintage Kodak Portra 400 film", "category": "quality"}, '
+        '{"text": "neon cyan rim light", "category": "lighting/neon"}]}'
+    )
+
+
+# JSON schema used to constrain model output to valid, parseable structure.
+_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "category": {"type": "string"},
+                },
+                "required": ["text", "category"],
+            },
+        }
+    },
+    "required": ["items"],
+}
+
+
+@PromptServer.instance.routes.post("/dirtybirds/wildcard-extract")
+async def wildcard_extract(request):
+    """Call a local OpenAI-compatible model to extract phrases->categories.
+
+    Body: { server_url, text, categories: [..] } -> { items: [{text, category}] }"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    text = (data.get("text") or "").strip()
+    if not text:
+        return web.json_response({"error": "no text to extract"}, status=400)
+
+    server_url = (data.get("server_url") or "http://localhost:1234/v1").rstrip("/")
+    endpoint = f"{server_url}/chat/completions"
+    body = {
+        "model": data.get("model") or "local-model",
+        "messages": [
+            {"role": "system", "content": _extraction_system_prompt(data.get("categories") or [])},
+            {"role": "user", "content": f"Extract this data:\n{text}"},
+        ],
+        "temperature": 0.0,
+        # Ask the server to constrain output to a JSON object (supported by
+        # LM Studio / many OpenAI-compatible servers); parser tolerates absence.
+        "response_format": {"type": "json_object"},
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=180)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(endpoint, json=body) as resp:
+                if resp.status != 200:
+                    msg = await resp.text()
+                    return web.json_response(
+                        {"error": f"model server returned HTTP {resp.status}: {msg[:300]}"},
+                        status=502)
+                payload = await resp.json()
+    except Exception as e:
+        return web.json_response(
+            {"error": f"could not reach model server at {endpoint} ({e}). Is LM Studio running?"},
+            status=502)
+
+    try:
+        raw = payload["choices"][0]["message"]["content"]
+        items = _parse_extraction_output(raw)
+    except Exception as e:
+        return web.json_response({"error": f"could not parse model output: {e}"}, status=502)
+
+    return web.json_response({"items": items})
+
+
+@PromptServer.instance.routes.post("/dirtybirds/wildcard-merge")
+async def wildcard_merge(request):
+    """Merge {text, category} items into a wildcard YAML file on disk.
+
+    Body: { name, items: [{text, category}] } -> { success, content }"""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    path = _safe_wildcard_path(data.get("name"))
+    if not path:
+        return web.json_response({"error": "invalid file name"}, status=400)
+
+    try:
+        import yaml
+    except Exception:
+        return web.json_response({"error": "PyYAML not available"}, status=500)
+
+    # Load existing YAML (or start fresh).
+    tree = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                tree = yaml.safe_load(f) or {}
+        except Exception as e:
+            return web.json_response({"error": f"existing YAML invalid: {e}"}, status=400)
+
+    for item in data.get("items", []):
+        phrase = str(item.get("text", "")).strip()
+        category = str(item.get("category", "")).strip()
+        if not phrase or not category:
+            continue
+        parts = [p for p in category.split("/") if p]
+        node = tree
+        for part in parts[:-1]:
+            if not isinstance(node.get(part), dict):
+                node[part] = {}
+            node = node[part]
+        leaf = parts[-1]
+        if not isinstance(node.get(leaf), list):
+            node[leaf] = []
+        if phrase not in node[leaf]:
+            node[leaf].append(phrase)
+
+    try:
+        out = yaml.dump(tree, allow_unicode=True, sort_keys=False)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(out)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True, "content": out})
 
 
 # ---------------------------------------------------------------------------

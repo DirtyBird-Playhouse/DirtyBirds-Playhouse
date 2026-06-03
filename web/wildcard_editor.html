@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>🎲 Wildcard Architect — DirtyBirds</title>
+<style>
+  :root {
+    --bg:#131313; --panel:#1a1a1a; --card:#252525; --border:#333;
+    --text:#ddd; --muted:#888; --accent:#5aadff; --orange:#c8501a;
+    --green:#3a8a5a; --purple:#b58aff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Segoe UI",system-ui,sans-serif; font-size:13px; }
+
+  header { position:sticky; top:0; z-index:10; background:var(--panel);
+           border-bottom:1px solid var(--border); padding:10px 16px;
+           display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .title { font-size:16px; font-weight:800; color:var(--purple); letter-spacing:.5px; }
+  label.fld { font-size:11px; color:var(--muted); display:flex; flex-direction:column; gap:3px; }
+  select, input.txt {
+    background:#2a2a2a; border:1px solid var(--border); color:var(--text);
+    padding:6px 10px; border-radius:6px; font-size:13px; outline:none; }
+  select:focus, input.txt:focus { border-color:var(--accent); }
+  button {
+    background:#2a2a2a; border:1px solid #555; color:var(--text);
+    padding:7px 12px; border-radius:7px; cursor:pointer; font-weight:600;
+    font-size:12px; transition:all .12s; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { border-color:var(--green); color:#9ad8b0; }
+  button.primary:hover { background:#16301f; }
+  button.warn { border-color:#6a3030; color:#e08080; }
+  button.busy { opacity:.5; pointer-events:none; }
+
+  .wrap { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:14px 16px; }
+  @media (max-width:900px){ .wrap{ grid-template-columns:1fr; } }
+  .col { display:flex; flex-direction:column; gap:10px; }
+  .panel { background:var(--panel); border:1px solid var(--border);
+           border-radius:10px; padding:12px; }
+  .panel h2 { margin:0 0 8px; font-size:13px; color:var(--accent);
+              text-transform:uppercase; letter-spacing:1px; }
+  textarea { width:100%; background:#0e0e0e; border:1px solid var(--border);
+             color:#e6e6e6; border-radius:8px; padding:10px; font-size:13px;
+             font-family:"Cascadia Code",Consolas,monospace; line-height:1.5;
+             outline:none; resize:vertical; }
+  textarea:focus { border-color:var(--accent); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .grow { flex:1; }
+  .hint { font-size:11px; color:var(--muted); }
+  .status { font-size:12px; padding:6px 10px; border-radius:6px; display:none; }
+  .status.ok  { display:block; background:#16301f; color:#9ad8b0; border:1px solid var(--green); }
+  .status.err { display:block; background:#301616; color:#e08080; border:1px solid #6a3030; }
+
+  /* Review items */
+  .item { background:var(--card); border:1px solid var(--border);
+          border-radius:8px; padding:8px; display:flex; gap:8px; margin-bottom:6px; }
+  .item input.txt { flex:1; }
+  .item input.cat { width:200px; }
+  .item.new input.cat { border-color:var(--purple); color:#d5b8ff; }
+  .item .rm { flex:0 0 auto; border-color:#6a3030; color:#e08080; padding:6px 9px; }
+  .badge-new { color:var(--purple); font-size:10px; font-weight:700; align-self:center; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">🎲 Wildcard Architect</span>
+  <label class="fld">File
+    <select id="fileSel"></select>
+  </label>
+  <button id="newBtn">＋ New file</button>
+  <span class="grow"></span>
+  <label class="fld">LLM source
+    <select id="sourceSel">
+      <option value="local">Built-in model</option>
+      <option value="remote">LM Studio (URL)</option>
+    </select>
+  </label>
+  <label class="fld" id="urlField">Model server URL
+    <input id="serverUrl" class="txt" value="http://localhost:1234/v1" style="width:220px" />
+  </label>
+  <label class="fld" id="modelField">Model
+    <input id="modelName" class="txt" value="local-model" style="width:130px" />
+  </label>
+</header>
+
+<div id="status" class="status"></div>
+
+<div class="wrap">
+  <!-- LEFT: raw YAML editor -->
+  <div class="col">
+    <div class="panel">
+      <h2>📝 YAML File</h2>
+      <div class="row" style="margin-bottom:8px">
+        <span id="fileLabel" class="hint grow">—</span>
+        <button id="reloadBtn">↻ Reload</button>
+        <button id="saveBtn" class="primary">💾 Save</button>
+      </div>
+      <textarea id="yamlEditor" rows="26" spellcheck="false"
+                placeholder="# Wildcard YAML — edit directly, then Save."></textarea>
+      <div class="hint" style="margin-top:6px">Saved files validate as YAML before writing. Nested maps become <code>parent/child</code> keys.</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: AI extract + review -->
+  <div class="col">
+    <div class="panel">
+      <h2>🤖 AI Extract</h2>
+      <div class="hint" id="sourceHint" style="margin-bottom:6px">Paste raw text / keywords; a local model sorts them into category paths.</div>
+      <textarea id="rawText" rows="6" placeholder="Paste prompts, tags, or descriptive text to extract…"></textarea>
+      <div class="row" style="margin:8px 0">
+        <button id="analyzeBtn" class="grow">🚀 Analyze &amp; Extract</button>
+      </div>
+      <details>
+        <summary class="hint" style="cursor:pointer">Target schema categories (one per line)</summary>
+        <textarea id="categories" rows="6" spellcheck="false"
+                  placeholder="quality&#10;clothing/tops&#10;lighting/neon"></textarea>
+      </details>
+    </div>
+
+    <div class="panel" id="reviewPanel" style="display:none">
+      <h2>✅ Review &amp; Commit</h2>
+      <div class="hint" style="margin-bottom:8px">Edit phrases or categories. ✨ = new category recommended by the model. Commit appends them to the selected file.</div>
+      <div id="reviewList"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="commitBtn" class="primary grow">💾 Approve &amp; Commit to file</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let extracted = [];   // [{text, category}]
+let knownCats = [];   // categories list (from file/keys)
+let localModelName = null;  // built-in GGUF name, if available
+
+function flash(msg, ok=true) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "status " + (ok ? "ok" : "err");
+  if (ok) setTimeout(() => { el.className = "status"; }, 4000);
+}
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+async function loadFileList(selectName) {
+  const { files } = await api("/dirtybirds/wildcard-files");
+  const sel = $("fileSel");
+  sel.innerHTML = "";
+  files.forEach(f => {
+    const o = document.createElement("option");
+    o.value = o.textContent = f;
+    sel.appendChild(o);
+  });
+  if (selectName && files.includes(selectName)) sel.value = selectName;
+  if (sel.value) await loadFile(sel.value);
+}
+
+async function loadFile(name) {
+  if (!name) { $("yamlEditor").value = ""; $("fileLabel").textContent = "—"; return; }
+  const { content } = await api("/dirtybirds/wildcard-file?name=" + encodeURIComponent(name));
+  $("yamlEditor").value = content;
+  $("fileLabel").textContent = name;
+}
+
+async function loadCategories() {
+  try {
+    const { keys } = await api("/dirtybirds/wildcards");
+    knownCats = keys || [];
+    $("categories").value = knownCats.join("\n");
+  } catch { /* non-fatal */ }
+}
+
+function currentCategories() {
+  return $("categories").value.split("\n").map(s => s.trim()).filter(Boolean);
+}
+
+function renderReview() {
+  const list = $("reviewList");
+  list.innerHTML = "";
+  const cats = currentCategories();
+  extracted.forEach((it, i) => {
+    const isNew = !cats.includes(it.category);
+    const row = document.createElement("div");
+    row.className = "item" + (isNew ? " new" : "");
+    const txt = document.createElement("input");
+    txt.className = "txt"; txt.value = it.text;
+    txt.oninput = () => { extracted[i].text = txt.value; };
+    const cat = document.createElement("input");
+    cat.className = "txt cat"; cat.value = it.category;
+    cat.title = "category path (parent/child/leaf)";
+    cat.oninput = () => { extracted[i].category = cat.value; row.className = "item" + (!currentCategories().includes(cat.value) ? " new" : ""); };
+    const rm = document.createElement("button");
+    rm.className = "rm"; rm.textContent = "✕";
+    rm.onclick = () => { extracted.splice(i, 1); renderReview(); };
+    row.append(txt, cat, rm);
+    if (isNew) { const b = document.createElement("span"); b.className = "badge-new"; b.textContent = "✨"; row.appendChild(b); }
+    list.appendChild(row);
+  });
+  $("reviewPanel").style.display = extracted.length ? "block" : "none";
+}
+
+// ── Events ────────────────────────────────────────────────────────────────
+$("fileSel").onchange = (e) => loadFile(e.target.value).catch(err => flash(err.message, false));
+$("reloadBtn").onclick = () => loadFile($("fileSel").value).then(() => flash("Reloaded.")).catch(err => flash(err.message, false));
+
+$("newBtn").onclick = async () => {
+  const name = prompt("New wildcard file name (e.g. extras.yaml):", "");
+  if (!name) return;
+  const fixed = /\.(ya?ml)$/i.test(name) ? name : name + ".yaml";
+  try {
+    await api("/dirtybirds/wildcard-file", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: fixed, content: "# " + fixed + "\n" }),
+    });
+    await loadFileList(fixed);
+    flash("Created " + fixed);
+  } catch (err) { flash(err.message, false); }
+};
+
+$("saveBtn").onclick = async () => {
+  const name = $("fileSel").value;
+  if (!name) return flash("No file selected.", false);
+  const btn = $("saveBtn"); btn.classList.add("busy");
+  try {
+    await api("/dirtybirds/wildcard-file", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, content: $("yamlEditor").value }),
+    });
+    flash("Saved " + name);
+    loadCategories();
+  } catch (err) { flash(err.message, false); }
+  finally { btn.classList.remove("busy"); }
+};
+
+function applySource() {
+  const remote = $("sourceSel").value === "remote";
+  $("urlField").style.display = remote ? "" : "none";
+  $("modelField").style.display = remote ? "" : "none";
+  $("sourceHint").textContent = remote
+    ? "Paste raw text / keywords; LM Studio (or any OpenAI-compatible server) sorts them into category paths."
+    : (localModelName
+        ? `Paste raw text / keywords; the built-in model (${localModelName}) sorts them into category paths. First run loads the model — give it a moment.`
+        : "Built-in model unavailable. Install llama-cpp-python and add a .gguf to the node folder, or switch to LM Studio.");
+}
+$("sourceSel").onchange = applySource;
+
+$("analyzeBtn").onclick = async () => {
+  const text = $("rawText").value.trim();
+  if (!text) return flash("Paste some text to extract first.", false);
+  const remote = $("sourceSel").value === "remote";
+  const url = remote ? "/dirtybirds/wildcard-extract" : "/dirtybirds/wildcard-extract-local";
+  const body = remote
+    ? { server_url: $("serverUrl").value.trim(), model: $("modelName").value.trim(),
+        text, categories: currentCategories() }
+    : { text, categories: currentCategories() };
+  const btn = $("analyzeBtn"); btn.classList.add("busy"); btn.textContent = "⏳ Analyzing…";
+  try {
+    const { items } = await api(url, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    extracted = items || [];
+    renderReview();
+    flash(`Extracted ${extracted.length} phrase(s). Review below.`);
+  } catch (err) { flash(err.message, false); }
+  finally { btn.classList.remove("busy"); btn.textContent = "🚀 Analyze & Extract"; }
+};
+
+$("commitBtn").onclick = async () => {
+  const name = $("fileSel").value;
+  if (!name) return flash("Select a file to commit into first.", false);
+  if (!extracted.length) return flash("Nothing to commit.", false);
+  const btn = $("commitBtn"); btn.classList.add("busy");
+  try {
+    const { content } = await api("/dirtybirds/wildcard-merge", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, items: extracted }),
+    });
+    $("yamlEditor").value = content;
+    extracted = []; renderReview();
+    await loadCategories();
+    flash("Committed to " + name);
+  } catch (err) { flash(err.message, false); }
+  finally { btn.classList.remove("busy"); }
+};
+
+async function loadLocalStatus() {
+  try {
+    const s = await api("/dirtybirds/wildcard-local-status");
+    if (s.available) {
+      localModelName = s.model;
+      $("sourceSel").value = "local";   // prefer built-in when present
+    } else {
+      $("sourceSel").value = "remote";  // fall back to LM Studio
+    }
+  } catch { $("sourceSel").value = "remote"; }
+  applySource();
+}
+
+// ── Init ────────────────────────────────────────────────────────────────
+(async () => {
+  try { await loadLocalStatus(); await loadFileList(); await loadCategories(); }
+  catch (err) { flash(err.message, false); }
+})();
+</script>
+</body>
+</html>
