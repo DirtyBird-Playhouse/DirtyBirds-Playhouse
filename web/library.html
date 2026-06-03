@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>🍑 The Casting Couch — DirtyBirds</title>
+<style>
+  :root {
+    --bg:        #131313;
+    --panel:     #1a1a1a;
+    --card:      #252525;
+    --border:    #333;
+    --text:      #ccc;
+    --muted:     #777;
+    --accent:    #5aadff;
+    --orange:    #c8501a;
+    --green:     #3a8a5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+  }
+
+  /* Header */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .title { font-size: 16px; font-weight: 800; color: var(--accent); letter-spacing: 0.5px; }
+  .target {
+    font-size: 11px; color: var(--muted);
+    background: #222; border: 1px solid var(--border);
+    padding: 3px 8px; border-radius: 6px;
+  }
+  .target.ok { color: var(--green); border-color: var(--green); }
+  #search {
+    flex: 1; min-width: 180px;
+    background: #2a2a2a; border: 1px solid var(--border); color: var(--text);
+    padding: 7px 12px; border-radius: 7px; font-size: 13px; outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+  button.action {
+    background: #2a2a2a; border: 1px solid #555; color: var(--text);
+    padding: 7px 12px; border-radius: 7px; cursor: pointer; font-weight: 600;
+    font-size: 12px; transition: all .12s;
+  }
+  button.action:hover { border-color: var(--accent); color: var(--accent); }
+  button.action.busy { opacity: .5; pointer-events: none; }
+
+  /* Category pills */
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; border-bottom: 1px solid #222; }
+  .pill {
+    padding: 4px 12px; border-radius: 20px; border: 1px solid #444;
+    background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .1s; white-space: nowrap;
+  }
+  .pill:hover { border-color: #777; color: #bbb; }
+  .pill.active { background: #1a2a3a; border-color: var(--accent); color: var(--accent); }
+
+  /* Grid */
+  .grid {
+    display: grid; gap: 12px; padding: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; display: flex; flex-direction: column; transition: border-color .12s;
+  }
+  .card:hover { border-color: #666; }
+  .imgwrap {
+    position: relative; width: 100%; height: 240px; background: #1c1c1c;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .imgwrap img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s; }
+  .imgwrap img.loaded { opacity: 1; }
+  .placeholder { font-size: 44px; color: #3a3a3a; }
+  .catbadge {
+    position: absolute; bottom: 6px; left: 6px;
+    background: rgba(0,0,0,.7); color: var(--accent);
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+    padding: 2px 8px; border-radius: 4px; pointer-events: none;
+  }
+  .body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .name { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .words { font-size: 10px; color: var(--muted); min-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row input[type=range] { flex: 1; accent-color: var(--orange); }
+  .strval { font-size: 11px; color: var(--muted); width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+  .send {
+    width: 100%; padding: 6px 0; border-radius: 6px; border: 1px solid #555;
+    background: #2a2a2a; color: var(--text); cursor: pointer; font-weight: 700; font-size: 12px;
+    transition: all .12s;
+  }
+  .send:hover { border-color: var(--orange); color: #e8853a; background: #2e1a10; }
+  .send.sent { border-color: var(--green); color: #5acc8a; background: #1a2e1e; }
+
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #222; border: 1px solid var(--accent); color: var(--accent);
+    padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+
+  /* View tabs */
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    background: #222; border: 1px solid #444; color: var(--muted);
+    padding: 7px 14px; border-radius: 7px; cursor: pointer; font-weight: 700;
+    font-size: 12px; transition: all .12s; white-space: nowrap;
+  }
+  .tab:hover { border-color: #777; color: #bbb; }
+  .tab.active { background: #1a2a3a; border-color: var(--accent); color: var(--accent); }
+
+  /* Embeddings section */
+  .section-header {
+    padding: 10px 16px 4px;
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1.5px;
+    border-top: 1px solid #222; margin-top: 4px;
+  }
+  .emb-grid {
+    display: grid; gap: 12px; padding: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .emb-btns { display: flex; gap: 6px; margin-top: 2px; }
+  .emb-btn {
+    flex: 1; padding: 6px 4px; border-radius: 6px; border: 1px solid #555;
+    background: #2a2a2a; cursor: pointer; font-weight: 700; font-size: 12px;
+    color: var(--text); transition: all .12s; display: flex;
+    flex-direction: column; align-items: center; gap: 2px;
+  }
+  .emb-btn span.emb-btn-main { font-size: 12px; }
+  .emb-btn span.emb-btn-sub  { font-size: 9px; color: var(--muted); font-weight: 400; line-height: 1; }
+  .emb-btn:hover { border-color: var(--orange); color: #e8853a; background: #2e1a10; }
+  .emb-btn:hover span.emb-btn-sub { color: #c8703a; }
+  .emb-btn.sent { border-color: var(--green); color: #5acc8a; background: #1a2e1e; }
+  .emb-btn.sent span.emb-btn-sub { color: #3a7a5a; }
+
+  /* Download bar */
+  .dlbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid #222; background: #161616;
+  }
+  .dlbar .dl-label { font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 1px; }
+  .dlbar input[type=text] {
+    flex: 1; min-width: 200px; background: #2a2a2a; border: 1px solid var(--border);
+    color: var(--text); padding: 7px 12px; border-radius: 7px; font-size: 13px; outline: none;
+  }
+  .dlbar input[type=text]:focus { border-color: var(--accent); }
+  .dlbar select {
+    background: #2a2a2a; border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 7px; font-size: 12px; outline: none; max-width: 220px;
+  }
+  .dlbar select:focus { border-color: var(--accent); }
+  .dlbar button {
+    background: var(--accent); border: 1px solid var(--accent); color: #06121f;
+    padding: 7px 16px; border-radius: 7px; cursor: pointer; font-weight: 800; font-size: 12px;
+    transition: all .12s;
+  }
+  .dlbar button:hover { filter: brightness(1.1); }
+  .dlbar button.busy { opacity: .5; pointer-events: none; }
+  .dlbar .dl-token {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 11px; text-decoration: underline; padding: 0 2px;
+  }
+  .dlbar .dl-token:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="title">🍑 The Casting Couch</span>
+    <span id="target" class="target">no target node</span>
+    <div class="tabs">
+      <button id="tabLoras" class="tab active">🎭 LoRAs</button>
+      <button id="tabEmbeds" class="tab">✦ Embeddings</button>
+    </div>
+    <input id="search" type="text" placeholder="Search LoRAs…" />
+    <button id="fetchBtn" class="action">⟳ Fetch missing</button>
+  </header>
+
+  <!-- Download bar -->
+  <div class="dlbar">
+    <span class="dl-label" id="dlLabel">⬇ Download LoRA</span>
+    <input id="dlUrl" type="text" placeholder="Paste a Civitai model URL…" />
+    <select id="dlFolder" title="Destination folder"></select>
+    <button id="dlBtn">Download →</button>
+    <button id="dlTokenBtn" class="dl-token" title="Set your Civitai API token (needed for some/mature models)">API token</button>
+  </div>
+
+  <!-- LoRA view (default) -->
+  <div id="view-loras">
+    <div id="pills" class="pills"></div>
+    <div id="grid" class="grid"></div>
+  </div>
+
+  <!-- Embeddings view -->
+  <div id="view-embeds" style="display:none;">
+    <div id="emb-grid" class="emb-grid"></div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const NODE_ID  = qs.get("node_id");
+const GRAPH_ID = qs.get("graph_id");
+
+let LORAS = [];     // [name]
+let META  = {};     // name -> { model_name, has_preview }
+let activeCategory = "All";
+
+const $ = (id) => document.getElementById(id);
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+// Make a card's image area open the Civitai model page. `getUrl` is a function
+// so it can be read lazily (after per-card meta resolves the URL).
+function wireCivitaiClick(imgwrap, getUrl) {
+  imgwrap.style.cursor = "pointer";
+  imgwrap.title = "Open on Civitai";
+  imgwrap.addEventListener("click", () => {
+    const url = getUrl();
+    if (url) window.open(url, "_blank", "noopener");
+    else toast("No Civitai link — run Fetch missing first");
+  });
+}
+
+function category(name) {
+  const p = name.replace(/\\/g, "/").split("/");
+  return p.length > 1 ? p[0] : "(root)";
+}
+function displayName(name) {
+  const info = META[name] || {};
+  if (info.model_name && info.model_name.trim()) return info.model_name.trim();
+  return name.replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
+}
+
+async function loadData() {
+  const [loras, meta] = await Promise.all([
+    fetch("/dirtybirds/loras").then(r => r.json()).catch(() => []),
+    fetch("/dirtybirds/loras-meta").then(r => r.json()).catch(() => ({})),
+  ]);
+  LORAS = loras || [];
+  META  = meta || {};
+  renderPills();
+  renderGrid();
+}
+
+function renderPills() {
+  const cats = ["All", ...[...new Set(LORAS.map(category))].sort()];
+  const bar = $("pills"); bar.innerHTML = "";
+  cats.forEach(cat => {
+    const pill = document.createElement("div");
+    pill.className = "pill" + (cat === activeCategory ? " active" : "");
+    pill.textContent = cat;
+    pill.onclick = () => { activeCategory = cat; renderPills(); renderGrid(); };
+    bar.appendChild(pill);
+  });
+}
+
+function renderGrid() {
+  const filter = $("search").value.toLowerCase();
+  const grid = $("grid"); grid.innerHTML = "";
+
+  const list = LORAS.filter(n =>
+    n.toLowerCase().includes(filter) &&
+    (activeCategory === "All" || category(n) === activeCategory)
+  );
+
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty">No LoRAs found</div>';
+    return;
+  }
+
+  list.forEach(name => {
+    const info = META[name] || {};
+    let cardUrl = info.civitai_url || "";
+    const card = document.createElement("div"); card.className = "card";
+
+    // Image
+    const iw = document.createElement("div"); iw.className = "imgwrap";
+    if (info.has_preview) {
+      const img = document.createElement("img");
+      img.onload = () => img.classList.add("loaded");
+      img.src = `/dirtybirds/lora-preview?name=${encodeURIComponent(name)}`;
+      iw.appendChild(img);
+    } else {
+      const ph = document.createElement("div"); ph.className = "placeholder"; ph.textContent = "🎞";
+      iw.appendChild(ph);
+    }
+    wireCivitaiClick(iw, () => cardUrl);
+    const cat = category(name);
+    if (cat !== "(root)") {
+      const b = document.createElement("span"); b.className = "catbadge"; b.textContent = cat;
+      iw.appendChild(b);
+    }
+    card.appendChild(iw);
+
+    // Body
+    const body = document.createElement("div"); body.className = "body";
+    const nm = document.createElement("div"); nm.className = "name"; nm.textContent = displayName(name); nm.title = name;
+    const wd = document.createElement("div"); wd.className = "words"; wd.textContent = "";
+
+    const row = document.createElement("div"); row.className = "row";
+    const slider = document.createElement("input"); slider.type = "range"; slider.min = "0"; slider.max = "2"; slider.step = "0.05"; slider.value = "1";
+    const val = document.createElement("span"); val.className = "strval"; val.textContent = "1.00";
+    slider.oninput = () => { val.textContent = parseFloat(slider.value).toFixed(2); };
+    row.append(slider, val);
+
+    const sendBtn = document.createElement("button"); sendBtn.className = "send"; sendBtn.textContent = "Send →";
+    sendBtn.onclick = () => sendLora(name, parseFloat(slider.value), sendBtn);
+
+    body.append(nm, wd, row, sendBtn);
+    card.appendChild(body);
+    grid.appendChild(card);
+
+    // lazy trigger words + civitai link
+    fetch(`/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`)
+      .then(r => r.json()).then(m => {
+        if (m && m.trigger_words && m.trigger_words.length) wd.textContent = "✦ " + m.trigger_words.join(", ");
+        if (m && m.civitai_url) cardUrl = m.civitai_url;
+      }).catch(() => {});
+  });
+}
+
+async function sendLora(name, strength, btn) {
+  if (!NODE_ID) { toast("⚠ No target node — open from the node's 📚 button"); return; }
+  const res = await fetch("/dirtybirds/send-loras", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      node_id: NODE_ID, graph_id: GRAPH_ID, mode: "append",
+      loras: [{ name, strength, clip_strength: strength, active: true }],
+    }),
+  }).then(r => r.json()).catch(() => null);
+
+  if (res && res.success) {
+    btn.textContent = "✓ Sent"; btn.classList.add("sent");
+    setTimeout(() => { btn.textContent = "Send →"; btn.classList.remove("sent"); }, 1200);
+    toast(`Sent ${displayName(name)} → node ${NODE_ID}`);
+  } else {
+    toast("⚠ Send failed");
+  }
+}
+
+$("search").addEventListener("input", () => {
+  if ($("tabEmbeds").classList.contains("active")) renderEmbeddings();
+  else renderGrid();
+});
+
+$("fetchBtn").addEventListener("click", async () => {
+  const btn = $("fetchBtn");
+  const isEmbeds = $("tabEmbeds").classList.contains("active");
+  btn.classList.add("busy"); btn.textContent = "⟳ Fetching…";
+  try {
+    const res = await fetch("/dirtybirds/fetch-meta", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "missing", type: isEmbeds ? "embeddings" : "loras" }),
+    }).then(r => r.json());
+    toast(`Fetched ${res.fetched || 0} from Civitai`);
+    if (isEmbeds) { await loadEmbeddings(); }   // refresh embeddings grid
+    else          { await loadData(); }          // refresh LoRA grid
+  } catch (e) {
+    toast("⚠ Fetch failed");
+  } finally {
+    btn.classList.remove("busy"); btn.textContent = "⟳ Fetch missing";
+  }
+});
+
+// Target indicator
+if (NODE_ID) {
+  const t = $("target"); t.textContent = `→ node ${NODE_ID}`; t.classList.add("ok");
+}
+
+// View tabs — LoRAs (default) / Embeddings
+let embeddingsLoaded = false;
+function currentAsset() { return $("tabEmbeds").classList.contains("active") ? "embeddings" : "loras"; }
+function setView(view) {
+  const isLoras = view === "loras";
+  $("view-loras").style.display  = isLoras ? "" : "none";
+  $("view-embeds").style.display = isLoras ? "none" : "";
+  $("tabLoras").classList.toggle("active", isLoras);
+  $("tabEmbeds").classList.toggle("active", !isLoras);
+  $("search").placeholder = isLoras ? "Search LoRAs…" : "Search embeddings…";
+  $("dlLabel").textContent = isLoras ? "⬇ Download LoRA" : "⬇ Download Embedding";
+  loadFolders();   // refresh destination folder list for this asset type
+  if (!isLoras && !embeddingsLoaded) { loadEmbeddings(); embeddingsLoaded = true; }
+}
+$("tabLoras").addEventListener("click", () => setView("loras"));
+$("tabEmbeds").addEventListener("click", () => setView("embeds"));
+
+// ── Download bar ────────────────────────────────────────────────────────────
+async function loadFolders() {
+  const asset = currentAsset();
+  const sel = $("dlFolder");
+  const folders = await fetch(`/dirtybirds/folders?type=${asset}`)
+    .then(r => r.json()).then(d => d.folders || [""]).catch(() => [""]);
+  sel.innerHTML = "";
+  folders.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f; opt.textContent = f === "" ? "📁 (root)" : "📁 " + f;
+    sel.appendChild(opt);
+  });
+}
+
+$("dlBtn").addEventListener("click", async () => {
+  const url = $("dlUrl").value.trim();
+  if (!url) { toast("⚠ Paste a Civitai URL first"); return; }
+  const btn = $("dlBtn");
+  btn.classList.add("busy"); btn.textContent = "Downloading…";
+  try {
+    const res = await fetch("/dirtybirds/download", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, type: currentAsset(), folder: $("dlFolder").value }),
+    }).then(r => r.json());
+    if (res.success) {
+      toast(`✓ Downloaded ${res.filename}`);
+      $("dlUrl").value = "";
+      await loadFolders();
+      if (currentAsset() === "embeddings") await loadEmbeddings();
+      else await loadData();
+    } else {
+      toast(`⚠ ${res.error || "Download failed"}`);
+    }
+  } catch (e) {
+    toast("⚠ Download failed");
+  } finally {
+    btn.classList.remove("busy"); btn.textContent = "Download →";
+  }
+});
+
+$("dlTokenBtn").addEventListener("click", async () => {
+  const cur = await fetch("/dirtybirds/settings").then(r => r.json()).catch(() => ({}));
+  const msg = cur.has_token ? "Civitai API token is set. Enter a new one (or blank to keep):"
+                            : "Enter your Civitai API token (from civitai.com → Account → API Keys):";
+  const token = prompt(msg);
+  if (token === null) return;            // cancelled
+  if (token.trim() === "" && cur.has_token) return;  // keep existing
+  const res = await fetch("/dirtybirds/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ civitai_token: token.trim() }),
+  }).then(r => r.json()).catch(() => null);
+  toast(res && res.success ? "✓ API token saved" : "⚠ Could not save token");
+});
+
+let EMBEDS = [];          // [name]
+let EMB_META = {};        // name -> { model_name, has_preview }
+async function loadEmbeddings() {
+  const [embs, meta] = await Promise.all([
+    fetch("/dirtybirds/embeddings").then(r => r.json()).catch(() => []),
+    fetch("/dirtybirds/embeddings-meta").then(r => r.json()).catch(() => ({})),
+  ]);
+  EMBEDS = embs || [];
+  EMB_META = meta || {};
+  renderEmbeddings();
+}
+
+function embDisplayName(name) {
+  const info = EMB_META[name] || {};
+  if (info.model_name && info.model_name.trim()) return info.model_name.trim();
+  return name.replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
+}
+
+function renderEmbeddings() {
+  const filter = $("search").value.toLowerCase();
+  const grid = $("emb-grid"); grid.innerHTML = "";
+  const list = EMBEDS.filter(n => n.toLowerCase().includes(filter));
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty">No embeddings found</div>'; return;
+  }
+  list.forEach(name => {
+    const info = EMB_META[name] || {};
+    let cardUrl = info.civitai_url || "";
+    const card = document.createElement("div"); card.className = "card";
+
+    // Preview area — real art if fetched, else ✦ glyph placeholder
+    const iw = document.createElement("div"); iw.className = "imgwrap";
+    if (info.has_preview) {
+      const img = document.createElement("img");
+      img.onload = () => img.classList.add("loaded");
+      img.src = `/dirtybirds/embedding-preview?name=${encodeURIComponent(name)}`;
+      iw.appendChild(img);
+    } else {
+      const ph = document.createElement("div"); ph.className = "placeholder"; ph.textContent = "✦";
+      iw.appendChild(ph);
+    }
+    wireCivitaiClick(iw, () => cardUrl);
+    const cat = name.replace(/\\/g, "/").split("/");
+    if (cat.length > 1) {
+      const b = document.createElement("span"); b.className = "catbadge"; b.textContent = cat[0];
+      iw.appendChild(b);
+    }
+    card.appendChild(iw);
+    // civitai_url comes from the bulk (local-only) meta; populated after Fetch.
+
+    // Body
+    const body = document.createElement("div"); body.className = "body";
+    const nm = document.createElement("div"); nm.className = "name"; nm.textContent = embDisplayName(name); nm.title = name;
+    const sub = document.createElement("div"); sub.className = "words"; sub.textContent = "✦ Embedding";
+
+    // Strength slider
+    const row = document.createElement("div"); row.className = "row";
+    const slider = document.createElement("input"); slider.type = "range"; slider.min = "0"; slider.max = "2"; slider.step = "0.05"; slider.value = "1";
+    const val = document.createElement("span"); val.className = "strval"; val.textContent = "1.00";
+    slider.oninput = () => { val.textContent = parseFloat(slider.value).toFixed(2); };
+    row.append(slider, val);
+
+    // Positive / Negative send buttons
+    const btns = document.createElement("div"); btns.className = "emb-btns";
+    ["positive", "negative"].forEach(slot => {
+      const btn = document.createElement("button"); btn.className = "emb-btn";
+      const main = document.createElement("span"); main.className = "emb-btn-main";
+      main.textContent = slot === "positive" ? "Positive →" : "Negative →";
+      const sb = document.createElement("span"); sb.className = "emb-btn-sub";
+      sb.textContent = "(Embedding)";
+      btn.append(main, sb);
+      btn.addEventListener("click", () => sendEmbedding(name, slot, parseFloat(slider.value), btn));
+      btns.appendChild(btn);
+    });
+
+    body.append(nm, sub, row, btns);
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+}
+
+async function sendEmbedding(name, slot, strength, btn) {
+  if (!NODE_ID) { toast("⚠ No target node — open from the node's button"); return; }
+  const res = await fetch("/dirtybirds/send-embedding", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ node_id: NODE_ID, slot, name, strength }),
+  }).then(r => r.json()).catch(() => null);
+
+  if (res && res.success) {
+    const main = btn.querySelector(".emb-btn-main");
+    const origText = main.textContent;
+    main.textContent = "✓ Sent";
+    btn.classList.add("sent");
+    setTimeout(() => { main.textContent = origText; btn.classList.remove("sent"); }, 1200);
+    toast(`Set ${slot} embedding → ${name.replace(/\.[^.]+$/, "")}`);
+  } else {
+    toast("⚠ Send failed");
+  }
+}
+
+loadData();
+loadFolders();   // populate download destination folders for the default (LoRA) view
+// Embeddings load lazily the first time the Embeddings tab is opened.
+</script>
+</body>
+</html>

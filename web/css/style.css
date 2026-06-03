@@ -1,0 +1,779 @@
+/* ============================================================
+   DirtyBirds Playhouse – Node UI Styles
+   ============================================================ */
+
+/* ── Layout helpers (remove widget-row vertical gaps) ───── */
+/* These overrides target ComfyUI’s widget wrappers around addDOMWidget(). */
+.litegraph .widget,
+.litegraph .widget-dom {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+.db-section-label,
+.db-section-label * {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* ── Workflow Toggle Buttons ─────────────────────────────── */
+.db-workflow-group {
+
+  display: flex;
+  gap: 6px;
+  padding: 6px 4px 2px;
+}
+
+.db-workflow-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px;
+  border-radius: 6px;
+  border: 2px solid #555;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-workflow-btn:hover {
+  border-color: #888;
+  color: #ddd;
+}
+
+.db-workflow-btn.db-active {
+  background: #1a5a9a;
+  border-color: #5aadff;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(90, 173, 255, 0.5);
+}
+
+/* ── Section Labels  ─────────── TITLE ─────────── ──────────────────────── */
+.db-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  margin: 0;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.db-sep-line {
+  flex: 1;
+  height: 1px;
+  background: #1a3a4a;
+  min-width: 4px;
+}
+
+.db-sep-text {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #5aadff;
+  text-shadow: 0 0 10px rgba(90, 173, 255, 0.5);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+
+
+/* ── Embedding Buttons ───────────────────────────────────── */
+
+.db-embedding-group {
+  display: flex;
+  gap: 6px;
+  padding: 2px 4px 4px;
+}
+
+.db-embedding-btn {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: 2px solid #555;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-embedding-btn:hover {
+  border-color: #888;
+  color: #eee;
+  background: #333;
+}
+
+.db-embedding-btn.db-has-value {
+  border-color: #4a9eff;
+  color: #4a9eff;
+}
+
+/* ── Flyout Overlay ──────────────────────────────────────── */
+.db-flyout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: transparent;
+}
+
+/* ── Flyout Panel ────────────────────────────────────────── */
+.db-flyout {
+  position: fixed;
+  z-index: 9999;
+  width: 280px;
+  max-height: 380px;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: db-flyout-in 0.12s ease;
+}
+
+@keyframes db-flyout-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+.db-flyout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  background: #252525;
+  border-bottom: 1px solid #333;
+}
+
+.db-flyout-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ddd;
+  letter-spacing: 0.5px;
+}
+
+.db-flyout-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 2px;
+}
+.db-flyout-close:hover { color: #fff; }
+
+/* Search box inside flyout */
+.db-flyout-search {
+  margin: 8px 10px 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #2a2a2a;
+  color: #ddd;
+  font-size: 12px;
+  outline: none;
+  width: calc(100% - 20px);
+  box-sizing: border-box;
+}
+.db-flyout-search:focus { border-color: #4a9eff; }
+
+/* Scrollable item list */
+.db-flyout-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 6px 8px;
+}
+
+.db-flyout-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #ccc;
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-flyout-item:hover { background: #2e2e2e; color: #fff; }
+.db-flyout-item.db-selected { background: #1a3a5c; color: #4a9eff; }
+
+.db-flyout-none {
+  padding: 12px 10px;
+  color: #666;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* Clear button inside flyout */
+.db-flyout-clear {
+  margin: 0 10px 8px;
+  padding: 5px;
+  background: #2a1010;
+  border: 1px solid #5a2020;
+  color: #e06060;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+}
+.db-flyout-clear:hover { background: #3a1515; }
+
+/* ── Resolution Buttons ──────────────────────────────────── */
+/* Width is set in JS pixels directly — no CSS width tricks needed */
+
+/* Resolution selector button (closed dropdown) */
+.db-res-select {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: #1e1e1e;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.db-res-select:hover { border-color: #3a8a5a; color: #fff; background: #1a2a22; }
+.db-res-select.db-disabled { opacity: 0.45; cursor: not-allowed; border-color: #444; color: #666; }
+.db-res-sel-glyph { display: flex; align-items: center; color: #5acc8a; flex-shrink: 0; }
+.db-res-sel-label { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.db-res-sel-caret { color: #777; flex-shrink: 0; }
+
+/* Resolution dropdown rows (inside flyout) */
+.db-res-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #ccc;
+  font-size: 12px;
+  transition: background 0.1s;
+}
+.db-res-opt:hover { background: #2e2e2e; color: #fff; }
+.db-res-opt.db-selected { background: #1a3a2a; color: #5acc8a; }
+.db-res-opt-glyph { display: flex; align-items: center; color: currentColor; opacity: 0.7; width: 20px; justify-content: center; flex-shrink: 0; }
+.db-res-opt:hover .db-res-opt-glyph, .db-res-opt.db-selected .db-res-opt-glyph { opacity: 1; }
+.db-res-opt-label { flex: 1; }
+.db-res-opt-dim { font-size: 10px; color: #777; font-variant-numeric: tabular-nums; }
+
+/* Random pinned row + separator */
+.db-res-random .db-res-opt-glyph { color: #b58aff; }
+.db-res-random.db-selected { background: #2a1a3a; color: #d5b8ff; }
+.db-res-sep { height: 1px; background: #2e2e2e; margin: 4px 8px; }
+
+/* ── Trigger Word Chip Panel ─────────────────────────────────────────────── */
+.db-tw-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px 2px 6px;
+  box-sizing: border-box;
+  min-height: 38px;
+  align-content: flex-start;
+}
+
+.db-tw-empty {
+  padding: 6px 4px;
+  color: #444;
+  font-size: 10px;
+  text-align: center;
+  width: 100%;
+}
+
+/* Base chip */
+.db-tw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s ease;
+  border: 1px solid transparent;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+}
+
+/* Active chip — orange accent */
+.db-tw-chip.db-tw-active {
+  background: rgba(200, 80, 26, 0.18);
+  border-color: #c8501a;
+  color: #e8853a;
+}
+.db-tw-chip.db-tw-active:hover {
+  background: rgba(200, 80, 26, 0.28);
+  border-color: #e8703a;
+  color: #ffaa60;
+}
+
+/* Inactive chip — dimmed */
+.db-tw-chip.db-tw-inactive {
+  background: #1e1e1e;
+  border-color: #333;
+  color: #555;
+  text-decoration: line-through;
+  text-decoration-color: #444;
+}
+.db-tw-chip.db-tw-inactive:hover {
+  border-color: #555;
+  color: #777;
+}
+
+/* Chip text */
+.db-tw-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Edit-mode chip */
+.db-tw-chip.db-tw-editing {
+  background: #1a1a2e;
+  border-color: #5aadff;
+  padding: 2px 6px;
+  cursor: text;
+}
+
+/* Inline edit input */
+.db-tw-input {
+  background: none;
+  border: none;
+  outline: none;
+  color: #5aadff;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 40px;
+  max-width: 140px;
+  padding: 0;
+  letter-spacing: 0.3px;
+}
+
+/* ── LoRA Section – Add button (inside node) ─────────────────────────────── */
+.db-lora-add-open-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 6px;
+  border-radius: 6px;
+  border: 2px solid #555;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  letter-spacing: 0.5px;
+  text-align: center;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.db-lora-add-open-btn:hover {
+  border-color: #5aadff;
+  color: #5aadff;
+  background: #1a2a3a;
+}
+
+/* Library / Fetch button — slightly distinct */
+.db-lib-btn {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6a9ab8;
+  border-color: #1a3a4a;
+  margin-top: 2px;
+}
+.db-lib-btn:hover {
+  border-color: #5aadff;
+  color: #5aadff;
+  background: #1a2a3a;
+}
+
+/* ── LoRA Section – Selected rows (inside node) ──────────────────────────── */
+.db-sel-loras {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px 0 4px;
+  box-sizing: border-box;
+}
+
+.db-sel-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  box-sizing: border-box;
+  height: 30px;
+}
+.db-sel-row.db-inactive { opacity: 0.4; }
+
+/* Small thumbnail inside the node row */
+.db-sel-thumb {
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: #333;
+  flex-shrink: 0;
+}
+
+.db-sel-toggle {
+  background: none;
+  border: none;
+  color: #5acc8a;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.db-inactive .db-sel-toggle { color: #555; }
+
+.db-sel-name {
+  flex: 1;
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.db-inactive .db-sel-name { color: #666; }
+
+.db-sel-slider {
+  width: 60px;
+  flex-shrink: 0;
+  accent-color: #c8501a;
+  cursor: pointer;
+}
+
+.db-sel-val {
+  font-size: 10px;
+  color: #999;
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.db-sel-remove {
+  background: none;
+  border: none;
+  color: #555;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 1px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.db-sel-remove:hover { color: #e06060; }
+
+.db-sel-empty {
+  padding: 6px;
+  color: #444;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* ── LoRA Stacker flyout – list layout (used by DirtyBirdsLoraStacker) ──────── */
+.db-lora-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.db-lora-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #252525;
+  border: 1px solid transparent;
+  transition: border-color 0.1s, background 0.1s;
+}
+.db-lora-row:hover {
+  background: #2e2e2e;
+  border-color: #444;
+}
+
+.db-lora-name {
+  flex: 1;
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── LoRA Grid Flyout ─────────────────────────────────────────────────────── */
+.db-lora-flyout {
+  position: fixed;
+  z-index: 9999;
+  width: 520px;
+  max-height: 600px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: db-flyout-in 0.12s ease;
+}
+
+/* Category pills bar */
+.db-lp-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.db-lp-pill {
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid #444;
+  background: #252525;
+  color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s;
+  white-space: nowrap;
+}
+.db-lp-pill:hover       { border-color: #777; color: #bbb; }
+.db-lp-pill.db-active   { background: #1a2a3a; border-color: #5aadff; color: #5aadff; }
+
+/* Scrollable grid container */
+.db-lp-grid {
+  overflow-y: auto;
+  flex: 1;
+  padding: 8px 10px 10px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  align-content: start;
+}
+
+/* Individual lora card */
+.db-lp-card {
+  border-radius: 8px;
+  background: #252525;
+  border: 1px solid #333;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s, background 0.12s;
+}
+.db-lp-card:hover { border-color: #555; background: #2a2a2a; }
+
+/* Preview image area — fixed height (no padding-top collapse) */
+.db-lp-img-wrap {
+  position: relative;
+  width: 100%;
+  height: 170px;
+  background: #1c1c1c;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.db-lp-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.db-lp-thumb.db-lp-thumb-loaded { opacity: 1; }
+
+/* Placeholder for cards with no preview image */
+.db-lp-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  color: #3a3a3a;
+  user-select: none;
+}
+
+/* Category badge overlaid on image */
+.db-lp-cat-badge {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.65);
+  color: #5aadff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* Card footer: name + add button */
+.db-lp-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.db-lp-card-name {
+  flex: 1;
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.db-lp-add-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px solid #555;
+  background: #2a2a2a;
+  color: #aaa;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.db-lp-add-btn:hover:not(:disabled) {
+  border-color: #c8501a;
+  color: #e8701a;
+  background: #2e1a10;
+}
+.db-lp-add-btn.db-added {
+  border-color: #3a8a5a;
+  color: #5acc8a;
+  background: #1a2e1e;
+  cursor: default;
+  font-size: 13px;
+}
+
+/* ── Two-column Talent layout ───────────────────────────────────────────── */
+.db-talent-columns {
+  display: flex;
+  gap: 0;
+  padding: 3px 0 4px;
+  box-sizing: border-box;
+  min-height: 60px;
+}
+
+.db-talent-loras {
+  flex: 1;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.db-talent-divider {
+  width: 1px;
+  background: #333;
+  margin: 0 6px;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.db-talent-triggerwords {
+  flex: 1;
+  min-width: 0;
+  padding-left: 6px;
+}
+
+.db-talent-col-header {
+  font-size: 9px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+/* ── Dirty Talk — read-only prompt preview ──────────────────────────────── */
+.db-preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 0 6px;
+  box-sizing: border-box;
+}
+
+.db-preview-label {
+  font-size: 9px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+  padding: 4px 2px 2px;
+}
+
+.db-preview-block {
+  background: #181818;
+  border-radius: 4px;
+  padding: 5px 7px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: #bbb;
+  border-left: 2px solid #333;
+  margin-bottom: 4px;
+  min-height: 22px;
+  word-break: break-word;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.db-preview-block.db-pos { border-left-color: #3a6a3a; color: #9ac09a; }
+.db-preview-block.db-neg { border-left-color: #6a3a3a; color: #c09a9a; }
+
+/* LoRA rows adapt to column width */
+.db-talent-loras .db-sel-slider { width: 44px; }
+.db-talent-loras .db-sel-name   { min-width: 0; }
+.db-talent-loras .db-sel-val    { width: 22px; font-size: 9px; }
