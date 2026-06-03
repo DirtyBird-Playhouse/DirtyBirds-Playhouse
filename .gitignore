@@ -7,3 +7,6 @@ __pycache__/
 
 # Runtime caches
 lora_meta_cache.json
+
+# LoRA/embedding preview thumbnails — local only, not for the public repo
+web/previews/
