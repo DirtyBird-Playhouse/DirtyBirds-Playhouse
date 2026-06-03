@@ -10,3 +10,6 @@ lora_meta_cache.json
 
 # LoRA/embedding preview thumbnails — local only, not for the public repo
 web/previews/
+
+# Personal wildcard files — local only, not for the public repo
+wildcards/
