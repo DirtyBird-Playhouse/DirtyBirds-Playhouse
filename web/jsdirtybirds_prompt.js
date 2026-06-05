@@ -41,6 +41,39 @@ function insertAtCursor(textarea, widget, token) {
   textarea.focus();
 }
 
+// Replace a multiline widget's whole value (used by prompt-enhance injection).
+function setWidgetValue(textarea, widget, text) {
+  if (!textarea) return;
+  textarea.value = text;
+  if (widget) widget.value = text;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// The prompt widget that injected/enhanced text should land in. Updated on
+// focus of any prompt box and when a node opens the editor.
+let dbInjectTarget = null;  // { node, widget }
+
+// Listen for the editor tab (separate window) asking to inject a prompt.
+if (typeof BroadcastChannel !== "undefined") {
+  const ch = new BroadcastChannel("dirtybirds-prompt");
+  ch.onmessage = (ev) => {
+    const msg = ev.data || {};
+    if (msg.type !== "inject-prompt" || !dbInjectTarget) return;
+    const node = dbInjectTarget.node;
+    // Pick the box the editor asked for; fall back to the last-focused one.
+    let widget;
+    if (msg.target === "positive" || msg.target === "negative") {
+      widget = node?.widgets?.find(w => w.name === msg.target);
+    }
+    widget = widget || dbInjectTarget.widget || node?.widgets?.find(w => w.name === "positive");
+    const ta = getTextarea(widget);
+    if (msg.mode === "append") insertAtCursor(ta, widget, msg.text);
+    else setWidgetValue(ta, widget, msg.text);
+    app.canvas?.setDirty(true, true);
+    try { node && (app.canvas.centerOnNode?.(node)); } catch {}
+  };
+}
+
 app.registerExtension({
   name: "DirtyBirds.Prompt",
 
@@ -78,7 +111,10 @@ app.registerExtension({
       node._dbLastPromptWidget = posWidget;
       [posWidget, negWidget].forEach(w => {
         const ta = getTextarea(w);
-        if (ta) ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
+        if (ta) ta.addEventListener("focus", () => {
+          node._dbLastPromptWidget = w;
+          dbInjectTarget = { node, widget: w };
+        });
       });
 
       // ── "Load Wildcards" button → native LiteGraph context menu ──────────
@@ -147,12 +183,14 @@ app.registerExtension({
         serialize: false, height: 34, getMinHeight: () => 34,
       });
 
-      // ── "Edit Wildcards" button → opens the editor page in a new tab ─────
+      // ── "Prompt Studio" button → opens the editor page in a new tab ──────
       const editBtn = document.createElement("button");
       editBtn.className = "db-lib-btn db-lora-add-open-btn";
-      editBtn.textContent = "✏️  Edit Wildcards";
+      editBtn.textContent = "🛠️  Prompt Studio";
       editBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       editBtn.addEventListener("click", () => {
+        // Make this node the injection target so Prompt Enhance lands here.
+        dbInjectTarget = { node, widget: node._dbLastPromptWidget || posWidget };
         window.open("/dirtybirds/wildcard-editor", "_blank", "noopener");
       });
       node.addDOMWidget("db_wildcard_edit_btn", "customhtml", editBtn, {
