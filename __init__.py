@@ -8,6 +8,8 @@ from .dirtybirds_prompt import (
 )
 # Imported for its side effects: registers the Prompt Studio web API routes.
 from . import dirtybirds_studio  # noqa: F401
+# Imported for its side effects: registers the "open folder" web API route.
+from . import dirtybirds_folders  # noqa: F401
 from .dirtybirds_caption import (
     NODE_CLASS_MAPPINGS as _CAPTION_CLASSES,
     NODE_DISPLAY_NAME_MAPPINGS as _CAPTION_NAMES,
