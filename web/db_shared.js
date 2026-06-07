@@ -7,7 +7,9 @@
  */
 
 // ── Node theme ────────────────────────────────────────────────────────────────
-export const DB_COLOR   = "#1e1328";
+// Title-bar color for every DirtyBirds node (node.color). Deep blue to match
+// the in-node accent (#5aadff) used by section headers and active controls.
+export const DB_COLOR   = "#15324a";
 export const DB_BGCOLOR = "#131313";
 
 // ── Stylesheet (idempotent) ───────────────────────────────────────────────────

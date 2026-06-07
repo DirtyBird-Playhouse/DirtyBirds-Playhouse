@@ -221,6 +221,151 @@ app.registerExtension({
       }
     });
 
+    // ── LoRA Manager integration ─────────────────────────────────────────
+    // Receives <lora:name:strength> or <lora:name:strength:clip_strength>
+    // syntax from the comfyui-lora-manager "Send to node" action.
+    api.addEventListener("lora_code_update", (event) => {
+      const d = event?.detail || {};
+      const nodeId = d.node_id ?? d.id;
+      const loraCode = d.lora_code ?? "";
+      const mode = d.mode ?? "append";
+
+      const numericId = typeof nodeId === "string" ? Number(nodeId) : nodeId;
+
+      // Collect target DB loader nodes
+      const targets = [];
+      if (numericId === -1) {
+        // Broadcast — find all DirtyBirdsLoader nodes
+        const allNodes = app.graph?._nodes || Object.values(app.graph?._nodes_by_id || {});
+        (Array.isArray(allNodes) ? allNodes : []).forEach(n => {
+          if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
+        });
+      } else {
+        const n = app.graph?.getNodeById?.(numericId);
+        if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
+      }
+
+      if (!targets.length) return;
+
+      // Parse <lora:name:model_strength> or <lora:name:model_strength:clip_strength>
+      const loraPattern = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
+      const loras = [];
+      let match;
+      while ((match = loraPattern.exec(loraCode)) !== null) {
+        const strength = parseFloat(match[2]);
+        const clipStrength = match[3] != null ? parseFloat(match[3]) : null;
+        loras.push({
+          name: match[1],
+          strength: isNaN(strength) ? 1.0 : strength,
+          clip_strength: (clipStrength != null && !isNaN(clipStrength)) ? clipStrength : null,
+          active: true,
+        });
+      }
+
+      if (!loras.length) return;
+
+      targets.forEach(n => {
+        if (typeof n._dbApplyLoras === "function") {
+          n._dbApplyLoras(loras, mode);
+        }
+      });
+    });
+
+    // ── Register DirtyBirdsLoader as lora-capable in LoRA Manager's registry ─────
+    // Replaces LM's refreshRegistry so DirtyBirdsLoader appears in "Send to node".
+    // We must include DirtyBirds in the SAME register-nodes POST that LM makes,
+    // because the server waits for exactly one POST and returns immediately after.
+    //
+    // The install is load-order safe: if LM's extension hasn't registered yet
+    // when this setup() runs, we retry briefly until it appears. refreshRegistry
+    // is only invoked on a user "Send to node" action, so installing within a
+    // couple seconds of load is always in time.
+    function installLMRegistryOverride() {
+      const lmExt = app.extensions?.find(e => e.name === "LoraManager.WorkflowRegistry");
+      if (!lmExt || typeof lmExt.refreshRegistry !== "function") return false;
+      if (lmExt._dbOverrideInstalled) return true;  // idempotent
+      lmExt._dbOverrideInstalled = true;
+
+      const LM_LORA_CLASSES = new Set([
+        "Lora Loader (LoraManager)",
+        "Lora Stacker (LoraManager)",
+        "WanVideo Lora Select (LoraManager)",
+      ]);
+      const LM_TARGET_WIDGETS = new Set(["ckpt_name", "unet_name"]);
+
+      lmExt.refreshRegistry = async function () {
+        try {
+          const workflowNodes = [];
+
+          function collectNodes(g, visited = new Set()) {
+            const gid = String(g?.id ?? "root");
+            if (!g || visited.has(gid)) return;
+            visited.add(gid);
+
+            if (Array.isArray(g._nodes)) {
+              const graphName = typeof g.name === "string" && g.name.trim() ? g.name : null;
+              for (const node of g._nodes) {
+                if (!node) continue;
+                const widgetNames = Array.isArray(node.widgets)
+                  ? node.widgets.map(w => w?.name).filter(n => typeof n === "string" && n)
+                  : [];
+                const isLMNode = LM_LORA_CLASSES.has(node.comfyClass);
+                const isDBNode = node.comfyClass === "DirtyBirdsLoader";
+                const hasTargetWidget = widgetNames.some(n => LM_TARGET_WIDGETS.has(n));
+                if (!isLMNode && !isDBNode && !hasTargetWidget) continue;
+
+                workflowNodes.push({
+                  node_id: node.id,
+                  graph_id: gid,
+                  graph_name: graphName,
+                  bgcolor: node.bgcolor ?? node.color ?? null,
+                  title: node.title || node.comfyClass,
+                  type: node.comfyClass,
+                  comfy_class: node.comfyClass,
+                  mode: node.mode,
+                  capabilities: {
+                    supports_lora: isLMNode || isDBNode,
+                    widget_names: widgetNames,
+                  },
+                });
+              }
+            }
+
+            // Walk subgraphs (mirrors LM's traverseGraphs logic)
+            const subs = g._subgraphs;
+            if (subs) {
+              const subArr = typeof subs.values === "function"
+                ? [...subs.values()] : Object.values(subs);
+              for (const sg of subArr) {
+                const sub = sg?.graph || sg?._graph || sg;
+                if (sub && sub !== g) collectNodes(sub, visited);
+              }
+            }
+          }
+
+          collectNodes(app.graph);
+
+          const resp = await fetch("/api/lm/register-nodes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nodes: workflowNodes }),
+          });
+          if (!resp.ok) console.warn("[DirtyBirds] LM register-nodes failed:", resp.statusText);
+        } catch (e) {
+          console.warn("[DirtyBirds] Error in LM registry refresh:", e);
+        }
+      };
+      return true;
+    }
+
+    // Try now; if LoRA Manager hasn't registered yet, retry (~2s @ 50ms).
+    if (!installLMRegistryOverride()) {
+      let tries = 0;
+      const lmTimer = setInterval(() => {
+        if (installLMRegistryOverride() || ++tries > 40) clearInterval(lmTimer);
+      }, 50);
+    }
+
     api.addEventListener("dirtybirds_set_embedding", (event) => {
       const d = event?.detail || {};
       const node = app.graph?.getNodeById?.(Number(d.node_id)) ||
@@ -240,6 +385,7 @@ app.registerExtension({
     const dimensionKeys = Object.keys(dimData);
 
     // Receive executed prompt text → update the "Dirty Talk" preview
+    // Also receive external lora_stack names → show as read-only chips.
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
@@ -247,6 +393,10 @@ app.registerExtension({
       if (Array.isArray(p)) {
         this._dbLastPrompts = { pos: p[0] ?? "", neg: p[1] ?? "" };
         this._dbRefreshPreview?.();
+      }
+      const stackNames = message?.db_lora_stack;
+      if (Array.isArray(stackNames)) {
+        this._dbRefreshStackChips?.(stackNames);
       }
     };
 
@@ -275,7 +425,9 @@ app.registerExtension({
       const negEmbedWidget  = hideWidget("neg_embedding");
       const lorasDataWidget = hideWidget("loras_data");
       const twDataWidget    = hideWidget("trigger_words_data");
-      // positive / negative are intentionally left as visible native widgets
+      // positive / negative are hidden — edited via the Dirty Talk panel below
+      const posWidget = hideWidget("positive");
+      const negWidget = hideWidget("negative");
 
       // Random resolution is stored as the sentinel "__random__" in the
       // dimension widget so Python re-picks a fresh size on every run.
@@ -287,6 +439,7 @@ app.registerExtension({
         node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
       }
       function addTitle(name, el, h) {
+        h = Math.max(h || 0, 26); // enough height so centered section text isn't clipped
         el.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
         node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
       }
@@ -374,6 +527,22 @@ app.registerExtension({
       });
       addFixed("db_resselect", resSelect, 38);
 
+      // Move batch_size widget to appear right after the resolution picker; clamp to min 1
+      requestAnimationFrame(() => {
+        const bsIdx  = node.widgets?.findIndex(w => w.name === "batch_size");
+        const rsIdx  = node.widgets?.findIndex(w => w.name === "db_resselect");
+        if (bsIdx > -1) {
+          const bw = node.widgets[bsIdx];
+          if (bw.value < 1) bw.value = 1;
+          if (rsIdx > -1 && bsIdx !== rsIdx + 1) {
+            node.widgets.splice(bsIdx, 1);
+            const insertAt = node.widgets.findIndex(w => w.name === "db_resselect");
+            node.widgets.splice(insertAt + 1, 0, bw);
+          }
+        }
+        node.setDirtyCanvas(true);
+      });
+
       function updateResolutionState() {
         const isT2I = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
         // Random only applies to Text2Image; fall back to a concrete size for I2I.
@@ -393,16 +562,6 @@ app.registerExtension({
       function serializeLoras() { if (lorasDataWidget) lorasDataWidget.value=JSON.stringify(loraEntries); }
       function serializeTW()    { if (twDataWidget)    twDataWidget.value   =JSON.stringify(twEntries);   }
 
-      // Library button
-      const libBtn = document.createElement("button"); libBtn.className = "db-lora-add-open-btn db-lib-btn";
-      libBtn.textContent = "🍑  The Casting Couch";
-      libBtn.addEventListener("click", () => {
-        const gid = node.graph?.id ? `&graph_id=${encodeURIComponent(node.graph.id)}` : "";
-        window.open(`/dirtybirds/library?node_id=${encodeURIComponent(node.id)}${gid}`,
-                    "_blank", "noopener");
-      });
-      addFixed("db_loader_lib_btn", libBtn, 38);
-
       // Two-column container
       const talentColsEl = document.createElement("div");
       talentColsEl.className = "db-talent-columns";
@@ -419,7 +578,29 @@ app.registerExtension({
         () => { serializeLoras(); syncTalentH(); syncTWToLoras(); },
         (removedName) => { syncTWToLoras(); }
       );
-      loraColEl.append(loraColHeader, loraPanel.el);
+      // Read-only section for loras arriving via the lora_stack input socket
+      const stackSectionEl = document.createElement("div");
+      stackSectionEl.style.cssText = "display:none;margin-top:4px;";
+      const stackSepEl = document.createElement("div");
+      stackSepEl.style.cssText = "font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;";
+      stackSepEl.textContent = "via lora_stack";
+      const stackListEl = document.createElement("div");
+      stackSectionEl.append(stackSepEl, stackListEl);
+      loraColEl.append(loraColHeader, loraPanel.el, stackSectionEl);
+
+      node._dbRefreshStackChips = (names) => {
+        stackListEl.innerHTML = "";
+        if (!names || !names.length) { stackSectionEl.style.display = "none"; syncTalentH(); return; }
+        stackSectionEl.style.display = "";
+        names.forEach(n => {
+          const chip = document.createElement("div");
+          chip.style.cssText = "font-size:10px;color:#888;padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+          chip.textContent = n;
+          chip.title = n;
+          stackListEl.appendChild(chip);
+        });
+        syncTalentH();
+      };
 
       // Vertical divider
       const dividerEl = document.createElement("div");
@@ -504,8 +685,182 @@ app.registerExtension({
         return added;
       };
 
-      // ── 4. DIRTY TALK — read-only prompt preview ─────────────────────────
-      addTitle("db_twlabel", makeSectionLabel("Dirty Talk"), 20);
+      // ── 4. THE CAST — positive / negative embedding picker ──────────────
+
+      function buildEmbedCol(header, widget) {
+        const col = document.createElement("div");
+        col.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;";
+
+        const hdr = document.createElement("div");
+        hdr.className = "db-talent-col-header";
+        hdr.textContent = header;
+
+        const chipArea = document.createElement("div");
+        chipArea.className = "db-sel-loras";
+        chipArea.style.minHeight = "24px";
+
+        const browseBtn = document.createElement("button");
+        browseBtn.className = "db-lora-add-open-btn db-lib-btn";
+        browseBtn.textContent = header.includes("Pos") ? "＋ Positive Embedding" : "＋ Negative Embedding";
+        browseBtn.style.cssText = "width:100%;margin-top:3px;box-sizing:border-box;";
+
+        let _embedList = null;
+
+        browseBtn.addEventListener("click", async (e) => {
+          if (!_embedList) {
+            const data = await fetchJSON("/dirtybirds/embeddings");
+            _embedList = Array.isArray(data) ? data : [];
+          }
+          const items = _embedList.length
+            ? _embedList.map(n => ({ content: n, callback: () => {
+                current = { name: n, strength: 1.0, active: true };
+                if (widget) widget.value = serializeEmbed();
+                renderChip();
+                syncEmbedH();
+              }}))
+            : [{ content: "(no embeddings found)", disabled: true }];
+          new LiteGraph.ContextMenu(items, {
+            event: e,
+            title: header,
+            scale: Math.max(1, app.canvas?.ds?.scale || 1),
+          });
+        });
+
+        col.append(hdr, chipArea, browseBtn);
+
+        let current = { name: "", strength: 1.0, active: true };
+
+        function serializeEmbed() {
+          if (!current.name) return "";
+          const base = Math.abs(current.strength - 1.0) < 0.001 ? current.name : `${current.name}:${current.strength.toFixed(2)}`;
+          return current.active ? base : `!${base}`;
+        }
+
+        function renderChip() {
+          chipArea.innerHTML = "";
+          if (!current.name) return;
+
+          const row = document.createElement("div");
+          row.className = "db-sel-row" + (current.active ? "" : " db-inactive");
+
+          const label = document.createElement("span");
+          label.className = "db-sel-name";
+          label.textContent = current.name;
+          label.title = current.name;
+
+          const toggle = document.createElement("button");
+          toggle.className = "db-sel-toggle";
+          toggle.textContent = current.active ? "●" : "○";
+          toggle.title = current.active ? "Disable" : "Enable";
+          toggle.addEventListener("click", () => {
+            current.active = !current.active;
+            toggle.textContent = current.active ? "●" : "○";
+            toggle.title = current.active ? "Disable" : "Enable";
+            row.classList.toggle("db-inactive", !current.active);
+            if (widget) widget.value = serializeEmbed();
+          });
+
+          const slider = document.createElement("input");
+          slider.type = "range";
+          slider.className = "db-sel-slider";
+          slider.min = "0.10"; slider.max = "2.00"; slider.step = "0.05";
+          slider.value = current.strength.toFixed(2);
+
+          const valEl = document.createElement("span");
+          valEl.className = "db-sel-val";
+          valEl.textContent = current.strength.toFixed(2);
+
+          slider.addEventListener("input", () => {
+            current.strength = parseFloat(slider.value);
+            valEl.textContent = current.strength.toFixed(2);
+            if (widget) widget.value = serializeEmbed();
+          });
+
+          const rmBtn = document.createElement("span");
+          rmBtn.className = "db-sel-remove";
+          rmBtn.textContent = "✕";
+          rmBtn.addEventListener("click", () => {
+            current = { name: "", strength: 1.0, active: true };
+            if (widget) widget.value = "";
+            renderChip();
+            syncEmbedH();
+          });
+
+          row.append(toggle, label, slider, valEl, rmBtn);
+          chipArea.appendChild(row);
+        }
+
+        function deserialize(raw) {
+          raw = (raw || "").trim();
+          if (!raw) { current = { name: "", strength: 1.0, active: true }; renderChip(); return; }
+          const active = !raw.startsWith("!");
+          const stripped = active ? raw : raw.slice(1);
+          const parts = stripped.split(":");
+          const strength = parts.length > 1 ? parseFloat(parts[parts.length - 1]) || 1.0 : 1.0;
+          const name = parts.length > 1 ? parts.slice(0, -1).join(":") : stripped;
+          current = { name, strength, active };
+          renderChip();
+        }
+
+        col._set = (name, strength, active = true) => {
+          current = { name, strength, active };
+          if (widget) widget.value = serializeEmbed();
+          renderChip();
+          syncEmbedH();
+        };
+        col._deserialize = deserialize;
+        return col;
+      }
+
+      const embedColsEl = document.createElement("div");
+      embedColsEl.style.cssText = "display:flex;flex-direction:column;gap:6px;box-sizing:border-box;overflow:hidden;";
+
+      const posEmbedCol = buildEmbedCol("Positive Embedding", posEmbedWidget);
+      const negEmbedCol = buildEmbedCol("Negative Embedding", negEmbedWidget);
+      embedColsEl.append(posEmbedCol, negEmbedCol);
+
+      const embedColsWidget = node.addDOMWidget("db_embed_cols", "customhtml", embedColsEl, {
+        serialize: false, height: 140,
+        getMinHeight: () => Math.max(140, embedColsEl.scrollHeight || 140),
+      });
+
+      function syncEmbedH() {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const h = Math.max(140, embedColsEl.scrollHeight || 140);
+          if (embedColsWidget) { embedColsWidget.height = h; embedColsWidget.computedHeight = h; }
+          node.setDirtyCanvas(true);
+        }));
+      }
+      syncEmbedH();
+
+      // Override _dbApplyEmbedding to also refresh the UI chips
+      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
+        const s = Number(strength);
+        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
+        if (slot === "positive") {
+          if (posEmbedWidget) posEmbedWidget.value = stored;
+          posEmbedCol._set(name, isNaN(s) ? 1.0 : s);
+        }
+        if (slot === "negative") {
+          if (negEmbedWidget) negEmbedWidget.value = stored;
+          negEmbedCol._set(name, isNaN(s) ? 1.0 : s);
+        }
+        node.setDirtyCanvas(true);
+      };
+
+      // ── 5. DIRTY TALK — prompt preview with click-to-edit ────────────────
+      const dtHeaderRow = document.createElement("div");
+      dtHeaderRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
+      const dtLabel = makeSectionLabel("Dirty Talk");
+      dtLabel.style.flex = "1";
+      const editBtn = document.createElement("button");
+      editBtn.title = "Edit prompts";
+      editBtn.style.cssText = "background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:0 4px;line-height:1;flex-shrink:0;";
+      editBtn.textContent = "✏";
+      dtHeaderRow.append(dtLabel, editBtn);
+      node.addDOMWidget("db_twlabel", "customhtml", dtHeaderRow, {
+        serialize: false, height: 26, getMinHeight: () => 26,
+      });
 
       const previewPanelEl = document.createElement("div");
       previewPanelEl.className = "db-preview-panel";
@@ -521,15 +876,25 @@ app.registerExtension({
       const negPreviewBlock = document.createElement("div");
       negPreviewBlock.className = "db-preview-block db-neg";
 
+      // Edit-mode textareas (created once, swapped in/out)
+      function makeEditArea(extraClass) {
+        const ta = document.createElement("textarea");
+        ta.className = "db-preview-block " + extraClass;
+        ta.style.cssText = "resize:none;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;min-height:40px;";
+        ta.rows = 3;
+        return ta;
+      }
+      const posEditArea = makeEditArea("db-pos");
+      const negEditArea = makeEditArea("db-neg");
+
       previewPanelEl.append(posPreviewLabel, posPreviewBlock, negPreviewLabel, negPreviewBlock);
 
-      // Prompts arrive at execution time via the input sockets; the node
-      // stores the last executed values and renders them here.
       node._dbLastPrompts = node._dbLastPrompts || { pos: "", neg: "" };
-
+      let _editMode = false;
       const EMPTY_PREVIEW = '<span style="color:#3a3a3a;font-style:italic">— run to preview —</span>';
 
       function updatePreviews(posV, negV) {
+        if (_editMode) return; // don't overwrite while user is typing
         if (posV === undefined) posV = node._dbLastPrompts.pos || "";
         if (negV === undefined) negV = node._dbLastPrompts.neg || "";
         if (posV) { posPreviewBlock.textContent = posV; posPreviewBlock.classList.remove("db-preview-empty"); }
@@ -537,6 +902,27 @@ app.registerExtension({
         if (negV) { negPreviewBlock.textContent = negV; negPreviewBlock.classList.remove("db-preview-empty"); }
         else      { negPreviewBlock.innerHTML = EMPTY_PREVIEW; negPreviewBlock.classList.add("db-preview-empty"); }
       }
+
+      posEditArea.addEventListener("input", () => { if (posWidget) posWidget.value = posEditArea.value; syncPreviewH(); });
+      negEditArea.addEventListener("input", () => { if (negWidget) negWidget.value = negEditArea.value; syncPreviewH(); });
+
+      editBtn.addEventListener("click", () => {
+        _editMode = !_editMode;
+        editBtn.textContent = _editMode ? "✓" : "✏";
+        editBtn.style.color  = _editMode ? "#5acc8a" : "#555";
+        editBtn.title = _editMode ? "Done editing" : "Edit prompts";
+        if (_editMode) {
+          posEditArea.value = posWidget?.value || node._dbLastPrompts.pos || "";
+          negEditArea.value = negWidget?.value || node._dbLastPrompts.neg || "";
+          posPreviewBlock.replaceWith(posEditArea);
+          negPreviewBlock.replaceWith(negEditArea);
+        } else {
+          posEditArea.replaceWith(posPreviewBlock);
+          negEditArea.replaceWith(negPreviewBlock);
+          updatePreviews(posWidget?.value || "", negWidget?.value || "");
+        }
+        syncPreviewH();
+      });
 
       node._dbRefreshPreview = () => {
         updatePreviews(node._dbLastPrompts.pos, node._dbLastPrompts.neg);
@@ -573,6 +959,11 @@ app.registerExtension({
             }
           } catch (e) { console.warn("[DirtyBirds] Could not restore LoRAs:", e); }
         }
+        // Embeddings
+        if (posEmbedWidget?.value) posEmbedCol._deserialize(posEmbedWidget.value);
+        if (negEmbedWidget?.value) negEmbedCol._deserialize(negEmbedWidget.value);
+        syncEmbedH();
+
         // Trigger words
         const savedTW = twDataWidget?.value;
         if (savedTW && savedTW !== "[]") {
@@ -603,7 +994,7 @@ app.registerExtension({
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [workflowDOM, resSelect, libBtn, talentColsEl, previewPanelEl];
+      const domEls = [workflowDOM, resSelect, talentColsEl, embedColsEl, previewPanelEl];
       function applyWidths() {
         const w = nodeInnerW(node);
         domEls.forEach(el => { el.style.width=w+"px"; });

@@ -13,3 +13,6 @@ web/previews/
 
 # Personal wildcard files — local only, not for the public repo
 wildcards/
+
+# Personal prompt .txt files — local only, not for the public repo
+prompts/

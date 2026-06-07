@@ -41,39 +41,6 @@ function insertAtCursor(textarea, widget, token) {
   textarea.focus();
 }
 
-// Replace a multiline widget's whole value (used by prompt-enhance injection).
-function setWidgetValue(textarea, widget, text) {
-  if (!textarea) return;
-  textarea.value = text;
-  if (widget) widget.value = text;
-  textarea.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
-// The prompt widget that injected/enhanced text should land in. Updated on
-// focus of any prompt box and when a node opens the editor.
-let dbInjectTarget = null;  // { node, widget }
-
-// Listen for the editor tab (separate window) asking to inject a prompt.
-if (typeof BroadcastChannel !== "undefined") {
-  const ch = new BroadcastChannel("dirtybirds-prompt");
-  ch.onmessage = (ev) => {
-    const msg = ev.data || {};
-    if (msg.type !== "inject-prompt" || !dbInjectTarget) return;
-    const node = dbInjectTarget.node;
-    // Pick the box the editor asked for; fall back to the last-focused one.
-    let widget;
-    if (msg.target === "positive" || msg.target === "negative") {
-      widget = node?.widgets?.find(w => w.name === msg.target);
-    }
-    widget = widget || dbInjectTarget.widget || node?.widgets?.find(w => w.name === "positive");
-    const ta = getTextarea(widget);
-    if (msg.mode === "append") insertAtCursor(ta, widget, msg.text);
-    else setWidgetValue(ta, widget, msg.text);
-    app.canvas?.setDirty(true, true);
-    try { node && (app.canvas.centerOnNode?.(node)); } catch {}
-  };
-}
-
 app.registerExtension({
   name: "DirtyBirds.Prompt",
 
@@ -95,7 +62,7 @@ app.registerExtension({
       const scriptLabel = makeSectionLabel("The Script");
       scriptLabel.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
       node.addDOMWidget("db_scriptlabel", "customhtml", scriptLabel, {
-        serialize: false, height: 20, getMinHeight: () => 20,
+        serialize: false, height: 26, getMinHeight: () => 26,
       });
       // Move the label to sit above the positive widget.
       {
@@ -111,22 +78,17 @@ app.registerExtension({
       node._dbLastPromptWidget = posWidget;
       [posWidget, negWidget].forEach(w => {
         const ta = getTextarea(w);
-        if (ta) ta.addEventListener("focus", () => {
-          node._dbLastPromptWidget = w;
-          dbInjectTarget = { node, widget: w };
-        });
+        if (ta) ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
       });
 
       // ── "Load Wildcards" button → native LiteGraph context menu ──────────
       node._dbWildcardKeys = [];
 
-      function insertKey(key) {
+      function insertText(text) {
         const target = node._dbLastPromptWidget || posWidget;
-        insertAtCursor(getTextarea(target), target, `__${key}__`);
+        insertAtCursor(getTextarea(target), target, text);
       }
 
-      // Build a nested tree from "parent/child/leaf" keys so the menu can show
-      // them as cascading submenus instead of long flat tokens.
       function buildTree(keys) {
         const root = { children: {} };
         for (const key of keys) {
@@ -135,33 +97,31 @@ app.registerExtension({
           parts.forEach((p, i) => {
             cur.children[p] = cur.children[p] || { children: {} };
             cur = cur.children[p];
-            if (i === parts.length - 1) cur.key = key;  // leaf -> full token
+            if (i === parts.length - 1) cur.key = key;
           });
         }
         return root;
       }
 
-      // Turn a tree node into LiteGraph context-menu options (recursive).
       function toItems(treeNode) {
         return Object.keys(treeNode.children).sort().map(name => {
           const child = treeNode.children[name];
           const hasChildren = Object.keys(child.children).length > 0;
           if (hasChildren) {
             const options = toItems(child);
-            // A branch that is ALSO a wildcard itself gets a "(use this)" entry.
             if (child.key) {
-              options.unshift({ content: "↳ use this", callback: () => insertKey(child.key) });
+              options.unshift({ content: "↳ use this", callback: () => insertText(`__${child.key}__`) });
             }
             return { content: name, has_submenu: true, submenu: { options } };
           }
-          return { content: name, callback: () => insertKey(child.key) };
+          return { content: name, callback: () => insertText(`__${child.key}__`) };
         });
       }
 
-      function openMenu(event) {
+      function openWildcardMenu(event) {
         const items = [
           { content: REFRESH, callback: () => loadWildcards() },
-          null, // separator
+          null,
           ...toItems(buildTree(node._dbWildcardKeys)),
         ];
         if (!node._dbWildcardKeys.length) {
@@ -178,23 +138,84 @@ app.registerExtension({
       btn.className = "db-lib-btn db-lora-add-open-btn";
       btn.textContent = "🎲  Load Wildcards";
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
-      btn.addEventListener("click", (e) => openMenu(e));
+      btn.addEventListener("click", (e) => openWildcardMenu(e));
       node.addDOMWidget("db_wildcard_btn", "customhtml", btn, {
         serialize: false, height: 34, getMinHeight: () => 34,
       });
 
-      // ── "Prompt Studio" button → opens the editor page in a new tab ──────
-      const editBtn = document.createElement("button");
-      editBtn.className = "db-lib-btn db-lora-add-open-btn";
-      editBtn.textContent = "🛠️  Prompt Studio";
-      editBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
-      editBtn.addEventListener("click", () => {
-        // Make this node the injection target so Prompt Enhance lands here.
-        dbInjectTarget = { node, widget: node._dbLastPromptWidget || posWidget };
-        window.open("/dirtybirds/wildcard-editor", "_blank", "noopener");
+      // ── "Booru Tags" button + inline search panel ────────────────────────
+      const booruWrap = document.createElement("div");
+      booruWrap.style.cssText = "display:flex;flex-direction:column;gap:3px;box-sizing:border-box;overflow:hidden;width:100%;";
+
+      const booruBtn = document.createElement("button");
+      booruBtn.className = "db-lib-btn db-lora-add-open-btn";
+      booruBtn.textContent = "🏷️  Booru Tags";
+      booruBtn.style.cssText = "width:100%;box-sizing:border-box;";
+
+      const booruPanel = document.createElement("div");
+      booruPanel.style.cssText = "display:none;flex-direction:column;gap:3px;";
+
+      const booruInputRow = document.createElement("div");
+      booruInputRow.style.cssText = "display:flex;gap:3px;align-items:center;";
+      const booruInput = document.createElement("input");
+      booruInput.type = "text";
+      booruInput.placeholder = "Search booru…";
+      booruInput.style.cssText = "flex:1;font-size:10px;background:#1a1a1a;border:1px solid #444;color:#ccc;border-radius:3px;padding:2px 4px;";
+      const booruSearchBtn = document.createElement("button");
+      booruSearchBtn.textContent = "Search";
+      booruSearchBtn.className = "db-lib-btn";
+      booruSearchBtn.style.cssText = "font-size:10px;padding:2px 6px;white-space:nowrap;";
+      booruInputRow.append(booruInput, booruSearchBtn);
+      booruPanel.appendChild(booruInputRow);
+      booruWrap.append(booruBtn, booruPanel);
+
+      let _booruOpen = false;
+      const booruWidget = node.addDOMWidget("db_booru_btn", "customhtml", booruWrap, {
+        serialize: false, height: 34, getMinHeight: () => _booruOpen ? 70 : 34,
       });
-      node.addDOMWidget("db_wildcard_edit_btn", "customhtml", editBtn, {
-        serialize: false, height: 34, getMinHeight: () => 34,
+
+      function setBooruOpen(open) {
+        _booruOpen = open;
+        booruPanel.style.display = open ? "flex" : "none";
+        booruBtn.textContent = open ? "✕  Close" : "🏷️  Booru Tags";
+        const h = open ? 70 : 34;
+        if (booruWidget) { booruWidget.height = h; booruWidget.computedHeight = h; }
+        node.setDirtyCanvas(true);
+        if (open) requestAnimationFrame(() => booruInput.focus());
+      }
+
+      booruBtn.addEventListener("click", () => setBooruOpen(!_booruOpen));
+
+      async function doSearch() {
+        const q = booruInput.value.trim();
+        if (!q) return;
+        setBooruOpen(false);
+        booruInput.value = "";
+        const data = await fetchJSON(
+          `/dirtybirds/booru-search?query=${encodeURIComponent(q)}&source=danbooru&max_tags=40`
+        );
+        const tags = data?.tags || [];
+        const items = [];
+        if (!tags.length) {
+          items.push({ content: "(no tags found)", disabled: true });
+        } else {
+          items.push({ content: "Insert all", callback: () => insertText(tags.join(", ")) });
+          items.push(null);
+          for (const tag of tags) {
+            items.push({ content: tag, callback: () => insertText(tag) });
+          }
+        }
+        new LiteGraph.ContextMenu(items, {
+          event: { clientX: booruBtn.getBoundingClientRect().left, clientY: booruBtn.getBoundingClientRect().bottom },
+          title: `🏷️ Booru Tags (${tags.length})`,
+          scale: Math.max(1, app.canvas?.ds?.scale || 1),
+        });
+      }
+
+      booruSearchBtn.addEventListener("click", doSearch);
+      booruInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { doSearch(); e.preventDefault(); }
+        if (e.key === "Escape") { setBooruOpen(false); }
       });
 
       async function loadWildcards() {
@@ -208,7 +229,7 @@ app.registerExtension({
         const w = nodeInnerW(node);
         scriptLabel.style.width = w + "px";
         btn.style.width = w + "px";
-        editBtn.style.width = w + "px";
+        booruWrap.style.width = w + "px";
         node.widgets.forEach(ww => {
           if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width = w + "px";
         });

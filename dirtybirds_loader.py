@@ -126,22 +126,24 @@ class DirtyBirdsLoader:
                 "ckpt_name":   (ckpt_list,),
                 # VAE — defaults to the checkpoint's baked VAE; pick a file to override
                 "vae_name":    (vae_list, {"default": BAKED_VAE}),
-                # Raw prompt strings (connected via input) — encoded internally after LoRA application
-                "positive":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                "negative":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                # Hidden – embedding selection (set via Casting Coach)
-                "pos_embedding": ("STRING", {"default": ""}),
-                "neg_embedding": ("STRING", {"default": ""}),
+                # Raw prompt strings — connect from DDT or type directly
+                "positive":    ("STRING", {"multiline": True, "default": ""}),
+                "negative":    ("STRING", {"multiline": True, "default": ""}),
                 # Hidden – resolution pills
                 "dimension":   ("STRING", {"default": dim_options[0]}),
                 # Hidden – inline LoRA picker (JSON array of selected loras)
                 "loras_data":  ("STRING", {"default": "[]"}),
                 # Hidden – trigger word chip states (JSON array of { lora, text, active })
                 "trigger_words_data": ("STRING", {"default": "[]"}),
+                # Batch size for generation (slider 1-5)
+                "batch_size":  ("INT", {"default": 1, "min": 1, "max": 5, "step": 1, "display": "slider"}),
             },
             "optional": {
-                "image":      ("IMAGE",),
-                "lora_stack": ("LORA_STACK",),  # chain from external stacker
+                "image":        ("IMAGE",),
+                "lora_stack":   ("LORA_STACK",),   # chain from external stacker
+                # Embedding selection — wired from DirtyBirdsEmbeddingLoader or set inline
+                "pos_embedding": ("STRING", {"default": ""}),
+                "neg_embedding": ("STRING", {"default": ""}),
             }
         }
 
@@ -159,10 +161,9 @@ class DirtyBirdsLoader:
             return random.random()
         return dimension
 
-    def process(self, workflow, ckpt_name, vae_name, positive, negative,
-                pos_embedding, neg_embedding, dimension,
-                loras_data="[]", trigger_words_data="[]",
-                image=None, lora_stack=None):
+    def process(self, workflow, ckpt_name, vae_name, positive="", negative="",
+                dimension="__random__", loras_data="[]", trigger_words_data="[]", batch_size=1,
+                image=None, lora_stack=None, pos_embedding="", neg_embedding=""):
 
         # ── Checkpoint ──────────────────────────────────────────────────────
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
@@ -237,6 +238,8 @@ class DirtyBirdsLoader:
             raw = (raw or "").strip()
             if not raw:
                 return ""
+            if raw.startswith("!"):
+                return ""  # toggled off in UI
             if ":" in raw:
                 base, _, strength = raw.rpartition(":")
                 try:
@@ -275,7 +278,7 @@ class DirtyBirdsLoader:
                 dimension = random.choice(list(dims_data.keys())) if dims_data else "1024x1024"
                 logger.info("[DirtyBirds] Random resolution selected: %s", dimension)
             width, height = dims_data.get(dimension, [1024, 1024])
-            latent_tensor = torch.zeros([1, 4, height // 8, width // 8], device=device, dtype=dtype)
+            latent_tensor = torch.zeros([batch_size, 4, height // 8, width // 8], device=device, dtype=dtype)
             latent = {"samples": latent_tensor}
         else:
             if image is None:
@@ -298,6 +301,9 @@ class DirtyBirdsLoader:
 
             image_bhwc = image_bhwc.to(device=device, dtype=dtype)
             latent_tensor = vae.encode(image_bhwc)
+            # Tile a single encoded image up to the requested batch size.
+            if batch_size > 1 and latent_tensor.shape[0] == 1:
+                latent_tensor = latent_tensor.repeat(batch_size, 1, 1, 1)
             latent = {"samples": latent_tensor}
             # Dimensions for loader_settings (channels-last axes)
             height = image_bhwc.shape[1]
@@ -324,7 +330,7 @@ class DirtyBirdsLoader:
                 "negative":           negative,
                 "empty_latent_width":  width,
                 "empty_latent_height": height,
-                "batch_size":         1,
+                "batch_size":         batch_size,
                 # DirtyBirds-specific extras (harmless to Easy_Use nodes)
                 "db_pos_embedding":   pos_embedding,
                 "db_neg_embedding":   neg_embedding,
@@ -336,8 +342,10 @@ class DirtyBirdsLoader:
         # Standard BASIC_PIPE: (model, clip, vae, positive, negative)
         basic_pipe = (model, clip, vae, positive_cond, negative_cond)
 
-        # Send executed prompt text back to the node UI ("Dirty Talk" preview)
-        return {"ui": {"db_prompts": [positive, negative]},
+        # Send executed prompt text and external lora names back to the node UI.
+        ext_lora_names = [os.path.basename(path) for path, _, _ in (lora_stack or [])]
+        return {"ui": {"db_prompts": [positive, negative],
+                       "db_lora_stack": ext_lora_names},
                 "result": (pipe, basic_pipe, latent)}
 
 

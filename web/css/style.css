@@ -12,8 +12,7 @@
 
 .db-section-label,
 .db-section-label * {
-  margin-top: 0 !important;
-  padding-top: 0 !important;
+  margin: 0 !important;
 }
 
 /* ── Workflow Toggle Buttons ─────────────────────────────── */
@@ -58,11 +57,14 @@
 .db-section-label {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 2px 0;
+  height: 100%;            /* fill the DOM-widget box so text can center */
+  padding: 0;
   margin: 0;
   box-sizing: border-box;
-  line-height: 1;
+  line-height: normal;
+  overflow: visible;       /* don't clip the glow / tall caps */
 }
 
 .db-sep-line {
@@ -75,6 +77,7 @@
 .db-sep-text {
   font-size: 13px;
   font-weight: 900;
+  line-height: 1.5;        /* room for ascenders so tops aren't clipped */
   letter-spacing: 2.5px;
   text-transform: uppercase;
   color: #5aadff;
