@@ -192,7 +192,7 @@ app.registerExtension({
         setBooruOpen(false);
         booruInput.value = "";
         const data = await fetchJSON(
-          `/dirtybirds/booru-search?query=${encodeURIComponent(q)}&source=danbooru&max_tags=40`
+          `/dirtybirds/booru-search?query=${encodeURIComponent(q)}&source=aibooru&max_tags=40`
         );
         const tags = data?.tags || [];
         const items = [];

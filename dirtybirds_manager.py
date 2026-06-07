@@ -497,6 +497,50 @@ async def api_lora_preview(request):
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint / VAE preview route
+# ---------------------------------------------------------------------------
+# Models (checkpoints, vae) are huge — never hash or call Civitai for them.
+# We only look for a sibling preview image next to the model file, mirroring
+# the LoRA sibling chain (step 2 of get_lora_meta).
+
+def _find_model_sibling_preview(folder_type, name):
+    path = folder_paths.get_full_path(folder_type, name)
+    if not path or not os.path.exists(path):
+        return None
+    base = os.path.splitext(path)[0]
+    for ext in (".preview.png", ".preview.jpg", ".preview.jpeg",
+                ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        candidate = base + ext
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+@PromptServer.instance.routes.get("/dirtybirds/model-preview")
+async def api_model_preview(request):
+    folder_type = request.rel_url.query.get("type", "").strip()
+    name = request.rel_url.query.get("name", "").strip()
+    if folder_type not in ("checkpoints", "vae") or not name:
+        return web.Response(status=400)
+
+    loop = asyncio.get_event_loop()
+    preview_path = await loop.run_in_executor(
+        None, _find_model_sibling_preview, folder_type, name)
+
+    if not preview_path or not os.path.exists(preview_path):
+        return web.Response(status=404)
+
+    ext = os.path.splitext(preview_path)[1].lower()
+    ctype = {
+        ".png":  "image/png",
+        ".webp": "image/webp",
+        ".gif":  "image/gif",
+    }.get(ext, "image/jpeg")
+    with open(preview_path, "rb") as f:
+        return web.Response(body=f.read(), content_type=ctype)
+
+
+# ---------------------------------------------------------------------------
 # Embedding metadata routes (mirror the LoRA routes above)
 # ---------------------------------------------------------------------------
 

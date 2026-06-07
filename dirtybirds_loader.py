@@ -207,10 +207,28 @@ class DirtyBirdsLoader:
                 float(entry.get("clip_strength", entry.get("strength", 1.0))),
             ))
 
-        if lora_stack:
-            combined_stack.extend(lora_stack)
+        inline_count = len(combined_stack)
+
+        # lora_stack entries (e.g. from "Lora Cycler (LoraManager)") carry a name
+        # RELATIVE to the loras root, not a full path. apply_lora_stack feeds the
+        # first element straight to load_torch_file, which resolves against the cwd —
+        # so resolve to a real path here (mirrors the inline-entry handling above),
+        # tolerating both relative names and already-absolute paths.
+        for entry in (lora_stack or []):
+            try:
+                name, sm, sc = entry[0], entry[1], entry[2]
+            except (TypeError, IndexError):
+                continue
+            resolved = name if (os.path.isabs(name) and os.path.exists(name)) \
+                else folder_paths.get_full_path("loras", name)
+            if not resolved or not os.path.exists(resolved):
+                logger.warning("[DirtyBirds] lora_stack LoRA not found: %s", name)
+                continue
+            combined_stack.append((resolved, float(sm), float(sc)))
 
         if combined_stack:
+            logger.info("[DirtyBirds] Applying %d LoRA(s): %d inline + %d via lora_stack",
+                        len(combined_stack), inline_count, len(combined_stack) - inline_count)
             model, clip = apply_lora_stack(model, clip, combined_stack)
 
         # ── Trigger words (appended to positive before encoding) ─────────────
@@ -277,7 +295,16 @@ class DirtyBirdsLoader:
                 import random
                 dimension = random.choice(list(dims_data.keys())) if dims_data else "1024x1024"
                 logger.info("[DirtyBirds] Random resolution selected: %s", dimension)
-            width, height = dims_data.get(dimension, [1024, 1024])
+            # Resolution is stored as a "WIDTHxHEIGHT" string (ratio grid + custom
+            # picker). Prefer the named preset, else parse the raw WxH directly.
+            wh = dims_data.get(dimension)
+            if not wh:
+                parts = str(dimension).lower().split("x")
+                try:
+                    wh = [int(parts[0]), int(parts[1])]
+                except (ValueError, IndexError):
+                    wh = [1024, 1024]
+            width, height = wh
             latent_tensor = torch.zeros([batch_size, 4, height // 8, width // 8], device=device, dtype=dtype)
             latent = {"samples": latent_tensor}
         else:

@@ -19,6 +19,7 @@ from server import PromptServer
 logger = logging.getLogger(__name__)
 
 _DANBOORU_TAGS_URL = "https://danbooru.donmai.us/tags.json"
+_AIBOORU_TAGS_URL  = "https://aibooru.online/tags.json"
 _GELBOORU_TAGS_URL = "https://gelbooru.com/index.php"
 
 _TAG_TYPE_NAMES = {
@@ -30,23 +31,40 @@ _TAG_TYPE_NAMES = {
 }
 
 
-def _fetch_danbooru(query, max_tags):
-    # Build query string manually — urlencode percent-encodes brackets which
-    # Danbooru silently ignores, so the search parameter must stay literal.
+def _fetch_danbooru_style(base_url, query, max_tags):
+    # Danbooru-engine tags.json (Danbooru, AIbooru). Build the query string
+    # manually — urlencode percent-encodes brackets which the API ignores, so
+    # the search parameter must stay literal.
     qs = (
         f"search[name_or_alias_matches]={urllib.parse.quote(f'*{query}*')}"
         f"&search[order]=count"
         f"&limit={min(max_tags, 200)}"
     )
-    url = f"{_DANBOORU_TAGS_URL}?{qs}"
+    url = f"{base_url}?{qs}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode())
         return [t["name"] for t in data if isinstance(t, dict) and t.get("name")]
     except Exception as e:
-        logger.warning("[DirtyBirds] Danbooru fetch failed: %s", e)
+        logger.warning("[DirtyBirds] %s fetch failed: %s", base_url, e)
         return []
+
+
+def _fetch_danbooru(query, max_tags):
+    return _fetch_danbooru_style(_DANBOORU_TAGS_URL, query, max_tags)
+
+
+def _fetch_aibooru(query, max_tags):
+    return _fetch_danbooru_style(_AIBOORU_TAGS_URL, query, max_tags)
+
+
+def _dispatch(source, query, max_tags):
+    if source == "danbooru":
+        return _fetch_danbooru(query, max_tags)
+    if source == "gelbooru":
+        return _fetch_gelbooru(query, max_tags)
+    return _fetch_aibooru(query, max_tags)  # default
 
 
 def _fetch_gelbooru(query, max_tags):
@@ -77,7 +95,7 @@ class DirtyBirdsBooruTag:
         return {
             "required": {
                 "query":     ("STRING",  {"default": ""}),
-                "source":    (["danbooru", "gelbooru"],),
+                "source":    (["aibooru", "danbooru", "gelbooru"],),
                 "max_tags":  ("INT",     {"default": 40, "min": 5, "max": 200, "step": 5}),
                 "blacklist": ("STRING",  {"default": ""}),
             },
@@ -89,7 +107,7 @@ class DirtyBirdsBooruTag:
     CATEGORY      = "DirtyBirds"
 
     @classmethod
-    def IS_CHANGED(cls, query="", source="danbooru", max_tags=40, blacklist=""):
+    def IS_CHANGED(cls, query="", source="aibooru", max_tags=40, blacklist=""):
         # Re-run when any input changes; cache when identical.
         return (query, source, max_tags, blacklist)
 
@@ -98,10 +116,7 @@ class DirtyBirdsBooruTag:
         if not query:
             return ("",)
 
-        if source == "danbooru":
-            tags = _fetch_danbooru(query, max_tags)
-        else:
-            tags = _fetch_gelbooru(query, max_tags)
+        tags = _dispatch(source, query, max_tags)
 
         # Apply blacklist filter
         blocked = {t.strip().lower() for t in blacklist.split(",") if t.strip()}
@@ -120,7 +135,7 @@ class DirtyBirdsBooruTag:
 async def booru_search(request):
     import asyncio
     query  = request.rel_url.query.get("query",   "").strip()
-    source = request.rel_url.query.get("source",  "danbooru")
+    source = request.rel_url.query.get("source",  "aibooru")
     try:
         max_tags = int(request.rel_url.query.get("max_tags", "40"))
     except ValueError:
@@ -131,10 +146,7 @@ async def booru_search(request):
         return web.json_response({"tags": []})
 
     loop = asyncio.get_event_loop()
-    if source == "gelbooru":
-        tags = await loop.run_in_executor(None, _fetch_gelbooru, query, max_tags)
-    else:
-        tags = await loop.run_in_executor(None, _fetch_danbooru, query, max_tags)
+    tags = await loop.run_in_executor(None, _dispatch, source, query, max_tags)
 
     return web.json_response({"tags": tags[:max_tags]})
 

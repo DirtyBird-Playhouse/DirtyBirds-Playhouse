@@ -75,13 +75,13 @@
 }
 
 .db-sep-text {
-  font-size: 13px;
-  font-weight: 900;
+  font-size: 11px;
+  font-weight: 600;
   line-height: 1.5;        /* room for ascenders so tops aren't clipped */
-  letter-spacing: 2.5px;
+  letter-spacing: 3px;
   text-transform: uppercase;
-  color: #5aadff;
-  text-shadow: 0 0 10px rgba(90, 173, 255, 0.5);
+  color: #6fb4ec;
+  text-shadow: 0 0 6px rgba(90, 173, 255, 0.25);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -475,7 +475,7 @@
 .db-sel-slider {
   width: 60px;
   flex-shrink: 0;
-  accent-color: #c8501a;
+  accent-color: #5aadff;
   cursor: pointer;
 }
 
@@ -776,10 +776,40 @@
 .db-preview-block.db-pos { border-left-color: #3a6a3a; color: #9ac09a; }
 .db-preview-block.db-neg { border-left-color: #6a3a3a; color: #c09a9a; }
 
-/* LoRA rows adapt to column width */
-.db-talent-loras .db-sel-slider { width: 44px; }
-.db-talent-loras .db-sel-name   { min-width: 0; }
-.db-talent-loras .db-sel-val    { width: 22px; font-size: 9px; }
+/* Embedding slot color-coded accents (positive/negative visual distinction) */
+.db-sel-row.db-emb-pos { border-left: 3px solid #2e7d4f; }
+.db-sel-row.db-emb-neg { border-left: 3px solid #9a3b2e; }
+
+/* Embedding column headers tinted to match the pos/neg stripes */
+.db-emb-head-pos { color: #5a9a6f; }
+.db-emb-head-neg { color: #9a6a5a; }
+
+/* Empty embedding slot — slim dashed "＋ Add" button sized for a half column */
+.db-emb-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 1px dashed #3a3a3a;
+  border-radius: 5px;
+  background: #1f1f1f;
+  color: #777;
+  font-size: 11px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.db-emb-add:hover { border-color: #555; color: #aaa; }
+.db-emb-add.db-emb-pos { border-left: 3px solid #2e7d4f; }
+.db-emb-add.db-emb-neg { border-left: 3px solid #9a3b2e; }
+
+/* LoRA + embedding rows adapt to narrow column width */
+.db-talent-loras .db-sel-slider,
+.db-talent-columns .db-sel-slider { width: 44px; }
+.db-talent-loras .db-sel-name,
+.db-talent-columns .db-sel-name   { min-width: 0; }
+.db-talent-loras .db-sel-val,
+.db-talent-columns .db-sel-val    { width: 22px; font-size: 9px; }
 
 /* ── DirtyBirds "Open Folder" toolbar button — dropdown menu ─────────────── */
 .db-folder-menu {
@@ -821,3 +851,169 @@
   flex-shrink: 0;
   font-size: 14px;
 }
+
+/* ── Minimal Checkpoint / VAE selector rows ──────────────────────────────── */
+.db-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #1e1e1e;
+  border: 1px solid #2e2e2e;
+  box-sizing: border-box;
+  height: 26px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.db-model-row:hover { border-color: #3a6a8a; background: #1a2430; }
+.db-model-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #5a7a90;
+  flex: 0 0 34px;
+}
+.db-model-name {
+  flex: 1;
+  font-size: 11px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.db-model-caret { color: #555; font-size: 9px; flex-shrink: 0; }
+
+/* ── Resolution ratio chip grid (Size Matters) — single row of 6 ─────────── */
+.db-ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  padding: 2px 0 4px;
+  box-sizing: border-box;
+}
+.db-ratio-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 3px 2px;
+  border-radius: 5px;
+  border: 1px solid #3a3a3a;
+  background: #222;
+  color: #999;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+  box-sizing: border-box;
+}
+.db-ratio-chip:hover { border-color: #5aadff; color: #cfe6ff; }
+.db-ratio-chip.db-active {
+  background: #163048;
+  border-color: #5aadff;
+  color: #cfe6ff;
+  box-shadow: 0 0 8px rgba(90, 173, 255, 0.35);
+}
+.db-ratio-glyph { display: flex; align-items: center; color: currentColor; opacity: 0.85; }
+.db-ratio-glyph svg { width: 14px; height: 14px; margin: 0; }
+
+/* Custom hover tooltip (resolution) */
+.db-ratio-tip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  background: #0d0d0d;
+  border: 1px solid #5aadff;
+  color: #cfe6ff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  transform: translate(-50%, -100%);
+}
+
+/* Custom ratio / resolution buttons under the grid */
+.db-ratio-custom-row { display: flex; gap: 4px; padding: 0 0 2px; }
+.db-ratio-custom-btn {
+  flex: 1;
+  padding: 4px 4px;
+  border-radius: 6px;
+  border: 1px dashed #3a3a3a;
+  background: #1c1c1c;
+  color: #888;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.db-ratio-custom-btn:hover { border-color: #5aadff; color: #9cf; }
+.db-ratio-custom-btn.db-active { border-style: solid; border-color: #5aadff; color: #cfe6ff; }
+
+/* Inline custom W/H input row */
+.db-custom-input-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0 4px;
+}
+.db-custom-input-row input {
+  width: 56px;
+  font-size: 11px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  color: #ccc;
+  border-radius: 4px;
+  padding: 3px 5px;
+  box-sizing: border-box;
+}
+.db-custom-input-row span { color: #777; font-size: 11px; }
+.db-custom-apply {
+  padding: 3px 8px;
+  font-size: 10px;
+  border-radius: 5px;
+  border: 1px solid #3a6a8a;
+  background: #163048;
+  color: #cfe6ff;
+  cursor: pointer;
+}
+
+/* ── Resolution + Batch slider row (label + db-sel-slider) ────────────────── */
+.db-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  height: 26px;
+  box-sizing: border-box;
+}
+.db-slider-row .db-slider-label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 0 0 auto;
+}
+
+/* ── Embedding slot accent stripes (pos green / neg red) ──────────────────── */
+.db-emb-pos { border-left: 3px solid #2e7d4f; }
+.db-emb-neg { border-left: 3px solid #9a3b2e; }
+.db-emb-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px dashed #444;
+  background: #1c1c1c;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.db-emb-add:hover { border-color: #5aadff; color: #9cf; }

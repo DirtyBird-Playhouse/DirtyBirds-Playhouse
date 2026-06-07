@@ -3,7 +3,7 @@
  *
  * Sections (top → bottom):
  *   1. Workflow toggle        (Text2Image / Image2Image)
- *   2. The Main Attraction    (native checkpoint / vae dropdowns)
+ *   2. The Main Attraction    (checkpoint / vae styled flyout buttons)
  *   [native positive / negative STRING widgets]
  *   3. Size Matters           (SDXL resolution pills)
  *   4. The Talent             (LoRA Selected | Lora Trigger Words — two columns)
@@ -60,6 +60,37 @@ function loadPreviewInto(img, name) {
     q.forEach(i => { i.src = url; i.classList.add("db-lp-thumb-loaded"); });
   };
   test.onerror = () => { _previewCache.set(name, "none"); _pendingImgs.delete(name); };
+  test.src = url;
+}
+
+// ── Model preview cache (checkpoint / vae) ────────────────────────────────────
+// Keyed by `${type}:${name}`. Calls onOk when an image exists, onNone otherwise,
+// so the caller can hide the thumbnail when a model has no sibling preview.
+const _modelPreviewCache = new Map();
+const _modelPendingImgs  = new Map();
+
+function loadModelPreviewInto(img, type, name, onOk, onNone) {
+  const url   = `/dirtybirds/model-preview?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`;
+  const key   = `${type}:${name}`;
+  const state = _modelPreviewCache.get(key);
+  if (state === "none") { onNone?.(); return; }
+  if (state === "ok")   { img.src = url; img.classList.add("db-lp-thumb-loaded"); onOk?.(); return; }
+  if (state === "loading") { _modelPendingImgs.get(key)?.push({ img, onOk, onNone }); return; }
+  _modelPreviewCache.set(key, "loading");
+  _modelPendingImgs.set(key, [{ img, onOk, onNone }]);
+  const test  = new Image();
+  test.onload = () => {
+    _modelPreviewCache.set(key, "ok");
+    const q = _modelPendingImgs.get(key) || [];
+    _modelPendingImgs.delete(key);
+    q.forEach(e => { e.img.src = url; e.img.classList.add("db-lp-thumb-loaded"); e.onOk?.(); });
+  };
+  test.onerror = () => {
+    _modelPreviewCache.set(key, "none");
+    const q = _modelPendingImgs.get(key) || [];
+    _modelPendingImgs.delete(key);
+    q.forEach(e => e.onNone?.());
+  };
   test.src = url;
 }
 
@@ -463,17 +494,75 @@ app.registerExtension({
       const wIdx = node.widgets.findIndex(w=>w.name==="db_workflow");
       if (wIdx>0) { const [we]=node.widgets.splice(wIdx,1); node.widgets.unshift(we); }
 
-      // ── 1b. MODEL TITLE ──────────────────────────────────────────────────
+      // ── 1b. THE MAIN ATTRACTION — checkpoint / vae styled flyout buttons ──
       addTitle("db_modellabel", makeSectionLabel("The Main Attraction"), 20);
-      {
-        const mlIdx = node.widgets.findIndex(w=>w.name==="db_modellabel");
-        const ckIdx = node.widgets.findIndex(w=>w.name==="ckpt_name");
-        if (mlIdx>-1 && ckIdx>-1 && mlIdx!==ckIdx-1) {
-          const [ml] = node.widgets.splice(mlIdx,1);
-          const insertAt = node.widgets.findIndex(w=>w.name==="ckpt_name");
-          node.widgets.splice(insertAt, 0, ml);
+
+      // Hide the native combos; we drive their values from styled buttons below.
+      const ckptWidget = hideWidget("ckpt_name");
+      const vaeWidget  = hideWidget("vae_name");
+
+      // Minimal selector row (TAG · current value · caret) that opens a ContextMenu
+      // flyout of the hidden combo's options. Understated so the model pickers don't
+      // dominate the node.
+      // LoRA-row style: model preview thumbnail + TAG + name + caret. The thumb
+      // shows the model's sibling preview image (via /dirtybirds/model-preview)
+      // and is hidden when no image exists on disk. previewType is the
+      // folder_paths type ("checkpoints" / "vae") the backend route resolves.
+      function makeComboFlyout(widget, tag, title, displayFn, emptyLabel, previewType) {
+        const row = document.createElement("div");
+        row.className = "db-sel-row";
+        row.style.cursor = "pointer";
+        const thumb = document.createElement("img");
+        thumb.className = "db-sel-thumb"; thumb.alt = ""; thumb.style.display = "none";
+        const tagEl = document.createElement("span"); tagEl.className = "db-model-tag"; tagEl.textContent = tag;
+        const nameEl = document.createElement("span"); nameEl.className = "db-sel-name"; nameEl.style.flex = "1";
+        const caret = document.createElement("span"); caret.className = "db-model-caret"; caret.textContent = "▾";
+        row.append(thumb, tagEl, nameEl, caret);
+
+        function refreshThumb() {
+          const v = widget?.value ?? "";
+          thumb.style.display = "none";
+          thumb.classList.remove("db-lp-thumb-loaded");
+          // No preview for an unset value or the "Baked VAE" sentinel (no file).
+          if (v && previewType && v !== "Baked VAE") {
+            loadModelPreviewInto(thumb, previewType, v,
+              () => { thumb.style.display = ""; },   // onOk → show
+              () => { thumb.style.display = "none"; } // onNone → keep hidden
+            );
+          }
         }
+
+        function refresh() {
+          const v = widget?.value ?? "";
+          nameEl.textContent = v ? displayFn(v) : emptyLabel;
+          row.title = v || "";
+          refreshThumb();
+        }
+        row.addEventListener("click", (e) => {
+          const opts = widget?.options?.values || [];
+          const items = opts.length
+            ? opts.map(name => ({ content: displayFn(name), callback: () => {
+                if (widget) widget.value = name;
+                refresh();
+                node.setDirtyCanvas(true);
+              }}))
+            : [{ content: "(none found)", disabled: true }];
+          new LiteGraph.ContextMenu(items, {
+            event: e,
+            title,
+            scale: Math.max(1, app.canvas?.ds?.scale || 1),
+          });
+        });
+        refresh();
+        return { btn: row, refresh };
       }
+
+      const ckptDisplay = (v) => (v || "(none)").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
+      const vaeDisplay  = (v) => v || "Baked VAE";
+      const ckptFlyout = makeComboFlyout(ckptWidget, "CKPT", "Checkpoint", ckptDisplay, "Select checkpoint", "checkpoints");
+      const vaeFlyout  = makeComboFlyout(vaeWidget,  "VAE",  "VAE",        vaeDisplay,  "Select VAE",        "vae");
+      addFixed("db_ckpt_btn", ckptFlyout.btn, 30);
+      addFixed("db_vae_btn",  vaeFlyout.btn,  30);
 
       // ── Embedding apply method (from Casting Coach event) ────────────────
       node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
@@ -486,75 +575,328 @@ app.registerExtension({
         node.setDirtyCanvas(true);
       };
 
-      // ── 2. RESOLUTION (compact dropdown) ─────────────────────────────────
+      // ── 2. SIZE MATTERS — resolution picker (embedding style) + batch + random ──
       addTitle("db_reslabel", makeSectionLabel("Size Matters"), 20);
 
-      if (dimensionWidget && !dimensionWidget.value) dimensionWidget.value = dimensionKeys[0];
-
-      const resSelect = document.createElement("button");
-      resSelect.className = "db-res-select";
-
-      function refreshResSelect() {
-        const isT2I = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
-        resSelect.disabled = !isT2I;
-        resSelect.classList.toggle("db-disabled", !isT2I);
-        if (dimensionWidget?.value === RANDOM_DIM) {
-          resSelect.innerHTML = '<span class="db-res-sel-glyph">🎲</span>' +
-            '<span class="db-res-sel-label">Random</span><span class="db-res-sel-caret">▾</span>';
-          return;
-        }
-        const key = dimensionWidget?.value || dimensionKeys[0];
-        const [w, h] = dimData[key] || [1024, 1024];
-        resSelect.innerHTML = "";
-        const g = document.createElement("span"); g.className = "db-res-sel-glyph"; g.appendChild(makeAspectSVG(w, h));
-        const l = document.createElement("span"); l.className = "db-res-sel-label"; l.textContent = `${key}  ·  ${w}×${h}`;
-        const c = document.createElement("span"); c.className = "db-res-sel-caret"; c.textContent = "▾";
-        resSelect.append(g, l, c);
+      // Resolution is stored as "WIDTHxHEIGHT" or "RANDOM" in the hidden `dimension` widget.
+      const RESOLUTIONS = [
+        { label: "1:1",  w: 1024, h: 1024 },
+        { label: "16:9", w: 1344, h: 768  },
+        { label: "9:16", w: 768,  h: 1344 },
+        { label: "3:2",  w: 1216, h: 832  },
+        { label: "2:3",  w: 832,  h: 1216 },
+        { label: "4:3",  w: 1152, h: 896  },
+      ];
+      if (dimensionWidget && !/^\d+x\d+$|^RANDOM$/.test(dimensionWidget.value || "")) {
+        dimensionWidget.value = "1024x1024";
       }
 
-      resSelect.addEventListener("click", () => {
-        if (resSelect.disabled) return;
-        const isRandom = dimensionWidget?.value === RANDOM_DIM;
-        showResolutionFlyout(dimData, dimensionKeys,
-          isRandom ? dimensionKeys[0] : (dimensionWidget?.value || dimensionKeys[0]),
-          isRandom, (value) => {
-            // Store the sentinel as-is so Python randomizes each run; otherwise
-            // store the chosen resolution key.
-            if (dimensionWidget) dimensionWidget.value = (value === RANDOM_DIM) ? RANDOM_DIM : value;
-            refreshResSelect();
-            node.setDirtyCanvas(true);
-          });
-      });
-      addFixed("db_resselect", resSelect, 38);
+      // Resolution picker row (embedding-style: glyph + label, click to open menu).
+      const resRow = document.createElement("div");
+      resRow.className = "db-sel-row";
+      const resGlyph = document.createElement("span"); resGlyph.className = "db-sel-thumb"; resGlyph.style.background = "none"; resGlyph.style.width = "26px"; resGlyph.style.height = "26px"; resGlyph.style.display = "flex"; resGlyph.style.alignItems = "center"; resGlyph.style.justifyContent = "center";
+      const resLabel = document.createElement("span"); resLabel.className = "db-sel-name"; resLabel.style.flex = "1";
+      resRow.append(resGlyph, resLabel);
+      resRow.style.cursor = "pointer";
 
-      // Move batch_size widget to appear right after the resolution picker; clamp to min 1
-      requestAnimationFrame(() => {
-        const bsIdx  = node.widgets?.findIndex(w => w.name === "batch_size");
-        const rsIdx  = node.widgets?.findIndex(w => w.name === "db_resselect");
-        if (bsIdx > -1) {
-          const bw = node.widgets[bsIdx];
-          if (bw.value < 1) bw.value = 1;
-          if (rsIdx > -1 && bsIdx !== rsIdx + 1) {
-            node.widgets.splice(bsIdx, 1);
-            const insertAt = node.widgets.findIndex(w => w.name === "db_resselect");
-            node.widgets.splice(insertAt + 1, 0, bw);
+      function refreshResRow() {
+        const cur = dimensionWidget?.value || "1024x1024";
+        if (cur === "RANDOM") {
+          resGlyph.innerHTML = ""; resLabel.textContent = "🎲 Random";
+        } else {
+          const [w, h] = cur.split("x").map(Number);
+          resGlyph.innerHTML = "";
+          resGlyph.appendChild(makeAspectSVG(w, h));
+          const res = RESOLUTIONS.find(r => r.w === w && r.h === h);
+          resLabel.textContent = res ? `${res.label}  ·  ${w}×${h}` : `${w}×${h}`;
+        }
+      }
+      resRow.addEventListener("click", (e) => {
+        const items = RESOLUTIONS.map(r => ({
+          content: `${r.label}  ·  ${r.w}×${r.h}`,
+          callback: () => {
+            if (dimensionWidget) dimensionWidget.value = `${r.w}x${r.h}`;
+            refreshResRow();
+            node.setDirtyCanvas(true);
           }
+        }));
+        items.push(null);
+        items.push({
+          content: "🎲 Random",
+          callback: () => {
+            if (dimensionWidget) dimensionWidget.value = "RANDOM";
+            refreshResRow();
+            node.setDirtyCanvas(true);
+          }
+        });
+        new LiteGraph.ContextMenu(items, {
+          event: e,
+          title: "Resolution",
+          scale: Math.max(1, app.canvas?.ds?.scale || 1),
+        });
+      });
+      addFixed("db_res_row", resRow, 30);
+
+      // Batch slider + Random toggle row.
+      const batchWidget = hideWidget("batch_size");
+      const batchRow = document.createElement("div");
+      batchRow.className = "db-slider-row";
+      batchRow.style.justifyContent = "space-between";
+      const batchLabel = document.createElement("span"); batchLabel.className = "db-slider-label"; batchLabel.textContent = "Batch";
+      const batchSlider = document.createElement("input"); batchSlider.type = "range"; batchSlider.className = "db-sel-slider";
+      batchSlider.min = "1"; batchSlider.max = "5"; batchSlider.step = "1"; batchSlider.style.flex = "0 0 60px";
+      batchSlider.value = String(Math.max(1, Math.min(5, batchWidget?.value || 1)));
+      const batchVal = document.createElement("span"); batchVal.className = "db-sel-val"; batchVal.textContent = batchSlider.value;
+      batchSlider.addEventListener("input", () => {
+        if (batchWidget) batchWidget.value = parseInt(batchSlider.value, 10);
+        batchVal.textContent = batchSlider.value;
+      });
+
+      // Random toggle (checkbox on the right side of batch row).
+      const randomToggle = document.createElement("input");
+      randomToggle.type = "checkbox";
+      randomToggle.style.cssText = "width:16px;height:16px;cursor:pointer;accent-color:#5aadff;flex-shrink:0;";
+      randomToggle.title = "Randomize resolution each run";
+      randomToggle.addEventListener("change", () => {
+        if (randomToggle.checked) {
+          if (dimensionWidget) dimensionWidget.value = "RANDOM";
+          refreshResRow();
+        } else {
+          if (dimensionWidget) dimensionWidget.value = "1024x1024";
+          refreshResRow();
         }
         node.setDirtyCanvas(true);
       });
 
+      batchRow.append(batchLabel, batchSlider, batchVal, randomToggle);
+      addFixed("db_batch_row", batchRow, 26);
+
+      // T2I enables resolution picker; I2I disables it (image drives the size).
+      let resEnabled = true;
       function updateResolutionState() {
-        const isT2I = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
-        // Random only applies to Text2Image; fall back to a concrete size for I2I.
-        if (!isT2I && dimensionWidget?.value === RANDOM_DIM) {
-          dimensionWidget.value = dimensionKeys[0];
-        }
-        refreshResSelect();
+        resEnabled = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
+        resRow.style.opacity = resEnabled ? "" : "0.4";
+        resRow.style.pointerEvents = resEnabled ? "" : "none";
       }
-      refreshResSelect();
+
+      function syncRandomToggle() {
+        randomToggle.checked = (dimensionWidget?.value === "RANDOM");
+      }
+
+      refreshResRow();
+      syncRandomToggle();
       updateResolutionState();
 
-      // ── 3. THE TALENT — two-column layout ────────────────────────────────
+      // ── 3. THE CAST — positive / negative embedding picker (compact rows) ────
+      addTitle("db_castlabel", makeSectionLabel("The Cast"), 20);
+
+      function buildEmbedSlot(slot, widget) {
+        // slot: "positive" or "negative"
+        // Returns a single db-sel-row that expands/collapses based on state
+        // Applies color-coded border stripe via db-emb-pos / db-emb-neg class
+
+        const isPositive = slot === "positive";
+        const slotClass = isPositive ? "db-emb-pos" : "db-emb-neg";
+
+        const row = document.createElement("div");
+        row.className = `db-sel-row ${slotClass}`;
+
+        let current = { name: "", strength: 1.0, active: true };
+        let _embedList = null;
+
+        // Serialize to widget value: "name", "name:strength", or "!name:strength"
+        function serializeEmbed() {
+          if (!current.name) return "";
+          const base = Math.abs(current.strength - 1.0) < 0.001 ? current.name : `${current.name}:${current.strength.toFixed(2)}`;
+          return current.active ? base : `!${base}`;
+        }
+
+        // Render the row state (empty add-button or populated LoRA-style row)
+        function render() {
+          row.innerHTML = "";
+          row.style.cssText = "";
+
+          if (!current.name) {
+            // Empty state: slim dashed add-button that fits a half-width column.
+            // Header already says Positive/Negative, so the label is just "＋ Add".
+            row.className = `db-emb-add ${slotClass}`;
+            row.textContent = "＋ Add";
+            row.title = isPositive ? "Add positive embedding" : "Add negative embedding";
+            row.addEventListener("click", openEmbedMenu);
+            return;
+          }
+
+          // Populated state: mirror buildLoraPanel's row (class-driven, no thumb).
+          row.className = "db-sel-row " + slotClass + (current.active ? "" : " db-inactive");
+
+          const toggle = document.createElement("button");
+          toggle.className = "db-sel-toggle";
+          toggle.textContent = current.active ? "●" : "○";
+          toggle.title = current.active ? "Disable" : "Enable";
+          toggle.addEventListener("click", () => {
+            current.active = !current.active;
+            toggle.textContent = current.active ? "●" : "○";
+            toggle.title = current.active ? "Disable" : "Enable";
+            row.classList.toggle("db-inactive", !current.active);
+            if (widget) widget.value = serializeEmbed();
+          });
+
+          const nameEl = document.createElement("span");
+          nameEl.className = "db-sel-name";
+          nameEl.textContent = current.name;
+          nameEl.title = current.name;
+
+          const slider = document.createElement("input");
+          slider.type = "range";
+          slider.className = "db-sel-slider";
+          slider.min = "0.10";
+          slider.max = "2.00";
+          slider.step = "0.05";
+          slider.value = current.strength.toFixed(2);
+          slider.title = `Weight: ${current.strength.toFixed(2)}`;
+
+          const valEl = document.createElement("span");
+          valEl.className = "db-sel-val";
+          valEl.textContent = current.strength.toFixed(2);
+
+          slider.addEventListener("input", () => {
+            current.strength = parseFloat(slider.value);
+            valEl.textContent = current.strength.toFixed(2);
+            slider.title = `Weight: ${current.strength.toFixed(2)}`;
+            if (widget) widget.value = serializeEmbed();
+          });
+
+          const rmBtn = document.createElement("button");
+          rmBtn.className = "db-sel-remove";
+          rmBtn.textContent = "✕";
+          rmBtn.title = "Remove";
+          rmBtn.addEventListener("click", () => {
+            current = { name: "", strength: 1.0, active: true };
+            if (widget) widget.value = "";
+            render();
+            syncEmbedH();
+          });
+
+          row.append(toggle, nameEl, slider, valEl, rmBtn);
+        }
+
+        // Open embedding selection menu
+        async function openEmbedMenu(e) {
+          if (!_embedList) {
+            const data = await fetchJSON("/dirtybirds/embeddings");
+            _embedList = Array.isArray(data) ? data : [];
+          }
+          const items = _embedList.length
+            ? _embedList.map(n => ({
+                content: n,
+                callback: () => {
+                  current = { name: n, strength: 1.0, active: true };
+                  if (widget) widget.value = serializeEmbed();
+                  render();
+                  syncEmbedH();
+                }
+              }))
+            : [{ content: "(no embeddings found)", disabled: true }];
+          new LiteGraph.ContextMenu(items, {
+            event: e,
+            title: isPositive ? "Positive Embedding" : "Negative Embedding",
+            scale: Math.max(1, app.canvas?.ds?.scale || 1),
+          });
+        }
+
+        // Deserialize from widget value
+        function deserialize(raw) {
+          raw = (raw || "").trim();
+          if (!raw) {
+            current = { name: "", strength: 1.0, active: true };
+            render();
+            return;
+          }
+          const active = !raw.startsWith("!");
+          const stripped = active ? raw : raw.slice(1);
+          const parts = stripped.split(":");
+          const strength = parts.length > 1 ? parseFloat(parts[parts.length - 1]) || 1.0 : 1.0;
+          const name = parts.length > 1 ? parts.slice(0, -1).join(":") : stripped;
+          current = { name, strength, active };
+          render();
+        }
+
+        // Public methods for compatibility with old API
+        row._set = (name, strength, active = true) => {
+          current = { name, strength, active };
+          if (widget) widget.value = serializeEmbed();
+          render();
+          syncEmbedH();
+        };
+
+        row._deserialize = deserialize;
+
+        // Initial render (empty state)
+        render();
+
+        return row;
+      }
+
+      // Two-column container mirroring "The Talent" — Positive | divider | Negative
+      const embedColsEl = document.createElement("div");
+      embedColsEl.className = "db-talent-columns";
+      embedColsEl.style.cssText = "box-sizing:border-box;overflow:hidden;";
+
+      const posEmbedRow = buildEmbedSlot("positive", posEmbedWidget);
+      const negEmbedRow = buildEmbedSlot("negative", negEmbedWidget);
+
+      // Left column: Positive
+      const posColEl = document.createElement("div");
+      posColEl.className = "db-talent-loras";
+      const posColHeader = document.createElement("div");
+      posColHeader.className = "db-talent-col-header db-emb-head-pos";
+      posColHeader.textContent = "Positive";
+      posColEl.append(posColHeader, posEmbedRow);
+
+      // Vertical divider
+      const embedDividerEl = document.createElement("div");
+      embedDividerEl.className = "db-talent-divider";
+
+      // Right column: Negative
+      const negColEl = document.createElement("div");
+      negColEl.className = "db-talent-triggerwords";
+      const negColHeader = document.createElement("div");
+      negColHeader.className = "db-talent-col-header db-emb-head-neg";
+      negColHeader.textContent = "Negative";
+      negColEl.append(negColHeader, negEmbedRow);
+
+      embedColsEl.append(posColEl, embedDividerEl, negColEl);
+
+      const embedColsWidget = node.addDOMWidget("db_embed_cols", "customhtml", embedColsEl, {
+        serialize: false, height: 60,
+        getMinHeight: () => Math.max(60, embedColsEl.scrollHeight || 60),
+      });
+
+      function syncEmbedH() {
+        requestAnimationFrame(() => {
+          const h = Math.max(60, embedColsEl.scrollHeight || 60);
+          if (embedColsWidget) { embedColsWidget.height = h; embedColsWidget.computedHeight = h; }
+          node.setDirtyCanvas(true);
+        });
+      }
+      syncEmbedH();
+
+      // Override _dbApplyEmbedding to refresh UI slots
+      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
+        const s = Number(strength);
+        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
+        if (slot === "positive") {
+          if (posEmbedWidget) posEmbedWidget.value = stored;
+          posEmbedRow._set(name, isNaN(s) ? 1.0 : s);
+        }
+        if (slot === "negative") {
+          if (negEmbedWidget) negEmbedWidget.value = stored;
+          negEmbedRow._set(name, isNaN(s) ? 1.0 : s);
+        }
+        node.setDirtyCanvas(true);
+      };
+
+      // ── 4. THE TALENT — two-column layout ────────────────────────────────
       addTitle("db_loralabel", makeSectionLabel("The Talent"), 20);
       let loraEntries = [];
       let twEntries   = [];
@@ -685,182 +1027,18 @@ app.registerExtension({
         return added;
       };
 
-      // ── 4. THE CAST — positive / negative embedding picker ──────────────
-
-      function buildEmbedCol(header, widget) {
-        const col = document.createElement("div");
-        col.style.cssText = "display:flex;flex-direction:column;gap:4px;width:100%;";
-
-        const hdr = document.createElement("div");
-        hdr.className = "db-talent-col-header";
-        hdr.textContent = header;
-
-        const chipArea = document.createElement("div");
-        chipArea.className = "db-sel-loras";
-        chipArea.style.minHeight = "24px";
-
-        const browseBtn = document.createElement("button");
-        browseBtn.className = "db-lora-add-open-btn db-lib-btn";
-        browseBtn.textContent = header.includes("Pos") ? "＋ Positive Embedding" : "＋ Negative Embedding";
-        browseBtn.style.cssText = "width:100%;margin-top:3px;box-sizing:border-box;";
-
-        let _embedList = null;
-
-        browseBtn.addEventListener("click", async (e) => {
-          if (!_embedList) {
-            const data = await fetchJSON("/dirtybirds/embeddings");
-            _embedList = Array.isArray(data) ? data : [];
-          }
-          const items = _embedList.length
-            ? _embedList.map(n => ({ content: n, callback: () => {
-                current = { name: n, strength: 1.0, active: true };
-                if (widget) widget.value = serializeEmbed();
-                renderChip();
-                syncEmbedH();
-              }}))
-            : [{ content: "(no embeddings found)", disabled: true }];
-          new LiteGraph.ContextMenu(items, {
-            event: e,
-            title: header,
-            scale: Math.max(1, app.canvas?.ds?.scale || 1),
-          });
-        });
-
-        col.append(hdr, chipArea, browseBtn);
-
-        let current = { name: "", strength: 1.0, active: true };
-
-        function serializeEmbed() {
-          if (!current.name) return "";
-          const base = Math.abs(current.strength - 1.0) < 0.001 ? current.name : `${current.name}:${current.strength.toFixed(2)}`;
-          return current.active ? base : `!${base}`;
-        }
-
-        function renderChip() {
-          chipArea.innerHTML = "";
-          if (!current.name) return;
-
-          const row = document.createElement("div");
-          row.className = "db-sel-row" + (current.active ? "" : " db-inactive");
-
-          const label = document.createElement("span");
-          label.className = "db-sel-name";
-          label.textContent = current.name;
-          label.title = current.name;
-
-          const toggle = document.createElement("button");
-          toggle.className = "db-sel-toggle";
-          toggle.textContent = current.active ? "●" : "○";
-          toggle.title = current.active ? "Disable" : "Enable";
-          toggle.addEventListener("click", () => {
-            current.active = !current.active;
-            toggle.textContent = current.active ? "●" : "○";
-            toggle.title = current.active ? "Disable" : "Enable";
-            row.classList.toggle("db-inactive", !current.active);
-            if (widget) widget.value = serializeEmbed();
-          });
-
-          const slider = document.createElement("input");
-          slider.type = "range";
-          slider.className = "db-sel-slider";
-          slider.min = "0.10"; slider.max = "2.00"; slider.step = "0.05";
-          slider.value = current.strength.toFixed(2);
-
-          const valEl = document.createElement("span");
-          valEl.className = "db-sel-val";
-          valEl.textContent = current.strength.toFixed(2);
-
-          slider.addEventListener("input", () => {
-            current.strength = parseFloat(slider.value);
-            valEl.textContent = current.strength.toFixed(2);
-            if (widget) widget.value = serializeEmbed();
-          });
-
-          const rmBtn = document.createElement("span");
-          rmBtn.className = "db-sel-remove";
-          rmBtn.textContent = "✕";
-          rmBtn.addEventListener("click", () => {
-            current = { name: "", strength: 1.0, active: true };
-            if (widget) widget.value = "";
-            renderChip();
-            syncEmbedH();
-          });
-
-          row.append(toggle, label, slider, valEl, rmBtn);
-          chipArea.appendChild(row);
-        }
-
-        function deserialize(raw) {
-          raw = (raw || "").trim();
-          if (!raw) { current = { name: "", strength: 1.0, active: true }; renderChip(); return; }
-          const active = !raw.startsWith("!");
-          const stripped = active ? raw : raw.slice(1);
-          const parts = stripped.split(":");
-          const strength = parts.length > 1 ? parseFloat(parts[parts.length - 1]) || 1.0 : 1.0;
-          const name = parts.length > 1 ? parts.slice(0, -1).join(":") : stripped;
-          current = { name, strength, active };
-          renderChip();
-        }
-
-        col._set = (name, strength, active = true) => {
-          current = { name, strength, active };
-          if (widget) widget.value = serializeEmbed();
-          renderChip();
-          syncEmbedH();
-        };
-        col._deserialize = deserialize;
-        return col;
-      }
-
-      const embedColsEl = document.createElement("div");
-      embedColsEl.style.cssText = "display:flex;flex-direction:column;gap:6px;box-sizing:border-box;overflow:hidden;";
-
-      const posEmbedCol = buildEmbedCol("Positive Embedding", posEmbedWidget);
-      const negEmbedCol = buildEmbedCol("Negative Embedding", negEmbedWidget);
-      embedColsEl.append(posEmbedCol, negEmbedCol);
-
-      const embedColsWidget = node.addDOMWidget("db_embed_cols", "customhtml", embedColsEl, {
-        serialize: false, height: 140,
-        getMinHeight: () => Math.max(140, embedColsEl.scrollHeight || 140),
-      });
-
-      function syncEmbedH() {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          const h = Math.max(140, embedColsEl.scrollHeight || 140);
-          if (embedColsWidget) { embedColsWidget.height = h; embedColsWidget.computedHeight = h; }
-          node.setDirtyCanvas(true);
-        }));
-      }
-      syncEmbedH();
-
-      // Override _dbApplyEmbedding to also refresh the UI chips
-      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
-        const s = Number(strength);
-        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
-        if (slot === "positive") {
-          if (posEmbedWidget) posEmbedWidget.value = stored;
-          posEmbedCol._set(name, isNaN(s) ? 1.0 : s);
-        }
-        if (slot === "negative") {
-          if (negEmbedWidget) negEmbedWidget.value = stored;
-          negEmbedCol._set(name, isNaN(s) ? 1.0 : s);
-        }
-        node.setDirtyCanvas(true);
-      };
-
       // ── 5. DIRTY TALK — prompt preview with click-to-edit ────────────────
-      const dtHeaderRow = document.createElement("div");
-      dtHeaderRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
+      // Built via addTitle (same path as every other section title) so it centers
+      // identically; the edit pencil floats over the label's right edge. An inline
+      // SVG (not an emoji) avoids the tofu-box glyph some fonts render for ✏.
       const dtLabel = makeSectionLabel("Dirty Talk");
-      dtLabel.style.flex = "1";
+      dtLabel.style.position = "relative";
       const editBtn = document.createElement("button");
       editBtn.title = "Edit prompts";
-      editBtn.style.cssText = "background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:0 4px;line-height:1;flex-shrink:0;";
-      editBtn.textContent = "✏";
-      dtHeaderRow.append(dtLabel, editBtn);
-      node.addDOMWidget("db_twlabel", "customhtml", dtHeaderRow, {
-        serialize: false, height: 26, getMinHeight: () => 26,
-      });
+      editBtn.style.cssText = "position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2;background:none;border:none;color:#555;cursor:pointer;padding:0 2px;line-height:0;display:flex;align-items:center;";
+      editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+      dtLabel.appendChild(editBtn);
+      addTitle("db_twlabel", dtLabel, 26);
 
       const previewPanelEl = document.createElement("div");
       previewPanelEl.className = "db-preview-panel";
@@ -908,7 +1086,7 @@ app.registerExtension({
 
       editBtn.addEventListener("click", () => {
         _editMode = !_editMode;
-        editBtn.textContent = _editMode ? "✓" : "✏";
+        // stroke="currentColor" on the SVG → color drives the pencil tint.
         editBtn.style.color  = _editMode ? "#5acc8a" : "#555";
         editBtn.title = _editMode ? "Done editing" : "Edit prompts";
         if (_editMode) {
@@ -948,6 +1126,17 @@ app.registerExtension({
         // via onExecuted. Render the last-known (or empty) state now.
         node._dbRefreshPreview();
 
+        // Checkpoint / VAE button labels (native values are restored after onNodeCreated)
+        ckptFlyout.refresh();
+        vaeFlyout.refresh();
+
+        // Resolution chip + batch slider reflect restored hidden-widget values
+        refreshRatioActive();
+        if (batchWidget) {
+          const bv = Math.max(1, Math.min(5, batchWidget.value || 1));
+          batchSlider.value = String(bv); batchVal.textContent = String(bv);
+        }
+
         // LoRAs
         const savedL = lorasDataWidget?.value;
         if (savedL && savedL !== "[]") {
@@ -960,8 +1149,8 @@ app.registerExtension({
           } catch (e) { console.warn("[DirtyBirds] Could not restore LoRAs:", e); }
         }
         // Embeddings
-        if (posEmbedWidget?.value) posEmbedCol._deserialize(posEmbedWidget.value);
-        if (negEmbedWidget?.value) negEmbedCol._deserialize(negEmbedWidget.value);
+        if (posEmbedWidget?.value) posEmbedRow._deserialize(posEmbedWidget.value);
+        if (negEmbedWidget?.value) negEmbedRow._deserialize(negEmbedWidget.value);
         syncEmbedH();
 
         // Trigger words
@@ -994,7 +1183,7 @@ app.registerExtension({
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [workflowDOM, resSelect, talentColsEl, embedColsEl, previewPanelEl];
+      const domEls = [workflowDOM, ckptFlyout.btn, vaeFlyout.btn, resRow, batchRow, embedColsEl, talentColsEl, previewPanelEl];
       function applyWidths() {
         const w = nodeInnerW(node);
         domEls.forEach(el => { el.style.width=w+"px"; });
