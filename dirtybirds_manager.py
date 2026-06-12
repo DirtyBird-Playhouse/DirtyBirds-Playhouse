@@ -6,6 +6,7 @@ import hashlib
 import logging
 import asyncio
 import urllib.request
+import urllib.parse
 import folder_paths
 from aiohttp import web
 from server import PromptServer
@@ -229,7 +230,8 @@ def get_lora_meta(lora_filename, allow_remote=True):
     # 2. Sibling preview file (now includes bare .jpeg / .webp)
     if not meta["has_preview"]:
         for ext in (".preview.png", ".preview.jpg", ".preview.jpeg",
-                    ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+                    ".mp4", ".webm"):
             candidate = base + ext
             if os.path.exists(candidate):
                 meta["has_preview"]  = True
@@ -362,7 +364,8 @@ def get_embedding_meta(emb_filename, allow_remote=True):
     # 2. Sibling preview file
     if not meta["has_preview"]:
         for ext in (".preview.png", ".preview.jpg", ".preview.jpeg",
-                    ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+                    ".mp4", ".webm"):
             candidate = base + ext
             if os.path.exists(candidate):
                 meta["has_preview"]  = True
@@ -470,30 +473,7 @@ async def api_get_loras_meta_bulk(request):
 @PromptServer.instance.routes.get("/dirtybirds/lora-preview")
 async def api_lora_preview(request):
     name = request.rel_url.query.get("name", "").strip()
-    if not name:
-        return web.Response(status=400)
-
-    # Check cache first (avoid re-hashing on every request)
-    cached = _meta_cache.get(name, {})
-    preview_path = cached.get("preview_path")
-
-    if not preview_path or not os.path.exists(preview_path):
-        # Resolve (may hit Civitai once, then caches)
-        loop = asyncio.get_event_loop()
-        meta = await loop.run_in_executor(None, get_lora_meta, name)
-        preview_path = meta.get("preview_path")
-
-    if not preview_path or not os.path.exists(preview_path):
-        return web.Response(status=404)
-
-    ext = os.path.splitext(preview_path)[1].lower()
-    ctype = {
-        ".png":  "image/png",
-        ".webp": "image/webp",
-        ".gif":  "image/gif",
-    }.get(ext, "image/jpeg")
-    with open(preview_path, "rb") as f:
-        return web.Response(body=f.read(), content_type=ctype)
+    return _lm_preview_redirect("loras", name)
 
 
 # ---------------------------------------------------------------------------
@@ -508,36 +488,42 @@ def _find_model_sibling_preview(folder_type, name):
     if not path or not os.path.exists(path):
         return None
     base = os.path.splitext(path)[0]
+    # Still images preferred; fall back to video previews (LoRA-Manager style)
+    # so checkpoints that ship only an .mp4/.webm still render a preview.
     for ext in (".preview.png", ".preview.jpg", ".preview.jpeg",
-                ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                ".png", ".jpg", ".jpeg", ".webp", ".gif",
+                ".mp4", ".webm"):
         candidate = base + ext
         if os.path.exists(candidate):
             return candidate
     return None
 
 
+def _lm_preview_redirect(folder_type, name):
+    """Resolve an asset's sibling preview (cheap, local-only — no hashing or
+    network) and 302-redirect to comfyui-lora-manager's universal preview
+    endpoint, which serves images and videos (Windows-safe) for all asset types.
+
+    Using LoRA Manager's single /api/lm/previews endpoint keeps one preview
+    mechanism across checkpoints / loras / embeddings and avoids the per-request
+    SHA-256 + Civitai work that previously saturated the server.
+    """
+    if not name:
+        return web.Response(status=400)
+    preview_path = _find_model_sibling_preview(folder_type, name)
+    if not preview_path or not os.path.exists(preview_path):
+        return web.Response(status=404)
+    encoded = urllib.parse.quote(os.path.abspath(preview_path), safe="")
+    return web.HTTPFound(f"/api/lm/previews?path={encoded}")
+
+
 @PromptServer.instance.routes.get("/dirtybirds/model-preview")
 async def api_model_preview(request):
     folder_type = request.rel_url.query.get("type", "").strip()
     name = request.rel_url.query.get("name", "").strip()
-    if folder_type not in ("checkpoints", "vae") or not name:
+    if folder_type not in ("checkpoints", "vae"):
         return web.Response(status=400)
-
-    loop = asyncio.get_event_loop()
-    preview_path = await loop.run_in_executor(
-        None, _find_model_sibling_preview, folder_type, name)
-
-    if not preview_path or not os.path.exists(preview_path):
-        return web.Response(status=404)
-
-    ext = os.path.splitext(preview_path)[1].lower()
-    ctype = {
-        ".png":  "image/png",
-        ".webp": "image/webp",
-        ".gif":  "image/gif",
-    }.get(ext, "image/jpeg")
-    with open(preview_path, "rb") as f:
-        return web.Response(body=f.read(), content_type=ctype)
+    return _lm_preview_redirect(folder_type, name)
 
 
 # ---------------------------------------------------------------------------
@@ -586,28 +572,7 @@ async def api_get_embeddings_meta_bulk(request):
 @PromptServer.instance.routes.get("/dirtybirds/embedding-preview")
 async def api_embedding_preview(request):
     name = request.rel_url.query.get("name", "").strip()
-    if not name:
-        return web.Response(status=400)
-
-    cached = _meta_cache.get(_EMB_CACHE_PREFIX + name, {})
-    preview_path = cached.get("preview_path")
-
-    if not preview_path or not os.path.exists(preview_path):
-        loop = asyncio.get_event_loop()
-        meta = await loop.run_in_executor(None, get_embedding_meta, name)
-        preview_path = meta.get("preview_path")
-
-    if not preview_path or not os.path.exists(preview_path):
-        return web.Response(status=404)
-
-    ext = os.path.splitext(preview_path)[1].lower()
-    ctype = {
-        ".png":  "image/png",
-        ".webp": "image/webp",
-        ".gif":  "image/gif",
-    }.get(ext, "image/jpeg")
-    with open(preview_path, "rb") as f:
-        return web.Response(body=f.read(), content_type=ctype)
+    return _lm_preview_redirect("embeddings", name)
 
 
 # ---------------------------------------------------------------------------

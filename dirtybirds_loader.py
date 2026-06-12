@@ -107,7 +107,6 @@ class DirtyBirdsLoader:
     @classmethod
     def INPUT_TYPES(cls):
         ckpt_list = folder_paths.get_filename_list("checkpoints")
-        vae_list  = [BAKED_VAE] + folder_paths.get_filename_list("vae")
 
         json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
         try:
@@ -124,8 +123,6 @@ class DirtyBirdsLoader:
                 "workflow":    (["Text2Image", "Image2Image"], {"default": "Text2Image"}),
                 # Checkpoint dropdown
                 "ckpt_name":   (ckpt_list,),
-                # VAE — defaults to the checkpoint's baked VAE; pick a file to override
-                "vae_name":    (vae_list, {"default": BAKED_VAE}),
                 # Raw prompt strings — connect from DDT or type directly
                 "positive":    ("STRING", {"multiline": True, "default": ""}),
                 "negative":    ("STRING", {"multiline": True, "default": ""}),
@@ -137,6 +134,12 @@ class DirtyBirdsLoader:
                 "trigger_words_data": ("STRING", {"default": "[]"}),
                 # Batch size for generation (slider 1-5)
                 "batch_size":  ("INT", {"default": 1, "min": 1, "max": 5, "step": 1, "display": "slider"}),
+                # Seed + denoise — ride the pipe out to the DirtyBirds sampler.
+                # control_after_generate disabled: the JS UI manages randomization.
+                "seed":        ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": False}),
+                "denoise":     ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                # Seed mode — JS flyout toggles fixed vs. re-roll-every-run.
+                "seed_mode":   (["fixed", "random"], {"default": "fixed"}),
             },
             "optional": {
                 "image":        ("IMAGE",),
@@ -147,22 +150,23 @@ class DirtyBirdsLoader:
             }
         }
 
-    RETURN_TYPES  = ("PIPE_LINE", "BASIC_PIPE", "LATENT")
-    RETURN_NAMES  = ("pipe", "basic_pipe", "latent")
+    RETURN_TYPES  = ("DIRTYBIRDS_PIPE",)
+    RETURN_NAMES  = ("db_pipe",)
     FUNCTION      = "process"
     CATEGORY      = "DirtyBirds"
 
     @classmethod
-    def IS_CHANGED(cls, dimension="", **kwargs):
-        # Force re-execution every run when resolution is randomized so a fresh
-        # size is picked each time, rather than caching a single random result.
-        if dimension == "__random__":
+    def IS_CHANGED(cls, dimension="", seed_mode="fixed", **kwargs):
+        # Force re-execution every run when resolution OR seed is randomized so a
+        # fresh value is picked each time, rather than caching one random result.
+        if dimension == "__random__" or seed_mode == "random":
             import random
             return random.random()
         return dimension
 
-    def process(self, workflow, ckpt_name, vae_name, positive="", negative="",
+    def process(self, workflow, ckpt_name, positive="", negative="",
                 dimension="__random__", loras_data="[]", trigger_words_data="[]", batch_size=1,
+                seed=0, denoise=1.0, seed_mode="fixed",
                 image=None, lora_stack=None, pos_embedding="", neg_embedding=""):
 
         # ── Checkpoint ──────────────────────────────────────────────────────
@@ -173,11 +177,12 @@ class DirtyBirdsLoader:
             model, clip, vae = load_checkpoint_guess_config(ckpt_path)[:3]
             _CHECKPOINT_CACHE[ckpt_path] = (model, clip, vae)
 
-        # ── VAE override (default keeps the checkpoint's baked VAE) ──────────
-        if vae_name and vae_name != BAKED_VAE:
-            loaded = load_vae(vae_name)
-            if loaded is not None:
-                vae = loaded
+        # VAE always comes from the checkpoint (baked); there is no VAE input.
+
+        # Re-roll the seed every run when seed_mode is "random".
+        if seed_mode == "random":
+            import random
+            seed = random.randint(0, 0xffffffffffffffff)
 
         device = model.load_device
         dtype  = model.model_dtype()
@@ -346,11 +351,11 @@ class DirtyBirdsLoader:
             "negative": negative_cond,
             "samples":  latent,
             "images":   None,
-            "seed":     0,
+            "seed":     int(seed),
+            "denoise":  float(denoise),
             # Loader settings – read by pre-sampling / sampler nodes
             "loader_settings": {
                 "ckpt_name":          ckpt_name,
-                "vae_name":           vae_name,
                 "lora_name":          None,
                 "lora_stack":         combined_stack,
                 "positive":           positive,
@@ -366,14 +371,13 @@ class DirtyBirdsLoader:
             },
         }
 
-        # Standard BASIC_PIPE: (model, clip, vae, positive, negative)
-        basic_pipe = (model, clip, vae, positive_cond, negative_cond)
-
         # Send executed prompt text and external lora names back to the node UI.
         ext_lora_names = [os.path.basename(path) for path, _, _ in (lora_stack or [])]
+        # Sole output: db_pipe carries model/clip/vae, conditioning, samples,
+        # plus seed + denoise for the DirtyBirds sampler.
         return {"ui": {"db_prompts": [positive, negative],
                        "db_lora_stack": ext_lora_names},
-                "result": (pipe, basic_pipe, latent)}
+                "result": (pipe,)}
 
 
 # ---------------------------------------------------------------------------
