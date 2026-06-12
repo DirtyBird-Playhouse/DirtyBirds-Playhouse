@@ -508,7 +508,7 @@ app.registerExtension({
       // shows the model's sibling preview image (via /dirtybirds/model-preview)
       // and is hidden when no image exists on disk. previewType is the
       // folder_paths type ("checkpoints" / "vae") the backend route resolves.
-      function makeComboFlyout(widget, tag, title, displayFn, emptyLabel, previewType) {
+      function makeComboFlyout(widget, tag, title, displayFn, emptyLabel, previewType, onRefresh) {
         const row = document.createElement("div");
         row.className = "db-sel-row";
         row.style.cursor = "pointer";
@@ -537,6 +537,7 @@ app.registerExtension({
           nameEl.textContent = v ? displayFn(v) : emptyLabel;
           row.title = v || "";
           refreshThumb();
+          onRefresh?.(v);
         }
         row.addEventListener("click", (e) => {
           const opts = widget?.options?.values || [];
@@ -559,24 +560,21 @@ app.registerExtension({
 
       const ckptDisplay = (v) => (v || "(none)").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
       const vaeDisplay  = (v) => v || "Baked VAE";
-      const ckptFlyout = makeComboFlyout(ckptWidget, "CKPT", "Checkpoint", ckptDisplay, "Select checkpoint", "checkpoints");
+      
+      const ckptFlyout = makeComboFlyout(ckptWidget, "CKPT", "Checkpoint", ckptDisplay, "Select checkpoint", null, (v) => {
+        refreshCkptPreview();
+      });
       const vaeFlyout  = makeComboFlyout(vaeWidget,  "VAE",  "VAE",        vaeDisplay,  "Select VAE",        "vae");
-      addFixed("db_ckpt_btn", ckptFlyout.btn, 30);
-      addFixed("db_vae_btn",  vaeFlyout.btn,  30);
 
-      // ── Embedding apply method (from Casting Coach event) ────────────────
-      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
-        // Store as "name" (strength 1) or "name:strength" so the node can
-        // emit a weighted (embedding:name:strength) token at encode time.
-        const s = Number(strength);
-        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
-        if (slot === "positive" && posEmbedWidget) posEmbedWidget.value = stored;
-        if (slot === "negative" && negEmbedWidget) negEmbedWidget.value = stored;
-        node.setDirtyCanvas(true);
-      };
+      // Checkpoint preview image (larger, under checkpoint loader)
+      const ckptPreview = document.createElement("img");
+      ckptPreview.className = "db-ckpt-preview";
+      ckptPreview.style.cssText = "width:100%;height:140px;object-fit:cover;border-radius:6px;background:#181818;border:1px solid #333;display:none;margin-top:4px;";
 
-      // ── 2. SIZE MATTERS — resolution picker (embedding style) + batch + random ──
-      addTitle("db_reslabel", makeSectionLabel("Size Matters"), 20);
+      // Left column: Checkpoint Loader + Checkpoint Preview
+      const leftCol = document.createElement("div");
+      leftCol.style.cssText = "display:flex;flex-direction:column;flex:1.2;min-width:0;";
+      leftCol.append(ckptFlyout.btn, ckptPreview);
 
       // Resolution is stored as "WIDTHxHEIGHT" or "RANDOM" in the hidden `dimension` widget.
       const RESOLUTIONS = [
@@ -591,24 +589,33 @@ app.registerExtension({
         dimensionWidget.value = "1024x1024";
       }
 
-      // Resolution picker row (embedding-style: glyph + label, click to open menu).
+      // Resolution picker row (styled like checkpoint loader button: Tag + Name + Caret)
       const resRow = document.createElement("div");
       resRow.className = "db-sel-row";
-      const resGlyph = document.createElement("span"); resGlyph.className = "db-sel-thumb"; resGlyph.style.background = "none"; resGlyph.style.width = "26px"; resGlyph.style.height = "26px"; resGlyph.style.display = "flex"; resGlyph.style.alignItems = "center"; resGlyph.style.justifyContent = "center";
-      const resLabel = document.createElement("span"); resLabel.className = "db-sel-name"; resLabel.style.flex = "1";
-      resRow.append(resGlyph, resLabel);
       resRow.style.cursor = "pointer";
+      
+      const resTag = document.createElement("span");
+      resTag.className = "db-model-tag";
+      resTag.textContent = "RES";
+      
+      const resLabel = document.createElement("span");
+      resLabel.className = "db-sel-name";
+      resLabel.style.flex = "1";
+      
+      const resCaret = document.createElement("span");
+      resCaret.className = "db-model-caret";
+      resCaret.textContent = "▾";
+      
+      resRow.append(resTag, resLabel, resCaret);
 
       function refreshResRow() {
         const cur = dimensionWidget?.value || "1024x1024";
         if (cur === "RANDOM") {
-          resGlyph.innerHTML = ""; resLabel.textContent = "🎲 Random";
+          resLabel.textContent = "Random";
         } else {
           const [w, h] = cur.split("x").map(Number);
-          resGlyph.innerHTML = "";
-          resGlyph.appendChild(makeAspectSVG(w, h));
           const res = RESOLUTIONS.find(r => r.w === w && r.h === h);
-          resLabel.textContent = res ? `${res.label}  ·  ${w}×${h}` : `${w}×${h}`;
+          resLabel.textContent = res ? `${res.label} (${w}×${h})` : `${w}×${h}`;
         }
       }
       resRow.addEventListener("click", (e) => {
@@ -635,7 +642,67 @@ app.registerExtension({
           scale: Math.max(1, app.canvas?.ds?.scale || 1),
         });
       });
-      addFixed("db_res_row", resRow, 30);
+
+      // Right column: Resolutions selector
+      const rightCol = document.createElement("div");
+      rightCol.style.cssText = "display:flex;flex-direction:column;flex:1;min-width:0;";
+      rightCol.appendChild(resRow);
+
+      // Top row container (flex)
+      const topRow = document.createElement("div");
+      topRow.style.cssText = "display:flex;gap:6px;align-items:flex-start;width:100%;";
+      topRow.append(leftCol, rightCol);
+
+      // Add topRow widget
+      const topRowWidget = node.addDOMWidget("db_ckpt_res_row", "customhtml", topRow, {
+        serialize: false,
+        height: 30,
+        getMinHeight: () => Math.max(30, topRow.scrollHeight || 30),
+      });
+
+      function syncTopRowH() {
+        requestAnimationFrame(() => {
+          const h = Math.max(30, topRow.scrollHeight || 30);
+          if (topRowWidget) { topRowWidget.height = h; topRowWidget.computedHeight = h; }
+          node.setDirtyCanvas(true);
+        });
+      }
+
+      function refreshCkptPreview() {
+        const v = ckptWidget?.value ?? "";
+        ckptPreview.style.display = "none";
+        ckptPreview.classList.remove("db-lp-thumb-loaded");
+        if (v && v !== "Baked VAE") {
+          loadModelPreviewInto(ckptPreview, "checkpoints", v,
+            () => {
+              ckptPreview.style.display = "block";
+              syncTopRowH();
+            },
+            () => {
+              ckptPreview.style.display = "none";
+              syncTopRowH();
+            }
+          );
+        } else {
+          syncTopRowH();
+        }
+      }
+
+      addFixed("db_vae_btn",  vaeFlyout.btn,  30);
+
+      // ── Embedding apply method (from Casting Coach event) ────────────────
+      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
+        // Store as "name" (strength 1) or "name:strength" so the node can
+        // emit a weighted (embedding:name:strength) token at encode time.
+        const s = Number(strength);
+        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
+        if (slot === "positive" && posEmbedWidget) posEmbedWidget.value = stored;
+        if (slot === "negative" && negEmbedWidget) negEmbedWidget.value = stored;
+        node.setDirtyCanvas(true);
+      };
+
+      // ── 2. SIZE MATTERS — resolution picker (embedding style) + batch + random ──
+      addTitle("db_reslabel", makeSectionLabel("Size Matters"), 20);
 
       // Batch slider + Random toggle row.
       const batchWidget = hideWidget("batch_size");
@@ -1131,7 +1198,7 @@ app.registerExtension({
         vaeFlyout.refresh();
 
         // Resolution chip + batch slider reflect restored hidden-widget values
-        refreshRatioActive();
+        refreshResRow();
         if (batchWidget) {
           const bv = Math.max(1, Math.min(5, batchWidget.value || 1));
           batchSlider.value = String(bv); batchVal.textContent = String(bv);
@@ -1183,7 +1250,7 @@ app.registerExtension({
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [workflowDOM, ckptFlyout.btn, vaeFlyout.btn, resRow, batchRow, embedColsEl, talentColsEl, previewPanelEl];
+      const domEls = [workflowDOM, topRow, vaeFlyout.btn, batchRow, embedColsEl, talentColsEl, previewPanelEl];
       function applyWidths() {
         const w = nodeInnerW(node);
         domEls.forEach(el => { el.style.width=w+"px"; });
