@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="0">
+<title>DirtyBirds Loader — Redesign Mockup v3</title>
+<style>
+  /* Mockup-only page chrome */
+  body {
+    margin: 0; padding: 40px; background: #0c0c0c;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #ccc; display: flex; gap: 40px; align-items: flex-start;
+  }
+  .stage { display: flex; flex-direction: column; gap: 10px; }
+  .stage h2 { font-size: 13px; color: #777; font-weight: 600; margin: 0 0 4px; letter-spacing: 1px; }
+  .note { max-width: 320px; font-size: 13px; line-height: 1.6; color: #999; }
+  .note b { color: #5aadff; }
+  .note code { background: #1a1a1a; padding: 1px 5px; border-radius: 4px; color: #c8a; }
+
+  /* ── Node frame (mimics LiteGraph node) ───────────────────────── */
+  .node {
+    width: 360px; background: #131313;
+    border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  }
+  .node-title {
+    background: #15324a; color: #dfe; font-size: 13px; font-weight: 700;
+    padding: 7px 10px; display: flex; align-items: center; gap: 6px;
+  }
+  .node-title .dot { width: 9px; height: 9px; border-radius: 50%; background: #e08; }
+  .node-io { padding: 6px 12px 2px; font-size: 11px; color: #8aa; }
+  .node-io .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .node-io .ico { color: #5aadff; }
+  .node-body { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+
+  /* ── Section title (db-section-label) ─────────────────────────── */
+  .db-section-label {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 26px; box-sizing: border-box; cursor: pointer; user-select: none;
+  }
+  .db-sep-line { flex: 1; height: 1px; background: #1a3a4a; min-width: 4px; }
+  .db-sep-text {
+    font-size: 13px; font-weight: 900; line-height: 1.5; letter-spacing: 2.5px;
+    text-transform: uppercase; color: #5aadff; text-shadow: 0 0 10px rgba(90,173,255,0.5);
+    white-space: nowrap;
+  }
+  .db-sec-chevron { color: #5aadff; font-size: 10px; flex-shrink: 0; }
+  .db-dt-pencil { color: #555; flex-shrink: 0; display: flex; align-items: center; }
+  .db-dt-pencil:hover { color: #5acc8a; }
+
+  /* ── Workflow buttons ─────────────────────────────────────────── */
+  .db-workflow-group { display: flex; gap: 6px; padding: 2px 0 4px; }
+  .db-workflow-btn {
+    flex: 1; padding: 7px 4px; border-radius: 6px; border: 2px solid #555;
+    background: #2a2a2a; color: #aaa; font-size: 12px; font-weight: 600;
+    cursor: pointer; letter-spacing: 0.5px; white-space: nowrap;
+  }
+  .db-workflow-btn.db-active {
+    background: #1a5a9a; border-color: #5aadff; color: #fff;
+    box-shadow: 0 0 10px rgba(90,173,255,0.5);
+  }
+
+  /* ── Flat selector buttons (ckpt/vae/res) ─────────────────────── */
+  .db-lib-btn {
+    display: block; width: 100%; padding: 8px 6px; border-radius: 6px;
+    border: 2px solid #555; background: #2a2a2a; color: #aaa;
+    font-size: 12px; font-weight: 700; cursor: pointer; letter-spacing: 0.5px;
+    text-align: center; box-sizing: border-box;
+  }
+  .db-lib-btn.thin { font-size: 11px; color: #6a9ab8; border-color: #1a3a4a; }
+  .db-lib-btn:hover { border-color: #5aadff; color: #5aadff; background: #1a2a3a; }
+
+  /* batch_size faux widget */
+  .db-widget {
+    background: #353535; border-radius: 6px; height: 22px; display: flex;
+    align-items: center; justify-content: center; font-size: 11px; color: #bbb;
+    position: relative;
+  }
+  .db-widget::before, .db-widget::after { content: "‹"; position: absolute; left: 8px; color: #888; }
+  .db-widget::after { content: "›"; left: auto; right: 8px; }
+
+  /* ── Compact selected rows (db-sel-row) ───────────────────────── */
+  .db-sel-loras { display: flex; flex-direction: column; gap: 3px; padding: 3px 0 4px; }
+  .db-sel-row {
+    display: flex; align-items: center; gap: 4px; padding: 2px 4px;
+    border-radius: 5px; background: #252525; border: 1px solid #3a3a3a;
+    box-sizing: border-box; height: 30px;
+  }
+  .db-sel-row.db-inactive { opacity: 0.4; }
+  .db-sel-toggle { background: none; border: none; color: #5acc8a; font-size: 13px; cursor: pointer; }
+  .db-inactive .db-sel-toggle { color: #555; }
+  .db-sel-name { flex: 1; font-size: 11px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .db-sel-slider { width: 60px; accent-color: #c8501a; cursor: pointer; }
+  .db-sel-val { font-size: 10px; color: #999; width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+  .db-sel-remove { background: none; border: none; color: #555; font-size: 11px; cursor: pointer; }
+  .db-sel-remove:hover { color: #e06060; }
+  .db-sel-thumb { width: 26px; height: 26px; border-radius: 3px; background: linear-gradient(135deg,#3a3a3a,#222); flex-shrink: 0; }
+
+  /* ── NEW: embedding slot accents + add row ────────────────────── */
+  .db-emb-pos { border-left: 3px solid #2e7d4f; }
+  .db-emb-neg { border-left: 3px solid #9a3b2e; }
+  .db-emb-add {
+    display: flex; align-items: center; gap: 6px; height: 26px; padding: 2px 8px;
+    border-radius: 5px; border: 1px dashed #444; background: #1c1c1c;
+    color: #888; font-size: 11px; cursor: pointer; box-sizing: border-box;
+  }
+  .db-emb-add:hover { border-color: #5aadff; color: #9cf; }
+  .db-emb-add.pos { border-left: 3px solid #2e7d4f; }
+  .db-emb-add.neg { border-left: 3px solid #9a3b2e; }
+
+  /* ── Talent two-column ────────────────────────────────────────── */
+  .db-talent-columns { display: flex; gap: 6px; }
+  .db-talent-col-header { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+  .db-talent-divider { width: 1px; background: #2a2a2a; }
+  .col { flex: 1; min-width: 0; }
+  .db-tw-chip { display: inline-block; font-size: 10px; padding: 3px 7px; border-radius: 10px; background: #1a2a3a; color: #9cf; margin: 0 3px 3px 0; }
+
+  /* ── Dirty Talk preview ───────────────────────────────────────── */
+  .db-preview-label { font-size: 9px; letter-spacing: 1px; color: #666; margin: 3px 0 1px; }
+  .db-preview-block {
+    font-size: 11px; color: #888; padding: 5px 7px; border-radius: 5px;
+    background: #1a1a1a; border-left: 3px solid #444; min-height: 16px; font-style: italic;
+  }
+  .db-preview-block.db-pos { border-left-color: #2e7d4f; }
+  .db-preview-block.db-neg { border-left-color: #9a3b2e; }
+
+  .collapsed .sec-body { display: none; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h2>PROPOSED — click any section title to collapse</h2>
+  <div class="node">
+    <div class="node-title"><span class="dot"></span>🍑 DirtyBirds Foreplay — The Setup</div>
+    <div class="node-io">
+      <div class="row"><span><span class="ico">◦</span> image</span><span>pipe <span class="ico">◦</span></span></div>
+      <div class="row"><span><span class="ico">◦</span> lora_stack</span><span>basic_pipe <span class="ico">◦</span></span></div>
+      <div class="row"><span></span><span>latent <span class="ico" style="color:#e08">●</span></span></div>
+    </div>
+    <div class="node-body">
+
+      <div class="db-workflow-group">
+        <button class="db-workflow-btn db-active">🖼 Text → Image</button>
+        <button class="db-workflow-btn">🔄 Image → Image</button>
+      </div>
+
+      <!-- Main Attraction (ckpt / vae) -->
+      <div data-section>
+        <div class="db-section-label"><span class="db-sec-chevron">▾</span><span class="db-sep-line"></span><span class="db-sep-text">The Main Attraction</span><span class="db-sep-line"></span></div>
+        <div class="sec-body" style="display:flex;flex-direction:column;gap:4px;">
+          <button class="db-lib-btn">lustifySDXLNSFW_apexV8</button>
+          <button class="db-lib-btn">Baked VAE</button>
+        </div>
+      </div>
+
+      <!-- Resolution & Batch (single row, side-by-side) -->
+      <div class="db-sel-row" style="padding:3px 4px;height:28px;gap:8px;">
+        <span class="db-sel-name" style="flex:0 0 65px;">Resolution</span>
+        <input class="db-sel-slider" type="range" min="0" max="7" step="1" value="4" style="flex:0 0 60px;">
+        <span class="db-sel-val" style="flex:0 0 65px;padding:0;text-align:center;font-size:10px;color:#999;">1024×1024</span>
+
+        <span class="db-sel-name" style="flex:0 0 40px;">Batch</span>
+        <input class="db-sel-slider" type="range" min="1" max="5" step="1" value="1" style="flex:0 0 60px;">
+        <span class="db-sel-val" style="flex:0 0 20px;padding:0;text-align:center;">1</span>
+      </div>
+
+      <!-- THE CAST (embeddings) — NOW ABOVE LORAS, compact -->
+      <div data-section>
+        <div class="db-section-label"><span class="db-sec-chevron">▾</span><span class="db-sep-line"></span><span class="db-sep-text">The Cast</span><span class="db-sep-line"></span></div>
+        <div class="sec-body db-sel-loras">
+          <div class="db-talent-col-header">Positive Embedding</div>
+          <div class="db-sel-row db-emb-pos">
+            <span class="db-sel-thumb"></span>
+            <span class="db-sel-toggle">●</span>
+            <span class="db-sel-name">badDream</span>
+            <input class="db-sel-slider" type="range" min="0.1" max="2" step="0.05" value="0.8">
+            <span class="db-sel-val">0.80</span>
+            <button class="db-sel-remove">✕</button>
+          </div>
+          <div class="db-talent-col-header" style="margin-top:5px;">Negative Embedding</div>
+          <div class="db-sel-row db-emb-neg">
+            <span class="db-sel-thumb"></span>
+            <span class="db-sel-toggle">●</span>
+            <span class="db-sel-name">FastNegativeV2</span>
+            <input class="db-sel-slider" type="range" min="0.1" max="2" step="0.05" value="1">
+            <span class="db-sel-val">1.00</span>
+            <button class="db-sel-remove">✕</button>
+          </div>
+          <div class="db-emb-add" style="margin-top:3px;border-left:none;">＋ add embedding</div>
+        </div>
+      </div>
+
+      <!-- THE TALENT (loras) -->
+      <div data-section>
+        <div class="db-section-label"><span class="db-sec-chevron">▾</span><span class="db-sep-line"></span><span class="db-sep-text">The Talent</span><span class="db-sep-line"></span></div>
+        <div class="sec-body">
+          <div class="db-talent-columns">
+            <div class="col">
+              <div class="db-talent-col-header">Lora Selected</div>
+              <div class="db-sel-row">
+                <span class="db-sel-thumb"></span>
+                <span class="db-sel-toggle">●</span>
+                <span class="db-sel-name">add-detail-xl</span>
+                <input class="db-sel-slider" type="range" min="0" max="2" step="0.05" value="0.9">
+                <span class="db-sel-val">0.90</span>
+              </div>
+            </div>
+            <div class="db-talent-divider"></div>
+            <div class="col">
+              <div class="db-talent-col-header">Lora Trigger Words</div>
+              <span class="db-tw-chip">masterpiece</span><span class="db-tw-chip">hires</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DIRTY TALK -->
+      <div data-section>
+        <div class="db-section-label">
+          <span class="db-sec-chevron">▾</span><span class="db-sep-line"></span>
+          <span class="db-sep-text">Dirty Talk</span><span class="db-sep-line"></span>
+          <span class="db-dt-pencil" title="Edit prompts" onclick="event.stopPropagation()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </span>
+        </div>
+        <div class="sec-body">
+          <div class="db-preview-label">POSITIVE</div>
+          <div class="db-preview-block db-pos">— run to preview —</div>
+          <div class="db-preview-label">NEGATIVE</div>
+          <div class="db-preview-block db-neg">— run to preview —</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <h2 style="color:#777">WHAT CHANGED</h2>
+  <p><b>1. Embeddings moved above the LoRAs</b> and rebuilt as compact 30px rows (the
+  same <code>db-sel-row</code> style as LoRAs) instead of two ~140px columns. A filled
+  slot shows name + strength slider + on/off + remove; an empty slot is a slim dashed
+  add-row.</p>
+  <p><b>2. Green / red left stripes</b> on each embedding row (and the Dirty Talk
+  preview blocks) so positive vs negative reads instantly and the two sections share one
+  visual language.</p>
+  <p><b>3. Collapsible sections</b> — every title has a <b>▾/▸</b> chevron. Click a
+  title to fold that section so the node shrinks to just what you're using. (Try it in
+  this mockup — collapse state would persist per-node in the real build.)</p>
+  <p style="color:#666">Mockup only. Sliders/collapse are interactive; nothing here
+  touches the real node. Tell me to proceed and I'll port this into
+  <code>jsdirtybirds.js</code> + <code>style.css</code>.</p>
+</div>
+
+<script>
+  document.querySelectorAll("[data-section] .db-section-label").forEach(label => {
+    label.addEventListener("click", () => {
+      const sec = label.closest("[data-section]");
+      sec.classList.toggle("collapsed");
+      const chev = label.querySelector(".db-sec-chevron");
+      chev.textContent = sec.classList.contains("collapsed") ? "▸" : "▾";
+    });
+  });
+</script>
+</body>
+</html>
