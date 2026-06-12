@@ -16,3 +16,6 @@ wildcards/
 
 # Personal prompt .txt files — local only, not for the public repo
 prompts/
+Node_Doc/Styles/Clothing.yaml
+Node_Doc/Styles/Erotic.yaml
+Node_Doc/Styles/Quality.yaml
