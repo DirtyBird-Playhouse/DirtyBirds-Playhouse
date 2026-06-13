@@ -233,10 +233,19 @@ app.registerExtension({
       async function openSavedPromptMenu(event) {
         const data = await fetchJSON("/dirtybirds/saved-prompts");
         const prompts = data?.prompts || [];
-        const items = [];
+        const items = [
+          { content: REFRESH, callback: () => openSavedPromptMenu(event) },
+          null,
+        ];
         if (!prompts.length) {
           items.push({ content: "(no saved prompts)", disabled: true });
         } else {
+          const pickRandom = () => prompts[Math.floor(Math.random() * prompts.length)];
+          items.push({
+            content: "🎲  Randomize",
+            callback: () => setPositive(pickRandom()),
+          });
+          items.push(null);
           prompts.slice().reverse().forEach(text => {
             const short = text.length > 60 ? text.slice(0, 60) + "…" : text;
             items.push({

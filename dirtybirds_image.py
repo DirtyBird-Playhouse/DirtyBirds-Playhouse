@@ -134,7 +134,7 @@ class DirtyBirdsLoadImage:
     FUNCTION = "load"
     CATEGORY = "DirtyBirds"
 
-    def load(self, image, image_url="", segment=False, segment_prompt="", confidence=0.5):
+    def load(self, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
         img = _open_source(image, image_url)
         out_image, out_mask, w, h = _to_tensors(img)
         segmented = out_image
@@ -145,7 +145,7 @@ class DirtyBirdsLoadImage:
         return (out_image, out_mask, segmented, w, h)
 
     @classmethod
-    def IS_CHANGED(cls, image, image_url="", segment=False, segment_prompt="", confidence=0.5):
+    def IS_CHANGED(cls, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
         seg_key = f"|{bool(segment)}|{segment_prompt}|{confidence}"
         src = (image_url or "").strip()
         if src:
@@ -164,9 +164,14 @@ class DirtyBirdsLoadImage:
             return (src or image) + seg_key
 
     @classmethod
-    def VALIDATE_INPUTS(cls, image, image_url="", segment=False, segment_prompt="", confidence=0.5):
+    def VALIDATE_INPUTS(cls, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
+        # When `image_url` supplies the source the picker is irrelevant, so an
+        # empty/absent `image` is fine. ComfyUI omits `image` from the call when
+        # the widget has no value, hence the default above.
         if (image_url or "").strip():
             return True
+        if not image:
+            return "No image selected: pick a file or set image_url."
         if not folder_paths.exists_annotated_filepath(image):
             return f"Invalid image file: {image}"
         return True

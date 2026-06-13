@@ -233,14 +233,40 @@ async def api_save_prompt(request):
     return web.json_response({"ok": True, "path": os.path.basename(SAVED_PROMPTS_FILE)})
 
 
+PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "Node_Doc", "prompts")
+
+
 @PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
 async def api_saved_prompts(request):
-    """Return the saved positive prompts (one per line) for the Load Prompt menu."""
-    if not os.path.exists(SAVED_PROMPTS_FILE):
-        return web.json_response({"prompts": []})
-    with open(SAVED_PROMPTS_FILE, "r", encoding="utf-8") as fh:
-        lines = [l.strip() for l in fh if l.strip()]
-    return web.json_response({"prompts": lines})
+    """Return saved positive prompts for the Load Prompt menu.
+
+    Aggregates the Save-button file (prompts.txt) plus every *.txt in the
+    prompts/ folder, so curated prompt libraries show up alongside saved ones.
+    One prompt per non-empty line; consecutive duplicates collapsed."""
+    files = []
+    if os.path.exists(SAVED_PROMPTS_FILE):
+        files.append(SAVED_PROMPTS_FILE)
+    if os.path.isdir(PROMPTS_DIR):
+        files.extend(
+            os.path.join(PROMPTS_DIR, f)
+            for f in sorted(os.listdir(PROMPTS_DIR))
+            if f.lower().endswith(".txt")
+            and os.path.isfile(os.path.join(PROMPTS_DIR, f))
+        )
+
+    prompts, seen = [], set()
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and line not in seen:
+                        seen.add(line)
+                        prompts.append(line)
+        except Exception as e:
+            logger.warning("[DirtyBirds] Could not read prompt file %s: %s", path, e)
+
+    return web.json_response({"prompts": prompts})
 
 
 NODE_CLASS_MAPPINGS = {

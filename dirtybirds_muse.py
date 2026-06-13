@@ -12,6 +12,7 @@ a text model or a vision model depending on what you pick.
 """
 
 import io
+import re
 import json
 import base64
 import logging
@@ -70,7 +71,27 @@ def _chat_completion(endpoint, payload, timeout=120):
         except Exception:
             pass
         raise RuntimeError(f"HTTP {e.code}: {detail or e.reason}") from None
-    return data["choices"][0]["message"]["content"]
+    choice = data["choices"][0]
+    msg = choice.get("message", {})
+    return {
+        "content": msg.get("content") or "",
+        "reasoning": msg.get("reasoning_content") or "",
+        "finish_reason": choice.get("finish_reason", ""),
+    }
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _clean_completion(content):
+    """Strip inline <think> blocks and surrounding code fences/whitespace."""
+    text = _THINK_RE.sub("", content or "").strip()
+    if text.startswith("```"):
+        # Drop a leading ```lang fence and the trailing ```.
+        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
 
 
 class DirtyBirdsMuse:
@@ -86,7 +107,7 @@ class DirtyBirdsMuse:
                 "instruction": ("STRING", {"multiline": True,
                                            "default": "Describe this image as image-generation tags."}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "max_tokens":  ("INT", {"default": 512, "min": 16, "max": 8192, "step": 16}),
+                "max_tokens":  ("INT", {"default": 1024, "min": 16, "max": 8192, "step": 16}),
             },
             "optional": {
                 "image":   ("IMAGE",),
@@ -101,7 +122,7 @@ class DirtyBirdsMuse:
 
     @classmethod
     def IS_CHANGED(cls, model="", endpoint="", system="", instruction="",
-                   temperature=0.7, max_tokens=512, image=None, text_in=""):
+                   temperature=0.7, max_tokens=1024, image=None, text_in=""):
         # Re-run on any control change; if an image is connected, re-run always
         # (cheap vs. hashing the tensor, and captions are usually wanted fresh).
         if image is not None:
@@ -110,7 +131,7 @@ class DirtyBirdsMuse:
         return (model, endpoint, system, instruction, temperature, max_tokens, text_in)
 
     def generate(self, model, endpoint, system, instruction,
-                 temperature=0.7, max_tokens=512, image=None, text_in=""):
+                 temperature=0.7, max_tokens=1024, image=None, text_in=""):
         endpoint = (endpoint or DEFAULT_ENDPOINT).strip()
         if not (model or "").strip():
             return ("[Muse error: no model selected. Click MODEL and pick a loaded "
@@ -148,12 +169,29 @@ class DirtyBirdsMuse:
         }
 
         try:
-            text = _chat_completion(endpoint, payload)
+            resp = _chat_completion(endpoint, payload)
         except Exception as e:
             logger.warning("[DirtyBirds] Muse request failed (%s): %s", endpoint, e)
             return (f"[Muse error: {e} — is LM Studio's server running at {endpoint}?]",)
 
-        return ((text or "").strip(),)
+        text = _clean_completion(resp["content"])
+        if not text:
+            # Reasoning models can spend the whole budget in the think channel and
+            # return empty content (finish_reason == "length"). Tell the user how
+            # to fix it rather than silently emitting nothing.
+            if resp["reasoning"] and resp["finish_reason"] == "length":
+                logger.warning(
+                    "[DirtyBirds] Muse: model used all %s tokens reasoning, no answer.",
+                    max_tokens)
+                return (f"[Muse error: '{model}' is a reasoning model and used all "
+                        f"{max_tokens} tokens thinking before answering. Raise max_tokens "
+                        f"(~2000+) or pick a non-reasoning model for prompt writing.]",)
+            logger.warning("[DirtyBirds] Muse: empty completion (finish=%s).",
+                           resp["finish_reason"])
+            return ("[Muse error: model returned empty text.]",)
+
+        logger.info("[DirtyBirds] Muse -> %r", text[:160])
+        return (text,)
 
 
 # ---------------------------------------------------------------------------

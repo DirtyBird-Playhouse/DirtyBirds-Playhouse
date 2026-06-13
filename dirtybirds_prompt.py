@@ -277,6 +277,10 @@ class DirtyBirdsPrompt:
         if concat_negative and concat_negative.strip():
             neg_out = concat_negative.strip() + (", " + neg_out if neg_out else "")
 
+        logger.info(
+            "[DirtyBirds] Script: concat_positive=%r -> final positive=%r",
+            (concat_positive or "")[:120], (pos_out or "")[:120])
+
         return (pos_out, neg_out)
 
 
