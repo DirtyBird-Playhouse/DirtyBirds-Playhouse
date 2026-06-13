@@ -1117,3 +1117,23 @@
   transition: all 0.15s ease;
 }
 .db-emb-add:hover { border-color: #5aadff; color: #9cf; }
+
+/* ── Autocomplete dropdown (LoRA/embedding) ──────────────────────────────── */
+.db-autocomplete-dropdown {
+  background: #252527;
+  border: 1px solid #34343a;
+  border-radius: 4px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+}
+
+.db-autocomplete-item {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #bbb;
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.db-autocomplete-item:hover {
+  background-color: #4a4a52;
+}

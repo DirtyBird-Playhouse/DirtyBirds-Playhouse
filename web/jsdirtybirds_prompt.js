@@ -41,6 +41,146 @@ function insertAtCursor(textarea, widget, token) {
   textarea.focus();
 }
 
+// ── Autocomplete dropdown for LoRA/embedding insertion ──────────────────────
+let autocompleteState = {
+  dropdown: null,
+  timeout: null,
+  currentNode: null,
+};
+
+function createAutocompleteDropdown() {
+  const dropdown = document.createElement("div");
+  dropdown.className = "db-autocomplete-dropdown";
+  dropdown.style.cssText = `
+    position: fixed;
+    display: none;
+    background: #252527;
+    border: 1px solid #34343a;
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 2000;
+    min-width: 200px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    font-family: monospace;
+  `;
+  return dropdown;
+}
+
+function createAutocompleteItem(text, callback) {
+  const item = document.createElement("div");
+  item.className = "db-autocomplete-item";
+  item.style.cssText = `
+    padding: 6px 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #bbb;
+    transition: background-color 0.1s;
+  `;
+  item.textContent = text;
+  item.addEventListener("mouseenter", () => {
+    item.style.backgroundColor = "#4a4a52";
+  });
+  item.addEventListener("mouseleave", () => {
+    item.style.backgroundColor = "transparent";
+  });
+  item.addEventListener("click", callback);
+  return item;
+}
+
+function hideAutocomplete() {
+  if (autocompleteState.dropdown) {
+    autocompleteState.dropdown.style.display = "none";
+    autocompleteState.dropdown.innerHTML = "";
+  }
+}
+
+function showAutocompleteDropdown(textarea, matches, prefix, partial) {
+  if (!matches.length) {
+    hideAutocomplete();
+    return;
+  }
+
+  if (!autocompleteState.dropdown) {
+    autocompleteState.dropdown = createAutocompleteDropdown();
+    document.body.appendChild(autocompleteState.dropdown);
+  }
+
+  autocompleteState.dropdown.innerHTML = "";
+
+  matches.slice(0, 10).forEach(name => {
+    const item = createAutocompleteItem(name, () => {
+      insertAutocompleteSelection(textarea, prefix, name);
+      hideAutocomplete();
+    });
+    autocompleteState.dropdown.appendChild(item);
+  });
+
+  // Position dropdown near cursor
+  const rect = textarea.getBoundingClientRect();
+  const lines = textarea.value.slice(0, textarea.selectionStart).split("\n");
+  const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
+
+  autocompleteState.dropdown.style.left = (rect.left + 10) + "px";
+  autocompleteState.dropdown.style.top = (rect.top + lines.length * lineHeight) + "px";
+  autocompleteState.dropdown.style.display = "block";
+}
+
+function insertAutocompleteSelection(textarea, prefix, name) {
+  const text = textarea.value;
+  const cursorPos = textarea.selectionStart;
+  const beforeCursor = text.slice(0, cursorPos);
+
+  // Remove the partial match
+  const cleanedBefore = beforeCursor.replace(/<lora:[^:>]*$|(\[emb:|<embed:)[^:>]*$/, "");
+
+  // Insert full syntax
+  const syntax = `${prefix}${name}:1.0>`;
+  const afterCursor = text.slice(cursorPos);
+
+  textarea.value = cleanedBefore + syntax + afterCursor;
+  textarea.selectionStart = textarea.selectionEnd = cleanedBefore.length + syntax.length;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function handleAutocompleteInput(event, textarea, node) {
+  clearTimeout(autocompleteState.timeout);
+
+  const text = textarea.value;
+  const cursorPos = textarea.selectionStart;
+  const beforeCursor = text.slice(0, cursorPos);
+
+  const loraMatch = beforeCursor.match(/<lora:([^:>]*)$/);
+  const embedMatch = beforeCursor.match(/(\[emb:|<embed:)([^:>]*)$/);
+
+  if (!loraMatch && !embedMatch) {
+    hideAutocomplete();
+    return;
+  }
+
+  const partial = loraMatch ? loraMatch[1] : embedMatch ? embedMatch[2] : "";
+  const prefix = loraMatch ? "<lora:" : "<embed:";
+  const list = loraMatch ? (node._dbLoraList || []) : (node._dbEmbeddingList || []);
+
+  autocompleteState.timeout = setTimeout(() => {
+    showAutocompleteDropdown(
+      textarea,
+      list.filter(item => item.toLowerCase().includes(partial.toLowerCase())),
+      prefix,
+      partial
+    );
+  }, 150);
+}
+
+function handleAutocompleteKeydown(event, textarea) {
+  if (!autocompleteState.dropdown || autocompleteState.dropdown.style.display === "none") return;
+
+  if (event.key === "Escape") {
+    hideAutocomplete();
+    event.preventDefault();
+  }
+}
+
 app.registerExtension({
   name: "DirtyBirds.Prompt",
 
@@ -76,9 +216,29 @@ app.registerExtension({
 
       // Track which prompt box was last focused so inserts land in the right one.
       node._dbLastPromptWidget = posWidget;
+      node._dbLoraList = [];
+      node._dbEmbeddingList = [];
+
+      // Fetch LoRA/embedding lists for autocomplete
+      async function loadAutocompleteData() {
+        try {
+          const loras = await fetchJSON("/dirtybirds/loras");
+          node._dbLoraList = Array.isArray(loras) ? loras : [];
+          const embeds = await fetchJSON("/dirtybirds/embeddings");
+          node._dbEmbeddingList = Array.isArray(embeds) ? embeds : [];
+        } catch (e) {
+          console.warn("[DirtyBirds] Could not load LoRA/embedding lists for autocomplete:", e);
+        }
+      }
+      loadAutocompleteData();
+
       [posWidget, negWidget].forEach(w => {
         const ta = getTextarea(w);
-        if (ta) ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
+        if (ta) {
+          ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
+          ta.addEventListener("input", (e) => handleAutocompleteInput(e, ta, node));
+          ta.addEventListener("keydown", (e) => handleAutocompleteKeydown(e, ta));
+        }
       });
 
       // ── Styled SEED button (Fixed / Random) — matches the loader ──────────
@@ -220,16 +380,6 @@ app.registerExtension({
       });
 
       // ── "Load Prompt" button → menu of saved positive prompts ────────────
-      function setPositive(text) {
-        const ta = getTextarea(posWidget);
-        if (ta) {
-          ta.value = text;
-          if (posWidget) posWidget.value = text;
-          ta.dispatchEvent(new Event("input", { bubbles: true }));
-        } else if (posWidget) {
-          posWidget.value = text;
-        }
-      }
       async function openSavedPromptMenu(event) {
         const data = await fetchJSON("/dirtybirds/saved-prompts");
         const prompts = data?.prompts || [];
@@ -243,7 +393,7 @@ app.registerExtension({
           const pickRandom = () => prompts[Math.floor(Math.random() * prompts.length)];
           items.push({
             content: "🎲  Randomize",
-            callback: () => setPositive(pickRandom()),
+            callback: () => insertText(pickRandom()),
           });
           items.push(null);
           prompts.slice().reverse().forEach(text => {
@@ -251,11 +401,6 @@ app.registerExtension({
             items.push({
               content: short, title: text,
               callback: () => insertText(text),
-              has_submenu: true,
-              submenu: { options: [
-                { content: "Insert at cursor", callback: () => insertText(text) },
-                { content: "Replace positive", callback: () => setPositive(text) },
-              ] },
             });
           });
         }
