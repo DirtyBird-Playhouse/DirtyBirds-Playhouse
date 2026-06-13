@@ -9,7 +9,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel } from "./db_shared.js";
+import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, nodeInnerW } from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -79,12 +79,6 @@ app.registerExtension({
       node.bgcolor = DB_BGCOLOR;
       const DB_MIN_W = 360;
       node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
-      // Clamp resize so the controls can't be squeezed off the node edge.
-      const _origResize = node.onResize;
-      node.onResize = function (size) {
-        if (size[0] < DB_MIN_W) size[0] = DB_MIN_W;
-        _origResize?.call(this, size);
-      };
 
       node._dbLastPrompts = node._dbLastPrompts || { pos: "", neg: "", loras: "" };
 
@@ -98,10 +92,12 @@ app.registerExtension({
         else if ("hidden" in w) w.hidden = true;
         return w;
       }
+      const widthEls = [];
       function addTitle(name, text) {
         const el = makeSectionLabel(text);
         el.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
         node.addDOMWidget(name, "customhtml", el, { serialize: false, height: 26, getMinHeight: () => 26 });
+        widthEls.push(el);
       }
       function makeFlyoutBtn(tag, getLabel, getValues, getCurrent, onPick) {
         const row = document.createElement("div");
@@ -202,6 +198,7 @@ app.registerExtension({
       node.addDOMWidget("db_method_cols", "customhtml", cols, {
         serialize: false, height: METHOD_H, getMinHeight: () => METHOD_H,
       });
+      widthEls.push(cols);
 
       // ── 2. THE PAYOFF — image preview ─────────────────────────────────────
       addTitle("db_payofflabel", "The Payoff");
@@ -216,6 +213,7 @@ app.registerExtension({
       const imgWidget = node.addDOMWidget("db_payoff_imgs", "customhtml", imgPanel, {
         serialize: false, height: 96, getMinHeight: () => Math.max(96, imgPanel.scrollHeight || 96),
       });
+      widthEls.push(imgPanel);
       function syncImgH() {
         requestAnimationFrame(() => {
           const h = Math.max(96, imgPanel.scrollHeight || 96);
@@ -251,10 +249,13 @@ app.registerExtension({
       const negLabel = document.createElement("div"); negLabel.className = "db-preview-label"; negLabel.textContent = "NEGATIVE";
       const negBlock = document.createElement("div"); negBlock.className = "db-preview-block db-neg";
 
+      // Save button appends the current prompt to prompts.txt.
       const saveBtn = document.createElement("button");
       saveBtn.className = "db-lib-btn db-lora-add-open-btn";
       saveBtn.textContent = "💾  Save Prompt";
-      saveBtn.style.cssText += "box-sizing:border-box;width:100%;margin-top:4px;";
+      saveBtn.style.cssText += "box-sizing:border-box;width:100%;margin:0;";
+      const saveStatus = document.createElement("div");
+      saveStatus.style.cssText = "font-size:10px;color:#5acc8a;padding:2px 2px 0;min-height:12px;";
 
       // Two-column row: POSITIVE (left) | splitter | NEGATIVE (right).
       const dtCols = document.createElement("div"); dtCols.className = "db-talent-columns";
@@ -273,13 +274,14 @@ app.registerExtension({
       const previewWidget = node.addDOMWidget("db_dtpanel", "customhtml", panel, {
         serialize: false, height: 60, getMinHeight: dtH,
       });
-      // Save button is its own fixed widget so it can't be clipped by the panel.
+      // Save row is its own fixed widget so it can't be clipped by the panel.
       const saveWrap = document.createElement("div");
-      saveWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
-      saveWrap.appendChild(saveBtn);
+      saveWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;display:flex;flex-direction:column;";
+      saveWrap.append(saveBtn, saveStatus);
       node.addDOMWidget("db_save_btn", "customhtml", saveWrap, {
-        serialize: false, height: 34, getMinHeight: () => 34,
+        serialize: false, height: 46, getMinHeight: () => 46,
       });
+      widthEls.push(panel, saveWrap);
       function syncH() {
         // Double rAF so the measurement happens after layout settles.
         requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -299,32 +301,54 @@ app.registerExtension({
         syncH();
       };
 
-      saveBtn.addEventListener("click", async () => {
+      function setStatus(msg, ok) {
+        saveStatus.textContent = msg;
+        saveStatus.style.color = ok ? "#5acc8a" : "#e06060";
+      }
+      saveBtn.addEventListener("click", async (e) => {
+        e.preventDefault(); e.stopPropagation();
         const p = node._dbLastPrompts || { pos: "", neg: "" };
-        if (!p.pos && !p.neg) { alert("Run the graph first — nothing to save yet."); return; }
-        const name = prompt("Save prompt as:", "");
-        if (!name) return;
+        if (!p.pos && !p.neg) { setStatus("Run the graph first — nothing to save.", false); return; }
+        setStatus("Saving…", true);
         try {
           const r = await fetch("/dirtybirds/save-prompt", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, positive: p.pos, negative: p.neg }),
+            body: JSON.stringify({ positive: p.pos, negative: p.neg }),
           });
-          const data = await r.json();
-          saveBtn.textContent = data?.ok ? "✓  Saved" : "✕  Failed";
-        } catch (e) {
-          console.error("[DirtyBirds] save-prompt failed", e);
-          saveBtn.textContent = "✕  Failed";
+          const data = await r.json().catch(() => null);
+          if (r.ok && data?.ok) {
+            setStatus("✓ Appended to " + (data.path || "prompts.txt"), true);
+          } else {
+            const msg = (data && (data.error || data.text)) || `HTTP ${r.status}`;
+            setStatus("✕ Failed: " + msg + (r.status === 404 ? " (restart ComfyUI server)" : ""), false);
+          }
+        } catch (err) {
+          console.error("[DirtyBirds] save-prompt failed", err);
+          setStatus("✕ Failed: " + err.message, false);
         }
-        setTimeout(() => { saveBtn.textContent = "💾  Save Prompt"; }, 1500);
       });
 
+      // ── width sync — constrain DOM widgets to the node's inner width so wide
+      //    controls reflow instead of overflowing and being clipped ───────────
+      function applyWidths() {
+        const w = nodeInnerW(node);
+        widthEls.forEach(el => { if (el) el.style.width = w + "px"; });
+      }
+      const _origResize = node.onResize;
+      node.onResize = function (size) {
+        if (size[0] < DB_MIN_W) size[0] = DB_MIN_W;
+        _origResize?.call(this, size);
+        applyWidths();
+      };
+
       // ── restore styled controls from saved widget values ──────────────────
-      requestAnimationFrame(() => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        applyWidths();
         samplerBtn.refresh(); schedulerBtn.refresh();
         noise.paint(); steps.paint(); cfg.paint();
         node._dbRefreshPrompts();
-      });
+      }));
     };
   },
 });

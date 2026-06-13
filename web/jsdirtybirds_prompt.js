@@ -81,6 +81,75 @@ app.registerExtension({
         if (ta) ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
       });
 
+      // ── Styled SEED button (Fixed / Random) — matches the loader ──────────
+      function hideWidget(name) {
+        const w = node.widgets?.find(w => w.name === name);
+        if (!w) return undefined;
+        w.computeSize    = () => [0, 0];
+        w.serializeValue = () => w.value;
+        if (typeof w.setHidden === "function") w.setHidden(true);
+        else if ("hidden" in w) w.hidden = true;
+        return w;
+      }
+      function showOptionsFlyout(title, options, current, onPick) {
+        document.querySelector(".db-flyout-overlay")?.remove();
+        document.querySelector(".db-flyout")?.remove();
+        const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
+        const panel   = document.createElement("div"); panel.className = "db-flyout";
+        panel.style.left = Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
+        panel.style.top  = Math.max(40, window.innerHeight / 2 - 120) + "px";
+        const header = document.createElement("div"); header.className = "db-flyout-header";
+        const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
+        const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+        header.append(titleEl, closeBtn); panel.appendChild(header);
+        const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
+        options.forEach(opt => {
+          const row = document.createElement("div");
+          row.className = "db-res-opt" + (opt.value === current ? " db-selected" : "");
+          row.innerHTML = `<span class="db-res-opt-glyph">${opt.glyph || ""}</span><span class="db-res-opt-label">${opt.label}</span>`;
+          row.addEventListener("click", () => { close(); onPick(opt.value); });
+          list.appendChild(row);
+        });
+        function close() { overlay.remove(); panel.remove(); }
+        closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+        document.body.append(overlay, panel);
+      }
+
+      const seedWidget   = hideWidget("seed");
+      const rerollWidget = hideWidget("reroll_each_run");
+      hideWidget("control_after_generate");
+
+      const seedRow = document.createElement("div");
+      seedRow.className = "db-sel-row"; seedRow.style.cursor = "pointer";
+      const seedTag   = document.createElement("span"); seedTag.className = "db-model-tag"; seedTag.textContent = "SEED";
+      const seedLabel = document.createElement("span"); seedLabel.className = "db-sel-name"; seedLabel.style.flex = "1";
+      const seedCaret = document.createElement("span"); seedCaret.className = "db-model-caret"; seedCaret.textContent = "▾";
+      seedRow.append(seedTag, seedLabel, seedCaret);
+      // reroll_each_run true = Random (re-rolls every run), false = Fixed.
+      function refreshSeedRow() {
+        seedLabel.textContent = (rerollWidget?.value ? "🎲 Random" : "Fixed");
+      }
+      seedRow.addEventListener("click", () => {
+        showOptionsFlyout("Seed", [
+          { value: false, label: "Fixed",  glyph: "📌" },
+          { value: true,  label: "Random", glyph: "🎲" },
+        ], !!rerollWidget?.value, (mode) => {
+          if (rerollWidget) rerollWidget.value = mode;
+          if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+            seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+          }
+          refreshSeedRow();
+          node.setDirtyCanvas(true);
+        });
+      });
+      refreshSeedRow();
+      const seedWrap = document.createElement("div");
+      seedWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;padding:0 2px;";
+      seedWrap.appendChild(seedRow);
+      node.addDOMWidget("db_seed_row", "customhtml", seedWrap, {
+        serialize: false, height: 34, getMinHeight: () => 34,
+      });
+
       // ── "Load Wildcards" button → native LiteGraph context menu ──────────
       node._dbWildcardKeys = [];
 
@@ -134,12 +203,66 @@ app.registerExtension({
         });
       }
 
+      // Titled section above the action buttons (matches the other nodes).
+      const toolsLabel = makeSectionLabel("The Toybox");
+      toolsLabel.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
+      node.addDOMWidget("db_toolslabel", "customhtml", toolsLabel, {
+        serialize: false, height: 26, getMinHeight: () => 26,
+      });
+
       const btn = document.createElement("button");
       btn.className = "db-lib-btn db-lora-add-open-btn";
       btn.textContent = "🎲  Load Wildcards";
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       btn.addEventListener("click", (e) => openWildcardMenu(e));
       node.addDOMWidget("db_wildcard_btn", "customhtml", btn, {
+        serialize: false, height: 34, getMinHeight: () => 34,
+      });
+
+      // ── "Load Prompt" button → menu of saved positive prompts ────────────
+      function setPositive(text) {
+        const ta = getTextarea(posWidget);
+        if (ta) {
+          ta.value = text;
+          if (posWidget) posWidget.value = text;
+          ta.dispatchEvent(new Event("input", { bubbles: true }));
+        } else if (posWidget) {
+          posWidget.value = text;
+        }
+      }
+      async function openSavedPromptMenu(event) {
+        const data = await fetchJSON("/dirtybirds/saved-prompts");
+        const prompts = data?.prompts || [];
+        const items = [];
+        if (!prompts.length) {
+          items.push({ content: "(no saved prompts)", disabled: true });
+        } else {
+          prompts.slice().reverse().forEach(text => {
+            const short = text.length > 60 ? text.slice(0, 60) + "…" : text;
+            items.push({
+              content: short, title: text,
+              callback: () => insertText(text),
+              has_submenu: true,
+              submenu: { options: [
+                { content: "Insert at cursor", callback: () => insertText(text) },
+                { content: "Replace positive", callback: () => setPositive(text) },
+              ] },
+            });
+          });
+        }
+        new LiteGraph.ContextMenu(items, {
+          event,
+          title: `📥 Saved Prompts (${prompts.length})`,
+          scale: Math.max(1, app.canvas?.ds?.scale || 1),
+        });
+      }
+
+      const loadBtn = document.createElement("button");
+      loadBtn.className = "db-lib-btn db-lora-add-open-btn";
+      loadBtn.textContent = "📥  Load Prompt";
+      loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      loadBtn.addEventListener("click", (e) => openSavedPromptMenu(e));
+      node.addDOMWidget("db_loadprompt_btn", "customhtml", loadBtn, {
         serialize: false, height: 34, getMinHeight: () => 34,
       });
 
@@ -228,7 +351,9 @@ app.registerExtension({
       function applyWidths() {
         const w = nodeInnerW(node);
         scriptLabel.style.width = w + "px";
+        seedWrap.style.width = w + "px";
         btn.style.width = w + "px";
+        loadBtn.style.width = w + "px";
         booruWrap.style.width = w + "px";
         node.widgets.forEach(ww => {
           if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width = w + "px";

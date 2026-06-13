@@ -7,7 +7,6 @@ Outputs latent + decoded image with live preview in the node.
 """
 
 import os
-import re
 import json
 import random
 import logging
@@ -27,9 +26,8 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-# Saved prompts live alongside the existing wildcard prompt files.
-PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
-SAVED_PROMPTS_DIR = os.path.join(PROMPTS_DIR, "saved")
+# Saved prompts are appended to a single file in the node directory.
+SAVED_PROMPTS_FILE = os.path.join(os.path.dirname(__file__), "prompts.txt")
 
 
 def _embed_token(raw):
@@ -206,7 +204,7 @@ class DirtyBirdsSampler:
 
 
 # ---------------------------------------------------------------------------
-# Save-prompt route — writes the final prompt to prompts/saved/<name>.txt
+# Save-prompt route — appends the final prompt to prompts.txt
 # ---------------------------------------------------------------------------
 @PromptServer.instance.routes.post("/dirtybirds/save-prompt")
 async def api_save_prompt(request):
@@ -215,28 +213,26 @@ async def api_save_prompt(request):
     except Exception:
         raise web.HTTPBadRequest(text="invalid JSON")
 
-    name = str(data.get("name", "")).strip()
-    if not name:
-        raise web.HTTPBadRequest(text="name required")
-    # Sanitize to a safe single-segment filename.
-    name = re.sub(r"[^A-Za-z0-9 _.-]", "_", name).strip()
-    if not name or name.startswith("."):
-        raise web.HTTPBadRequest(text="invalid name")
-    if not name.lower().endswith(".txt"):
-        name += ".txt"
+    positive = str(data.get("positive", "") or "").strip()
+    if not positive:
+        raise web.HTTPBadRequest(text="nothing to save")
 
-    os.makedirs(SAVED_PROMPTS_DIR, exist_ok=True)
-    full = os.path.normpath(os.path.join(SAVED_PROMPTS_DIR, name))
-    if os.path.commonpath([os.path.abspath(full), os.path.abspath(SAVED_PROMPTS_DIR)]) != os.path.abspath(SAVED_PROMPTS_DIR):
-        raise web.HTTPForbidden()
+    # Append the positive prompt as a single line (no timestamp, no negative),
+    # avoiding duplicate consecutive entries.
+    with open(SAVED_PROMPTS_FILE, "a", encoding="utf-8") as fh:
+        fh.write(positive.replace("\n", " ").strip() + "\n")
 
-    positive = str(data.get("positive", "") or "")
-    negative = str(data.get("negative", "") or "")
-    body = f"# positive\n{positive}\n\n# negative\n{negative}\n"
-    with open(full, "w", encoding="utf-8") as fh:
-        fh.write(body)
+    return web.json_response({"ok": True, "path": os.path.basename(SAVED_PROMPTS_FILE)})
 
-    return web.json_response({"ok": True, "path": os.path.relpath(full, os.path.dirname(__file__))})
+
+@PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
+async def api_saved_prompts(request):
+    """Return the saved positive prompts (one per line) for the Load Prompt menu."""
+    if not os.path.exists(SAVED_PROMPTS_FILE):
+        return web.json_response({"prompts": []})
+    with open(SAVED_PROMPTS_FILE, "r", encoding="utf-8") as fh:
+        lines = [l.strip() for l in fh if l.strip()]
+    return web.json_response({"prompts": lines})
 
 
 NODE_CLASS_MAPPINGS = {
