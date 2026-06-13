@@ -123,9 +123,11 @@ class DirtyBirdsLoader:
                 "workflow":    (["Text2Image", "Image2Image"], {"default": "Text2Image"}),
                 # Checkpoint dropdown
                 "ckpt_name":   (ckpt_list,),
-                # Raw prompt strings — connect from DDT or type directly
-                "positive":    ("STRING", {"multiline": True, "default": ""}),
-                "negative":    ("STRING", {"multiline": True, "default": ""}),
+                # Raw prompt strings — fed from the Prompt node ("The Script")
+                # as input sockets (forceInput); the loader appends trigger words
+                # + embedding tokens, then encodes with the checkpoint's CLIP.
+                "positive":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+                "negative":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
                 # Hidden – resolution pills
                 "dimension":   ("STRING", {"default": dim_options[0]}),
                 # Hidden – inline LoRA picker (JSON array of selected loras)

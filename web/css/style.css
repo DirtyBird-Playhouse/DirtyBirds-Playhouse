@@ -60,15 +60,11 @@
 
 .db-wf-opt.db-wf-active { color: #fff; }
 
-/* ── Segmented control (e.g. noise: CPU / CPU+GPU / GPU) ──── */
+/* ── Separated noise buttons (CPU / Both / GPU) ───────────── */
 .db-seg {
   display: flex;
+  gap: 4px;
   height: 22px;
-  border-radius: 6px;
-  border: 1px solid #34343a;
-  background: #252527;
-  overflow: hidden;
-  cursor: pointer;
   user-select: none;
 }
 .db-seg-opt {
@@ -80,14 +76,18 @@
   font-weight: 600;
   color: #aaa;
   white-space: nowrap;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid #34343a;
+  background: #252527;
   transition: all 0.15s ease;
-  border-left: 1px solid #34343a;
 }
-.db-seg-opt:first-child { border-left: none; }
-.db-seg-opt:hover { color: #ddd; }
+.db-seg-opt:hover { color: #ddd; border-color: #4a4a52; }
 .db-seg-opt.db-seg-active {
   background: linear-gradient(180deg, #1a5a9a, #15324a);
+  border-color: #5aadff;
   color: #fff;
+  box-shadow: 0 0 8px rgba(90, 173, 255, 0.35);
 }
 
 /* ── Section Labels  ─────────── TITLE ─────────── ──────────────────────── */

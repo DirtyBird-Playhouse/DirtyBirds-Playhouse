@@ -632,8 +632,8 @@ app.registerExtension({
       const lorasDataWidget = hideWidget("loras_data");
       const twDataWidget    = hideWidget("trigger_words_data");
       // positive / negative are hidden — edited via the Dirty Talk panel below
-      const posWidget = hideWidget("positive");
-      const negWidget = hideWidget("negative");
+      // positive / negative are forceInput sockets (fed by the Prompt node),
+      // not widgets — nothing to hide here.
 
       // Random resolution is stored as the sentinel "__random__" in the
       // dimension widget so Python re-picks a fresh size on every run.

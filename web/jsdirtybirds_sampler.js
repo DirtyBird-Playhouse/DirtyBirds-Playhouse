@@ -15,7 +15,7 @@ ensureStylesheet();
 
 const EMPTY_PREVIEW = '<span style="color:#3a3a3a;font-style:italic">— run to preview —</span>';
 const NOISE_MODES = ["cpu", "both", "gpu"];
-const NOISE_LABELS = { cpu: "CPU", both: "CPU+GPU", gpu: "GPU" };
+const NOISE_LABELS = { cpu: "CPU", both: "Both", gpu: "GPU" };
 
 // Compact list flyout (ported from the loader, reusing the global .db-flyout* CSS).
 function showListFlyout(title, names, current, onPick) {
@@ -64,7 +64,7 @@ app.registerExtension({
       onExecuted?.apply(this, arguments);
       const md = message?.db_prompts_md;
       if (Array.isArray(md)) {
-        this._dbLastPrompts = { pos: md[0] ?? "", neg: md[1] ?? "", loras: md[2] ?? "" };
+        this._dbLastPrompts = { pos: md[0] ?? "", neg: md[1] ?? "" };
         this._dbRefreshPrompts?.();
       }
       const imgs = message?.db_images;
@@ -77,7 +77,14 @@ app.registerExtension({
       const node = this;
       node.color   = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 360);
+      const DB_MIN_W = 360;
+      node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
+      // Clamp resize so the controls can't be squeezed off the node edge.
+      const _origResize = node.onResize;
+      node.onResize = function (size) {
+        if (size[0] < DB_MIN_W) size[0] = DB_MIN_W;
+        _origResize?.call(this, size);
+      };
 
       node._dbLastPrompts = node._dbLastPrompts || { pos: "", neg: "", loras: "" };
 
@@ -148,8 +155,7 @@ app.registerExtension({
       // Noise: 3-segment toggle (CPU / CPU+GPU / GPU) instead of a slider.
       const noise = (() => {
         const row = document.createElement("div");
-        row.className = "db-slider-row"; row.style.justifyContent = "space-between";
-        const lbl = document.createElement("span"); lbl.className = "db-slider-label"; lbl.textContent = "Noise";
+        row.className = "db-slider-row";
         const seg = document.createElement("div"); seg.className = "db-seg"; seg.style.flex = "1";
         const opts = NOISE_MODES.map(mode => {
           const o = document.createElement("div");
@@ -162,7 +168,7 @@ app.registerExtension({
           const cur = noiseWidget?.value ?? "both";
           opts.forEach(o => o.classList.toggle("db-seg-active", o.dataset.mode === cur));
         }
-        row.append(lbl, seg);
+        row.append(seg);
         return { row, paint };
       })();
       const steps = makeSlider("Steps", 1, 100, 1,
@@ -176,11 +182,11 @@ app.registerExtension({
 
       const cols = document.createElement("div");
       cols.className = "db-talent-columns";
-      cols.style.cssText = "box-sizing:border-box;overflow:hidden;align-items:stretch;";
+      cols.style.cssText = "box-sizing:border-box;overflow:hidden;align-items:flex-start;";
 
-      // Left column: stacked Sampler + Scheduler buttons.
+      // Left column: stacked Sampler + Scheduler buttons (top-aligned).
       const leftCol = document.createElement("div"); leftCol.className = "db-talent-loras";
-      leftCol.style.cssText = "display:flex;flex-direction:column;gap:4px;justify-content:center;min-width:0;";
+      leftCol.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:0;";
       leftCol.append(samplerBtn.row, schedulerBtn.row);
 
       const divider = document.createElement("div"); divider.className = "db-talent-divider";
@@ -191,14 +197,16 @@ app.registerExtension({
       rightCol.append(noise.row, steps.row, cfg.row);
 
       cols.append(leftCol, divider, rightCol);
+      const METHOD_H = 78;
+      cols.style.height = METHOD_H + "px";
       node.addDOMWidget("db_method_cols", "customhtml", cols, {
-        serialize: false, height: 84, getMinHeight: () => Math.max(84, cols.scrollHeight || 84),
+        serialize: false, height: METHOD_H, getMinHeight: () => METHOD_H,
       });
 
       // ── 2. THE PAYOFF — image preview ─────────────────────────────────────
       addTitle("db_payofflabel", "The Payoff");
       const imgPanel = document.createElement("div");
-      imgPanel.style.cssText = "display:flex;flex-direction:column;gap:6px;box-sizing:border-box;overflow:hidden;";
+      imgPanel.style.cssText = "display:flex;flex-direction:row;gap:6px;box-sizing:border-box;overflow:hidden;align-items:flex-start;";
       const imgEmpty = document.createElement("div");
       imgEmpty.className = "db-model-preview";
       imgEmpty.style.cssText += "display:flex;align-items:center;justify-content:center;color:#3a3a3a;font-style:italic;font-size:11px;";
@@ -221,7 +229,8 @@ app.registerExtension({
         const rand = Date.now();
         imgs.forEach(info => {
           const img = document.createElement("img");
-          img.style.cssText = "width:100%;border-radius:8px;border:1px solid #34343a;display:block;";
+          // Share the row width so multiple passes sit side by side.
+          img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;";
           const q = `filename=${encodeURIComponent(info.filename)}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "temp")}&rand=${rand}`;
           img.src = `/view?${q}`;
           img.onload = syncImgH;
@@ -241,36 +250,52 @@ app.registerExtension({
       const posBlock = document.createElement("div"); posBlock.className = "db-preview-block db-pos";
       const negLabel = document.createElement("div"); negLabel.className = "db-preview-label"; negLabel.textContent = "NEGATIVE";
       const negBlock = document.createElement("div"); negBlock.className = "db-preview-block db-neg";
-      const loraLabel = document.createElement("div"); loraLabel.className = "db-preview-label"; loraLabel.textContent = "ACTIVE LORAS";
-      const loraBlock = document.createElement("div"); loraBlock.className = "db-preview-block";
 
       const saveBtn = document.createElement("button");
       saveBtn.className = "db-lib-btn db-lora-add-open-btn";
       saveBtn.textContent = "💾  Save Prompt";
       saveBtn.style.cssText += "box-sizing:border-box;width:100%;margin-top:4px;";
 
-      panel.append(posLabel, posBlock, negLabel, negBlock, loraLabel, loraBlock, saveBtn);
+      // Two-column row: POSITIVE (left) | splitter | NEGATIVE (right).
+      const dtCols = document.createElement("div"); dtCols.className = "db-talent-columns";
+      const dtLeft = document.createElement("div"); dtLeft.className = "db-talent-loras";
+      dtLeft.style.cssText = "display:flex;flex-direction:column;min-width:0;";
+      dtLeft.append(posLabel, posBlock);
+      const dtDivider = document.createElement("div"); dtDivider.className = "db-talent-divider";
+      const dtRight = document.createElement("div"); dtRight.className = "db-talent-triggerwords";
+      dtRight.style.cssText = "display:flex;flex-direction:column;min-width:0;";
+      dtRight.append(negLabel, negBlock);
+      dtCols.append(dtLeft, dtDivider, dtRight);
 
+      panel.append(dtCols);
+
+      const dtH = () => Math.max(60, panel.scrollHeight || 60);
       const previewWidget = node.addDOMWidget("db_dtpanel", "customhtml", panel, {
-        serialize: false, height: 80, getMinHeight: () => Math.max(80, panel.scrollHeight || 80),
+        serialize: false, height: 60, getMinHeight: dtH,
+      });
+      // Save button is its own fixed widget so it can't be clipped by the panel.
+      const saveWrap = document.createElement("div");
+      saveWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
+      saveWrap.appendChild(saveBtn);
+      node.addDOMWidget("db_save_btn", "customhtml", saveWrap, {
+        serialize: false, height: 34, getMinHeight: () => 34,
       });
       function syncH() {
-        requestAnimationFrame(() => {
-          const h = Math.max(80, panel.scrollHeight || 80);
+        // Double rAF so the measurement happens after layout settles.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const h = dtH();
           if (previewWidget) { previewWidget.height = h; previewWidget.computedHeight = h; }
           node.setDirtyCanvas(true);
-        });
+        }));
       }
       function fill(block, value) {
         if (value) { block.textContent = value; block.classList.remove("db-preview-empty"); }
         else       { block.innerHTML = EMPTY_PREVIEW; block.classList.add("db-preview-empty"); }
       }
       node._dbRefreshPrompts = () => {
-        const p = node._dbLastPrompts || { pos: "", neg: "", loras: "" };
+        const p = node._dbLastPrompts || { pos: "", neg: "" };
         fill(posBlock, p.pos);
         fill(negBlock, p.neg);
-        loraBlock.textContent = p.loras || "none";
-        loraBlock.classList.toggle("db-preview-empty", !p.loras);
         syncH();
       };
 
