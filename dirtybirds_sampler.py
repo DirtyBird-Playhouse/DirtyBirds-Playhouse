@@ -193,7 +193,15 @@ class DirtyBirdsSampler:
             results.append({"filename": file, "subfolder": subfolder, "type": "temp"})
             counter += 1
 
-        prompts_md = build_prompt_markdown(pipe.get("loader_settings"))
+        ls = pipe.get("loader_settings")
+        prompts_md = build_prompt_markdown(ls)
+        if not (prompts_md[0].strip() or prompts_md[1].strip()):
+            logging.getLogger(__name__).info(
+                "[DirtyBirds] Sampler: empty prompt text. loader_settings present=%s, "
+                "positive=%r, negative=%r. (Connect the Prompt node's positive/negative "
+                "outputs to the Loader's positive/negative inputs.)",
+                ls is not None,
+                (ls or {}).get("positive", ""), (ls or {}).get("negative", ""))
 
         # Use a custom UI key so ComfyUI does NOT render its own default preview
         # widget — the node draws the preview itself from db_images.
