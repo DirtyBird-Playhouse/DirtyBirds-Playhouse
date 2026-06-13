@@ -160,7 +160,7 @@ app.registerExtension({
       const booruInput = document.createElement("input");
       booruInput.type = "text";
       booruInput.placeholder = "Search booru…";
-      booruInput.style.cssText = "flex:1;font-size:10px;background:#1a1a1a;border:1px solid #444;color:#ccc;border-radius:3px;padding:2px 4px;";
+      booruInput.className = "db-text-input";
       const booruSearchBtn = document.createElement("button");
       booruSearchBtn.textContent = "Search";
       booruSearchBtn.className = "db-lib-btn";

@@ -12,15 +12,19 @@ from .dirtybirds_image import (
     NODE_CLASS_MAPPINGS as _IMAGE_CLASSES,
     NODE_DISPLAY_NAME_MAPPINGS as _IMAGE_NAMES,
 )
+from .dirtybirds_sampler import (
+    NODE_CLASS_MAPPINGS as _SAMPLER_CLASSES,
+    NODE_DISPLAY_NAME_MAPPINGS as _SAMPLER_NAMES,
+)
 from . import dirtybirds_booru  # noqa: F401 — registers /dirtybirds/booru-search route
 
 NODE_CLASS_MAPPINGS = {
     **_LOADER_CLASSES, **_PROMPT_CLASSES,
-    **_IMAGE_CLASSES,
+    **_IMAGE_CLASSES, **_SAMPLER_CLASSES,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     **_LOADER_NAMES, **_PROMPT_NAMES,
-    **_IMAGE_NAMES,
+    **_IMAGE_NAMES, **_SAMPLER_NAMES,
 }
 
 # Tell ComfyUI where our JS/CSS live

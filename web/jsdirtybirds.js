@@ -600,11 +600,6 @@ app.registerExtension({
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
-      const p = message?.db_prompts;
-      if (Array.isArray(p)) {
-        this._dbLastPrompts = { pos: p[0] ?? "", neg: p[1] ?? "" };
-        this._dbRefreshPreview?.();
-      }
       const stackNames = message?.db_lora_stack;
       if (Array.isArray(stackNames)) {
         this._dbRefreshStackChips?.(stackNames);
@@ -655,23 +650,35 @@ app.registerExtension({
         node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
       }
 
-      // ── 1. WORKFLOW TOGGLE ───────────────────────────────────────────────
-      const workflowDOM = document.createElement("div"); workflowDOM.className="db-workflow-group";
-      ["Text2Image","Image2Image"].forEach(mode => {
-        const btn = document.createElement("button");
-        btn.className = "db-workflow-btn"+((workflowWidget?.value??"Text2Image")===mode?" db-active":"");
-        btn.textContent = mode==="Text2Image"?"Text → Image":"Image → Image";
-        btn.addEventListener("click", () => {
-          workflowDOM.querySelectorAll(".db-workflow-btn").forEach(b=>b.classList.remove("db-active"));
-          btn.classList.add("db-active");
-          if (workflowWidget) workflowWidget.value=mode;
-          node.inputs?.forEach(inp => { if (inp.name==="image") inp.hidden=(mode!=="Image2Image"); });
-          applyWorkflowDenoiseDefault();
-          updateResolutionState(); node.setDirtyCanvas(true);
-        });
-        workflowDOM.appendChild(btn);
-      });
-      addFixed("db_workflow", workflowDOM, 48);
+      // ── 1. WORKFLOW TOGGLE (sliding switch) ──────────────────────────────
+      const workflowDOM = document.createElement("div"); workflowDOM.className="db-workflow-switch";
+      const wfKnob = document.createElement("div"); wfKnob.className="db-wf-knob";
+      const wfOptT = document.createElement("div"); wfOptT.className="db-wf-opt"; wfOptT.textContent="Text → Image";
+      const wfOptI = document.createElement("div"); wfOptI.className="db-wf-opt"; wfOptI.textContent="Image → Image";
+      workflowDOM.append(wfKnob, wfOptT, wfOptI);
+
+      // Paint visual state only (no side effects) — safe to call during init,
+      // before denoise/resolution helpers below are wired up.
+      function paintWorkflow(mode) {
+        const isI2I = mode === "Image2Image";
+        workflowDOM.classList.toggle("db-wf-right", isI2I);
+        wfOptT.classList.toggle("db-wf-active", !isI2I);
+        wfOptI.classList.toggle("db-wf-active", isI2I);
+      }
+      // Full select (visual + side effects) — only fired by user clicks, after
+      // applyWorkflowDenoiseDefault / updateResolutionState are defined.
+      function selectWorkflow(mode) {
+        if (workflowWidget) workflowWidget.value = mode;
+        paintWorkflow(mode);
+        node.inputs?.forEach(inp => { if (inp.name==="image") inp.hidden=(mode!=="Image2Image"); });
+        applyWorkflowDenoiseDefault();
+        updateResolutionState();
+        node.setDirtyCanvas(true);
+      }
+      wfOptT.addEventListener("click", () => selectWorkflow("Text2Image"));
+      wfOptI.addEventListener("click", () => selectWorkflow("Image2Image"));
+      paintWorkflow(workflowWidget?.value ?? "Text2Image");
+      addFixed("db_workflow", workflowDOM, 40);
       const wIdx = node.widgets.findIndex(w=>w.name==="db_workflow");
       if (wIdx>0) { const [we]=node.widgets.splice(wIdx,1); node.widgets.unshift(we); }
 
@@ -696,8 +703,8 @@ app.registerExtension({
 
       // Selected-checkpoint preview (image or video) below the button.
       const ckptPreview = document.createElement("div");
-      ckptPreview.className = "db-ckpt-preview";
-      ckptPreview.style.cssText = "width:100%;height:88px;border-radius:8px;overflow:hidden;background:#181818;border:1px solid #34343a;display:none;margin-top:6px;";
+      ckptPreview.className = "db-model-preview";
+      ckptPreview.style.cssText = "display:none;margin-top:6px;";
 
       function refreshCkptName() {
         const v = ckptWidget?.value ?? "";
@@ -730,7 +737,7 @@ app.registerExtension({
 
       // Left column: Checkpoint button + preview
       const leftCol = document.createElement("div");
-      leftCol.style.cssText = "display:flex;flex-direction:column;flex:1.2;min-width:0;";
+      leftCol.style.cssText = "display:flex;flex-direction:column;flex:1;min-width:0;";
       leftCol.append(ckptBtn, ckptPreview);
 
       // Resolution is stored as "WIDTHxHEIGHT" or the RANDOM_DIM sentinel in the hidden `dimension` widget.
@@ -953,8 +960,8 @@ app.registerExtension({
         row.className = `db-sel-row ${slotClass}`;
 
         const preview = document.createElement("div");
-        preview.className = "db-ckpt-preview";
-        preview.style.cssText = "width:100%;height:88px;border-radius:8px;overflow:hidden;background:#181818;border:1px solid #34343a;display:none;margin-top:6px;";
+        preview.className = "db-model-preview";
+        preview.style.cssText = "display:none;margin-top:6px;";
 
         wrap.append(row, preview);
 
@@ -1291,105 +1298,10 @@ app.registerExtension({
         return added;
       };
 
-      // ── 5. DIRTY TALK — prompt preview with click-to-edit ────────────────
-      // Built via addTitle (same path as every other section title) so it centers
-      // identically; the edit pencil floats over the label's right edge. An inline
-      // SVG (not an emoji) avoids the tofu-box glyph some fonts render for ✏.
-      const dtLabel = makeSectionLabel("Dirty Talk");
-      dtLabel.style.position = "relative";
-      const editBtn = document.createElement("button");
-      editBtn.title = "Edit prompts";
-      editBtn.style.cssText = "position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2;background:none;border:none;color:#555;cursor:pointer;padding:0 2px;line-height:0;display:flex;align-items:center;";
-      editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
-      dtLabel.appendChild(editBtn);
-      addTitle("db_twlabel", dtLabel, 26);
-
-      const previewPanelEl = document.createElement("div");
-      previewPanelEl.className = "db-preview-panel";
-      previewPanelEl.style.cssText = "box-sizing:border-box;overflow:hidden;";
-
-      const posPreviewLabel = document.createElement("div");
-      posPreviewLabel.className = "db-preview-label"; posPreviewLabel.textContent = "POSITIVE";
-      const posPreviewBlock = document.createElement("div");
-      posPreviewBlock.className = "db-preview-block db-pos";
-
-      const negPreviewLabel = document.createElement("div");
-      negPreviewLabel.className = "db-preview-label"; negPreviewLabel.textContent = "NEGATIVE";
-      const negPreviewBlock = document.createElement("div");
-      negPreviewBlock.className = "db-preview-block db-neg";
-
-      // Edit-mode textareas (created once, swapped in/out)
-      function makeEditArea(extraClass) {
-        const ta = document.createElement("textarea");
-        ta.className = "db-preview-block " + extraClass;
-        ta.style.cssText = "resize:none;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;min-height:40px;";
-        ta.rows = 3;
-        return ta;
-      }
-      const posEditArea = makeEditArea("db-pos");
-      const negEditArea = makeEditArea("db-neg");
-
-      previewPanelEl.append(posPreviewLabel, posPreviewBlock, negPreviewLabel, negPreviewBlock);
-
-      node._dbLastPrompts = node._dbLastPrompts || { pos: "", neg: "" };
-      let _editMode = false;
-      const EMPTY_PREVIEW = '<span style="color:#3a3a3a;font-style:italic">— run to preview —</span>';
-
-      function updatePreviews(posV, negV) {
-        if (_editMode) return; // don't overwrite while user is typing
-        if (posV === undefined) posV = node._dbLastPrompts.pos || "";
-        if (negV === undefined) negV = node._dbLastPrompts.neg || "";
-        if (posV) { posPreviewBlock.textContent = posV; posPreviewBlock.classList.remove("db-preview-empty"); }
-        else      { posPreviewBlock.innerHTML = EMPTY_PREVIEW; posPreviewBlock.classList.add("db-preview-empty"); }
-        if (negV) { negPreviewBlock.textContent = negV; negPreviewBlock.classList.remove("db-preview-empty"); }
-        else      { negPreviewBlock.innerHTML = EMPTY_PREVIEW; negPreviewBlock.classList.add("db-preview-empty"); }
-      }
-
-      posEditArea.addEventListener("input", () => { if (posWidget) posWidget.value = posEditArea.value; syncPreviewH(); });
-      negEditArea.addEventListener("input", () => { if (negWidget) negWidget.value = negEditArea.value; syncPreviewH(); });
-
-      editBtn.addEventListener("click", () => {
-        _editMode = !_editMode;
-        // stroke="currentColor" on the SVG → color drives the pencil tint.
-        editBtn.style.color  = _editMode ? "#5acc8a" : "#555";
-        editBtn.title = _editMode ? "Done editing" : "Edit prompts";
-        if (_editMode) {
-          posEditArea.value = posWidget?.value || node._dbLastPrompts.pos || "";
-          negEditArea.value = negWidget?.value || node._dbLastPrompts.neg || "";
-          posPreviewBlock.replaceWith(posEditArea);
-          negPreviewBlock.replaceWith(negEditArea);
-        } else {
-          posEditArea.replaceWith(posPreviewBlock);
-          negEditArea.replaceWith(negPreviewBlock);
-          updatePreviews(posWidget?.value || "", negWidget?.value || "");
-        }
-        syncPreviewH();
-      });
-
-      node._dbRefreshPreview = () => {
-        updatePreviews(node._dbLastPrompts.pos, node._dbLastPrompts.neg);
-        syncPreviewH();
-      };
-
-      function syncPreviewH() {
-        requestAnimationFrame(() => {
-          const h = Math.max(60, previewPanelEl.scrollHeight || 60);
-          if (previewWidget) { previewWidget.height = h; previewWidget.computedHeight = h; }
-          node.setDirtyCanvas(true);
-        });
-      }
-
-      const previewWidget = node.addDOMWidget("db_preview_panel", "customhtml", previewPanelEl, {
-        serialize: false, height: 60,
-        getMinHeight: () => Math.max(60, previewPanelEl.scrollHeight || 60),
-      });
+      // Dirty Talk now lives on the sampler node (read-only markdown preview).
 
       // ── Restore saved state ──────────────────────────────────────────────
       requestAnimationFrame(() => {
-        // positive/negative are input sockets — preview is filled after a run
-        // via onExecuted. Render the last-known (or empty) state now.
-        node._dbRefreshPreview();
-
         // Checkpoint button label + preview (native value restored post-onNodeCreated)
         refreshCkptName();
         refreshCkptPreview();
@@ -1451,7 +1363,7 @@ app.registerExtension({
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [workflowDOM, topRow, embedColsEl, talentColsEl, previewPanelEl];
+      const domEls = [workflowDOM, topRow, embedColsEl, talentColsEl];
       function applyWidths() {
         const w = nodeInnerW(node);
         domEls.forEach(el => { el.style.width=w+"px"; });
