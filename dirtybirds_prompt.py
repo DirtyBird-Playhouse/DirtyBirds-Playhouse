@@ -8,8 +8,8 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-# Wildcards live alongside this node in a "wildcards" folder (.yaml / .yml / .txt)
-WILDCARDS_DIR = os.path.join(os.path.dirname(__file__), "wildcards")
+# Wildcards live in "user_files/wildcards" folder (.yaml / .yml / .txt)
+WILDCARDS_DIR = os.path.join(os.path.dirname(__file__), "user_files", "wildcards")
 
 # Prompt .txt files live in a "prompts" folder alongside this node
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
@@ -289,4 +289,4 @@ class DirtyBirdsPrompt:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsPrompt": DirtyBirdsPrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "🍑 DirtyBirds Dirty Talk — The Script"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "💬 Dirty Talk — The Script"}

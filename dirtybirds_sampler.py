@@ -233,7 +233,7 @@ async def api_save_prompt(request):
     return web.json_response({"ok": True, "path": os.path.basename(SAVED_PROMPTS_FILE)})
 
 
-PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "Node_Doc", "prompts")
+PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "user_files", "prompts")
 
 
 @PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
@@ -274,5 +274,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DirtyBirdsSampler": "🍑 DirtyBirds Sample — The Payoff",
+    "DirtyBirdsSampler": "🎯 Sample — The Payoff",
 }
