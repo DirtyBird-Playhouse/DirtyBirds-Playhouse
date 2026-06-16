@@ -17,11 +17,8 @@ lora_meta_cache.json
 # LoRA/embedding preview thumbnails — local only, not for the public repo
 web/previews/
 
-# Personal wildcard files — local only, not for the public repo
-wildcards/
+# User data directory (symlinks to external DirtyBirds-Playhouse_User)
+user_files/
 
-# Personal prompt .txt files — local only, not for the public repo
-prompts/
-Node_Doc/Styles/Clothing.yaml
-Node_Doc/Styles/Erotic.yaml
-Node_Doc/Styles/Quality.yaml
+# Master wildcard configuration — local user data only
+master.yaml
