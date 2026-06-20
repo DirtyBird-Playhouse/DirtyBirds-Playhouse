@@ -169,16 +169,27 @@ def _resolve_wildcard(match, wd, rng):
 
 
 def _resolve_fragment(text, wd, rng, variables):
-    """Resolve variable references, {...} groups and __wildcards__ in `text`.
+    """Resolve variable declarations/references, {...} groups and __wildcards__.
 
     Runs to a fixed point (bounded by _MAX_DEPTH) since a resolved value may
-    itself contain further tokens. Templates with none of these constructs are
+    itself contain further tokens. Each pass, in order:
+      1. `[[name=value]]` declarations -> store the (resolved) value, emit nothing,
+      2. `[[name]]` references         -> substitute the stored value,
+      3. `{...}` dynamic groups, then 4. `__wildcards__`.
+    Declarations are handled HERE (not only on the top-level text) so a
+    declaration that arrives mid-roll -- e.g. inside a scenario template pulled
+    via a __token__ -- still fires. Templates with none of these constructs are
     returned unchanged after a single no-op pass, so existing prompts behave
     exactly as before."""
+    def _assign(m):
+        variables[m.group(1)] = _resolve_fragment(m.group(2), wd, rng, variables)
+        return ""
+
     out = text
     for _ in range(_MAX_DEPTH):
+        new = _VAR_ASSIGN_RE.sub(_assign, out)
         new = _VAR_REF_RE.sub(
-            lambda m: variables.get(m.group(1), m.group(0)), out)
+            lambda m: variables.get(m.group(1), m.group(0)), new)
         new = _DYNAMIC_RE.sub(lambda m: _resolve_dynamic(m, rng), new)
         new = _WILDCARD_RE.sub(lambda m: _resolve_wildcard(m, wd, rng), new)
         if new == out:
@@ -188,21 +199,14 @@ def _resolve_fragment(text, wd, rng, variables):
 
 
 def process(text, seed, wildcard_dict=None):
-    """Resolve variables, dynamic prompts and __wildcards__, seeded for repeatability."""
+    """Resolve variables, dynamic prompts and __wildcards__, seeded for repeatability.
+
+    Variables (`[[name=value]]` declares once per roll, `[[name]]` reuses) make
+    multi-token picks coherent -- e.g. choose a clothing register once and dress
+    head to toe from it. They work whether declared in the prompt you type or
+    inside a scenario template pulled via a __token__."""
     if not text:
         return text
     wd = wildcard_dict if wildcard_dict is not None else load_wildcard_dict()
     rng = random.Random(seed)
-    variables = {}
-
-    # First pass: resolve every [[name=value]] declaration once, left to right,
-    # so a value is fixed for the whole roll and reusable via [[name]]. A later
-    # declaration may reference an earlier variable. Declarations emit nothing.
-    def _assign(m):
-        variables[m.group(1)] = _resolve_fragment(m.group(2), wd, rng, variables)
-        return ""
-
-    text = _VAR_ASSIGN_RE.sub(_assign, text)
-
-    # Second pass: resolve references plus the usual dynamic / wildcard tokens.
-    return _resolve_fragment(text, wd, rng, variables)
+    return _resolve_fragment(text, wd, rng, {})

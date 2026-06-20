@@ -90,6 +90,11 @@ paired axis (e.g. hair `Long hair` / `Short hair`, hosiery, etc.):
 [[len={Long hair|Short hair}]]__hair/style/[[len]]__
 ```
 
+**Where the declaration can live**
+- In the prompt you type into the node, OR inside a scenario template that is
+  stored as a wildcard entry and pulled with a `__token__`. Either works — a
+  declaration is processed wherever it appears, including mid-roll.
+
 **Notes / limits**
 - A declaration's VALUE cannot reference another `[[var]]` (nested brackets are
   not parsed). References work everywhere else — declare independent variables and

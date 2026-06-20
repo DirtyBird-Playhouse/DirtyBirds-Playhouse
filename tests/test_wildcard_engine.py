@@ -68,6 +68,23 @@ def test_without_register_lock_outfits_can_mix():
     assert mixed
 
 
+def test_register_lock_inside_pulled_scenario_template():
+    """A [[reg=...]] declaration stored inside a scenario template (pulled via a
+    __token__ mid-roll) must still fire and keep the outfit coherent."""
+    wd = dict(WD)
+    wd["scene/professional"] = [
+        "[[reg={Casual|Business}]]__clothing/tops/[[reg]]__ and "
+        "__clothing/footwear/[[reg]]__"]
+    saw_casual = saw_business = False
+    for seed in range(40):
+        out = engine.process("__scene/professional__", seed, wd)
+        pieces = {p.strip() for p in out.replace(" and ", ", ").split(",")}
+        assert pieces <= CASUAL or pieces <= BUSINESS, (seed, out)
+        saw_casual = saw_casual or pieces <= CASUAL
+        saw_business = saw_business or pieces <= BUSINESS
+    assert saw_casual and saw_business
+
+
 def test_declaration_emits_nothing():
     out = engine.process("[[reg=Business]]hello world", 0, WD)
     assert out == "hello world"
