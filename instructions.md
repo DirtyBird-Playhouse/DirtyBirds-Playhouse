@@ -105,6 +105,39 @@ paired axis (e.g. hair `Long hair` / `Short hair`, hosiery, etc.):
 
 ---
 
+## Organizing scenarios in their own file (recommended)
+
+A "template" is just prompt text the engine expands. It can be typed straight into
+the node's positive box, or **saved as a reusable scenario** in a wildcard file and
+run by token. Keeping scenarios separate from your data keeps each file clean:
+
+- **`Wildcard_Master.yaml`** — your DATA (the option lists).
+- **`templates.yaml`** (same `user_files/wildcards/` folder) — your SCENARIOS.
+
+The engine loads EVERY file in the wildcards folder and merges them, so both load
+together and scenarios reference the master file's data by token. You do not "load
+one instead of the other".
+
+A scenario file nests entries under a key so they get a clean token path:
+
+```yaml
+templates:
+  professional: ["[[reg=Business]]__pro-girl/hair__, __clothing/bottoms/[[reg]]__, __clothing/footwear/[[reg]]__, ..."]
+  everyday:      ["[[reg={Casual|Business}]]__clothing/tops/[[reg]]__, __clothing/bottoms/[[reg]]__, __clothing/footwear/[[reg]]__"]
+```
+
+Run one by typing its token in the node's positive box:
+
+```
+__templates/professional__
+```
+
+The engine pulls that scenario string, runs its `[[reg]]` lock, and resolves every
+data token from the master file. Edit `templates.yaml` to change composition; never
+touch the data file to do it.
+
+---
+
 ## Coherence: structure first, check second
 
 1. **Register lock (this engine)** guarantees coherence on structured axes
