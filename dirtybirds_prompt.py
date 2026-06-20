@@ -1,182 +1,19 @@
 import os
-import re
 import random
 import logging
 
 from aiohttp import web
 from server import PromptServer
 
-logger = logging.getLogger(__name__)
+# The wildcard / dynamic-prompt engine lives in its own ComfyUI-free module so it
+# can be unit-tested standalone. load_wildcard_dict and process are re-exported
+# here for backwards compatibility with anything importing them from this module.
+from .dirtybirds_wildcard_engine import load_wildcard_dict, process
 
-# Wildcards live in "user_files/wildcards" folder (.yaml / .yml / .txt)
-WILDCARDS_DIR = os.path.join(os.path.dirname(__file__), "user_files", "wildcards")
+logger = logging.getLogger(__name__)
 
 # Prompt .txt files live in a "prompts" folder alongside this node
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
-
-
-# ---------------------------------------------------------------------------
-# Self-contained wildcard engine
-#
-# No external custom-node dependency. Supports an ImpactPack-compatible subset:
-#   __key__ / __parent/child__   -> random entry from a named wildcard list
-#   {a|b|c}                      -> dynamic prompt, pick one
-#   {7::a|3::b}                  -> weighted pick (a ~70%, b ~30%)
-#   {2$$a|b|c}                   -> pick exactly 2
-#   {1-3$$a|b|c}                 -> pick between 1 and 3
-#   {2$$ / $$a|b|c}              -> pick 2 joined with a custom separator
-# Resolution is recursive (results may themselves contain wildcards) with a
-# bounded depth, and is fully driven by the provided seed for reproducibility.
-# ---------------------------------------------------------------------------
-
-_WILDCARD_RE = re.compile(r"__([\w./\-]+)__")
-_DYNAMIC_RE = re.compile(r"\{([^{}]*)\}")
-_WEIGHT_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*::\s*(.*)$", re.DOTALL)
-_MAX_DEPTH = 50
-
-
-def _normalize_key(x):
-    """slashes, spaces->'-', lowercase — matches the picker's key form."""
-    return str(x).replace("\\", "/").replace(" ", "-").lower()
-
-
-def _flatten_yaml(node, prefix, out):
-    """Flatten nested yaml into {normalized-key: [values...]} leaf entries."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            key = f"{prefix}/{k}" if prefix else str(k)
-            _flatten_yaml(v, key, out)
-    elif isinstance(node, list):
-        if prefix:
-            out[_normalize_key(prefix)] = [str(v) for v in node]
-    else:
-        # scalar leaf
-        if prefix:
-            out[_normalize_key(prefix)] = [str(node)]
-
-
-def load_wildcard_dict():
-    """Build {key: [values]} from every .yaml/.yml/.txt in the wildcards folder.
-
-    Re-read on each call so edits to the files show up without a restart."""
-    result = {}
-    os.makedirs(WILDCARDS_DIR, exist_ok=True)
-    try:
-        import yaml
-    except Exception:
-        yaml = None
-
-    for root, _dirs, files in os.walk(WILDCARDS_DIR, followlinks=True):
-        for file in files:
-            path = os.path.join(root, file)
-            try:
-                if file.endswith(".txt"):
-                    rel = os.path.relpath(path, WILDCARDS_DIR)
-                    key = _normalize_key(os.path.splitext(rel)[0])
-                    with open(path, "r", encoding="UTF-8", errors="ignore") as f:
-                        lines = [ln.strip() for ln in f]
-                    # Drop blanks and '#' comment lines.
-                    values = [ln for ln in lines if ln and not ln.startswith("#")]
-                    if values:
-                        result[key] = values
-                elif (file.endswith(".yaml") or file.endswith(".yml")) and yaml is not None:
-                    with open(path, "r", encoding="UTF-8", errors="ignore") as f:
-                        data = yaml.safe_load(f) or {}
-                    _flatten_yaml(data, "", result)
-            except Exception as e:
-                logger.warning("[DirtyBirds] Could not load wildcard file %s: %s", path, e)
-    return result
-
-
-def _split_weight(option):
-    """Return (weight, text). 'weight::text' -> (float, text); else (1.0, option)."""
-    m = _WEIGHT_RE.match(option)
-    if m:
-        return float(m.group(1)), m.group(2)
-    return 1.0, option
-
-
-def _resolve_dynamic(match, rng):
-    """Expand one {...} dynamic-prompt group."""
-    body = match.group(1)
-
-    # Parse an optional "N$$" or "N-M$$" quantifier and "$$sep$$" separator.
-    count_lo = count_hi = 1
-    sep = ", "
-    parts = body.split("$$")
-    if len(parts) >= 2:
-        quant = parts[0].strip()
-        m = re.fullmatch(r"(\d+)(?:-(\d+))?", quant)
-        if m:
-            count_lo = int(m.group(1))
-            count_hi = int(m.group(2)) if m.group(2) else count_lo
-            if len(parts) >= 3:
-                # N$$sep$$options  — middle segment is the separator
-                sep = parts[1]
-                options_str = "$$".join(parts[2:])
-            else:
-                options_str = parts[1]
-        else:
-            # No valid quantifier; '$$' was literal content.
-            options_str = body
-    else:
-        options_str = body
-
-    options = [o for o in options_str.split("|")]
-    if not options:
-        return ""
-
-    # Split optional "weight::" prefixes into parallel weights/texts lists.
-    weights, texts = [], []
-    for o in options:
-        w, t = _split_weight(o)
-        weights.append(w)
-        texts.append(t)
-
-    n = rng.randint(count_lo, count_hi) if count_hi > count_lo else count_lo
-    n = max(0, min(n, len(texts)))
-    if n <= 1 and count_lo == count_hi == 1:
-        return rng.choices(texts, weights=weights, k=1)[0]
-
-    # Weighted sampling without replacement: draw one at a time, removing each pick.
-    picks = []
-    pool_t, pool_w = list(texts), list(weights)
-    for _ in range(n):
-        if not pool_t:
-            break
-        i = rng.choices(range(len(pool_t)), weights=pool_w, k=1)[0]
-        picks.append(pool_t.pop(i))
-        pool_w.pop(i)
-    return sep.join(picks)
-
-
-def _resolve_wildcard(match, wd, rng):
-    """Expand one __key__ reference using the wildcard dict."""
-    key = _normalize_key(match.group(1))
-    values = wd.get(key)
-    if not values:
-        # Unknown key: leave the token untouched so it's visibly unresolved.
-        return match.group(0)
-    return rng.choice(values)
-
-
-def process(text, seed, wildcard_dict=None):
-    """Resolve dynamic prompts and __wildcards__ in `text`, seeded for repeatability."""
-    if not text:
-        return text
-    wd = wildcard_dict if wildcard_dict is not None else load_wildcard_dict()
-    rng = random.Random(seed)
-
-    out = text
-    for _ in range(_MAX_DEPTH):
-        new = _DYNAMIC_RE.sub(lambda m: _resolve_dynamic(m, rng), out)
-        new = _WILDCARD_RE.sub(lambda m: _resolve_wildcard(m, wd, rng), new)
-        if new == out:
-            break
-        out = new
-    return out
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +118,9 @@ class DirtyBirdsPrompt:
             "[DirtyBirds] Script: concat_positive=%r -> final positive=%r",
             (concat_positive or "")[:120], (pos_out or "")[:120])
 
-        return (pos_out, neg_out)
+        # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
+        # before the sampler runs, letting the user cancel early if it's wrong.
+        return {"ui": {"db_prompts_md": [pos_out, neg_out]}, "result": (pos_out, neg_out)}
 
 
 # ---------------------------------------------------------------------------
