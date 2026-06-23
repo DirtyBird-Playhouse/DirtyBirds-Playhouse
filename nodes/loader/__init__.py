@@ -9,7 +9,7 @@ from server import PromptServer
 from comfy.sd import load_checkpoint_guess_config, load_lora_for_models, VAE
 import comfy.utils
 
-from .utils.manager import get_lora_meta
+from ...utils.manager import get_lora_meta
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def get_embeddings(request):
 
 @PromptServer.instance.routes.get("/dirtybirds/dimensions")
 async def get_dimensions(request):
-    json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
+    json_path = os.path.join(os.path.dirname(__file__), "..", "..", "dimensions.json")
     try:
         with open(json_path, "r") as f:
             data = json.load(f)
@@ -108,7 +108,7 @@ class DirtyBirdsLoader:
     def INPUT_TYPES(cls):
         ckpt_list = folder_paths.get_filename_list("checkpoints")
 
-        json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
+        json_path = os.path.join(os.path.dirname(__file__), "..", "..", "dimensions.json")
         try:
             with open(json_path, "r") as f:
                 dims_data = json.load(f)
@@ -290,7 +290,7 @@ class DirtyBirdsLoader:
         negative_cond = [[neg_cond, {"pooled_output": neg_pooled}]]
 
         # ── Latent ──────────────────────────────────────────────────────────
-        json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
+        json_path = os.path.join(os.path.dirname(__file__), "..", "..", "dimensions.json")
         try:
             with open(json_path, "r") as f:
                 dims_data = json.load(f)

@@ -12,7 +12,7 @@ import os
 import pytest
 
 _ENGINE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "dirtybirds_wildcard_engine.py")
+    os.path.dirname(os.path.dirname(__file__)), "utils", "wildcard_engine.py")
 _spec = importlib.util.spec_from_file_location("db_wildcard_engine", _ENGINE_PATH)
 engine = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(engine)
