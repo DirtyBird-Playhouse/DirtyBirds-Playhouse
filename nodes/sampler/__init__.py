@@ -26,8 +26,8 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
-# Saved prompts are appended to a single file in the root directory.
-SAVED_PROMPTS_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "prompts.txt")
+# Saved prompts are appended to a single file in this node's folder.
+SAVED_PROMPTS_FILE = os.path.join(os.path.dirname(__file__), "prompts.txt")
 
 
 def _embed_token(raw):

@@ -143,6 +143,13 @@ function insertAutocompleteSelection(textarea, prefix, name) {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function syncTextareaToWidget(textarea, widget, node) {
+  if (!textarea || !widget) return;
+  widget.value = textarea.value;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  node?.setDirtyCanvas?.(true, true);
+}
+
 function handleAutocompleteInput(event, textarea, node) {
   clearTimeout(autocompleteState.timeout);
 
@@ -193,29 +200,42 @@ app.registerExtension({
       const node = this;
       node.color   = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 340);
+      node.size[0] = 420;
+
+      // Saved workflows can carry obsolete DOM widgets from older Script UI
+      // layouts. Drop them before adding the compact panel, otherwise invisible
+      // stale rows keep reserving vertical space.
+      const staleWidgets = new Set([
+        "db_scriptlabel", "db_toolslabel", "db_seed_row", "db_wildcard_btn",
+        "db_loadprompt_btn", "db_toybox_cols", "db_booru_btn", "db_url_tools", "db_script_panel",
+      ]);
+      if (Array.isArray(node.widgets)) {
+        for (let i = node.widgets.length - 1; i >= 0; i--) {
+          if (staleWidgets.has(node.widgets[i]?.name)) {
+            node.widgets[i]?.element?.remove?.();
+            node.widgets.splice(i, 1);
+          }
+        }
+      }
 
       const posWidget = node.widgets?.find(w => w.name === "positive");
       const negWidget = node.widgets?.find(w => w.name === "negative");
 
-      // ── Section label above the prompt boxes ─────────────────────────────
-      const scriptLabel = makeSectionLabel("The Script");
-      scriptLabel.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
-      node.addDOMWidget("db_scriptlabel", "customhtml", scriptLabel, {
-        serialize: false, height: 26, getMinHeight: () => 26,
-      });
-      // Move the label to sit above the positive widget.
-      {
-        const li = node.widgets.findIndex(w => w.name === "db_scriptlabel");
-        const pi = node.widgets.findIndex(w => w.name === "positive");
-        if (li > -1 && pi > -1 && li !== pi - 1) {
-          const [lbl] = node.widgets.splice(li, 1);
-          node.widgets.splice(node.widgets.findIndex(w => w.name === "positive"), 0, lbl);
-        }
+      function hideBackingWidget(widget) {
+        if (!widget) return;
+        widget.computeSize = () => [0, 0];
+        widget.serializeValue = () => widget.value;
+        if (widget.element?.style) widget.element.style.display = "none";
+        if (typeof widget.setHidden === "function") widget.setHidden(true);
+        else if ("hidden" in widget) widget.hidden = true;
       }
+
+      hideBackingWidget(posWidget);
+      hideBackingWidget(negWidget);
 
       // Track which prompt box was last focused so inserts land in the right one.
       node._dbLastPromptWidget = posWidget;
+      node._dbLastPromptTextarea = null;
       node._dbLoraList = [];
       node._dbEmbeddingList = [];
 
@@ -232,16 +252,7 @@ app.registerExtension({
       }
       loadAutocompleteData();
 
-      [posWidget, negWidget].forEach(w => {
-        const ta = getTextarea(w);
-        if (ta) {
-          ta.addEventListener("focus", () => { node._dbLastPromptWidget = w; });
-          ta.addEventListener("input", (e) => handleAutocompleteInput(e, ta, node));
-          ta.addEventListener("keydown", (e) => handleAutocompleteKeydown(e, ta));
-        }
-      });
-
-      // ── Styled SEED button (Fixed / Random) — matches the loader ──────────
+      // ── Seed (Fixed / Random) — now folded into the Load Wildcards menu ───
       function hideWidget(name) {
         const w = node.widgets?.find(w => w.name === name);
         if (!w) return undefined;
@@ -251,71 +262,29 @@ app.registerExtension({
         else if ("hidden" in w) w.hidden = true;
         return w;
       }
-      function showOptionsFlyout(title, options, current, onPick) {
-        document.querySelector(".db-flyout-overlay")?.remove();
-        document.querySelector(".db-flyout")?.remove();
-        const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-        const panel   = document.createElement("div"); panel.className = "db-flyout";
-        panel.style.left = Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
-        panel.style.top  = Math.max(40, window.innerHeight / 2 - 120) + "px";
-        const header = document.createElement("div"); header.className = "db-flyout-header";
-        const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-        const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-        header.append(titleEl, closeBtn); panel.appendChild(header);
-        const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
-        options.forEach(opt => {
-          const row = document.createElement("div");
-          row.className = "db-res-opt" + (opt.value === current ? " db-selected" : "");
-          row.innerHTML = `<span class="db-res-opt-glyph">${opt.glyph || ""}</span><span class="db-res-opt-label">${opt.label}</span>`;
-          row.addEventListener("click", () => { close(); onPick(opt.value); });
-          list.appendChild(row);
-        });
-        function close() { overlay.remove(); panel.remove(); }
-        closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-        document.body.append(overlay, panel);
-      }
 
       const seedWidget   = hideWidget("seed");
       const rerollWidget = hideWidget("reroll_each_run");
       hideWidget("control_after_generate");
 
-      const seedRow = document.createElement("div");
-      seedRow.className = "db-sel-row"; seedRow.style.cursor = "pointer";
-      const seedTag   = document.createElement("span"); seedTag.className = "db-model-tag"; seedTag.textContent = "SEED";
-      const seedLabel = document.createElement("span"); seedLabel.className = "db-sel-name"; seedLabel.style.flex = "1";
-      const seedCaret = document.createElement("span"); seedCaret.className = "db-model-caret"; seedCaret.textContent = "▾";
-      seedRow.append(seedTag, seedLabel, seedCaret);
       // reroll_each_run true = Random (re-rolls every run), false = Fixed.
-      function refreshSeedRow() {
-        seedLabel.textContent = (rerollWidget?.value ? "🎲 Random" : "Fixed");
+      // Seed mode lives inside the Load Wildcards menu (see openWildcardMenu).
+      function setSeedMode(mode) {
+        if (rerollWidget) rerollWidget.value = mode;
+        if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+        }
+        node.setDirtyCanvas(true);
       }
-      seedRow.addEventListener("click", () => {
-        showOptionsFlyout("Seed", [
-          { value: false, label: "Fixed",  glyph: "📌" },
-          { value: true,  label: "Random", glyph: "🎲" },
-        ], !!rerollWidget?.value, (mode) => {
-          if (rerollWidget) rerollWidget.value = mode;
-          if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-            seedWidget.value = Math.floor(Math.random() * 9007199254740991);
-          }
-          refreshSeedRow();
-          node.setDirtyCanvas(true);
-        });
-      });
-      refreshSeedRow();
-      const seedWrap = document.createElement("div");
-      seedWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;padding:0 2px;";
-      seedWrap.appendChild(seedRow);
-      node.addDOMWidget("db_seed_row", "customhtml", seedWrap, {
-        serialize: false, height: 34, getMinHeight: () => 34,
-      });
 
       // ── "Load Wildcards" button → native LiteGraph context menu ──────────
       node._dbWildcardKeys = [];
 
       function insertText(text) {
         const target = node._dbLastPromptWidget || posWidget;
-        insertAtCursor(getTextarea(target), target, text);
+        const textarea = node._dbLastPromptTextarea || node._dbPositiveTextarea;
+        insertAtCursor(textarea, target, text);
+        syncTextareaToWidget(textarea, target, node);
       }
 
       function buildTree(keys) {
@@ -348,8 +317,12 @@ app.registerExtension({
       }
 
       function openWildcardMenu(event) {
+        const seedIsRandom = !!rerollWidget?.value;
         const items = [
           { content: REFRESH, callback: () => loadWildcards() },
+          null,
+          { content: `${seedIsRandom ? "" : "✓ "}📌 Seed: Fixed`,  callback: () => setSeedMode(false) },
+          { content: `${seedIsRandom ? "✓ " : ""}🎲 Seed: Random`, callback: () => setSeedMode(true) },
           null,
           ...toItems(buildTree(node._dbWildcardKeys)),
         ];
@@ -363,21 +336,11 @@ app.registerExtension({
         });
       }
 
-      // Titled section above the action buttons (matches the other nodes).
-      const toolsLabel = makeSectionLabel("The Toybox");
-      toolsLabel.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
-      node.addDOMWidget("db_toolslabel", "customhtml", toolsLabel, {
-        serialize: false, height: 26, getMinHeight: () => 26,
-      });
-
       const btn = document.createElement("button");
       btn.className = "db-lib-btn db-lora-add-open-btn";
-      btn.textContent = "🎲  Load Wildcards";
+      btn.textContent = "🎲  Wildcards";
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       btn.addEventListener("click", (e) => openWildcardMenu(e));
-      node.addDOMWidget("db_wildcard_btn", "customhtml", btn, {
-        serialize: false, height: 34, getMinHeight: () => 34,
-      });
 
       // ── "Load Prompt" button → menu of saved positive prompts ────────────
       async function openSavedPromptMenu(event) {
@@ -416,80 +379,146 @@ app.registerExtension({
       loadBtn.textContent = "📥  Load Prompt";
       loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       loadBtn.addEventListener("click", (e) => openSavedPromptMenu(e));
-      node.addDOMWidget("db_loadprompt_btn", "customhtml", loadBtn, {
-        serialize: false, height: 34, getMinHeight: () => 34,
-      });
 
       // ── "Booru Tags" button + inline search panel ────────────────────────
       const booruWrap = document.createElement("div");
-      booruWrap.style.cssText = "display:flex;flex-direction:column;gap:3px;box-sizing:border-box;overflow:hidden;width:100%;";
+      booruWrap.className = "db-prompt-booru-wrap";
 
       const booruBtn = document.createElement("button");
       booruBtn.className = "db-lib-btn db-lora-add-open-btn";
-      booruBtn.textContent = "🏷️  Booru Tags";
+      booruBtn.textContent = "🔗  Image URL Tools";
       booruBtn.style.cssText = "width:100%;box-sizing:border-box;";
 
       const booruPanel = document.createElement("div");
-      booruPanel.style.cssText = "display:none;flex-direction:column;gap:3px;";
+      booruPanel.className = "db-url-tools-panel";
+      booruPanel.style.display = "none";
 
-      const booruInputRow = document.createElement("div");
-      booruInputRow.style.cssText = "display:flex;gap:3px;align-items:center;";
       const booruInput = document.createElement("input");
       booruInput.type = "text";
-      booruInput.placeholder = "Search booru…";
+      booruInput.placeholder = "AIBooru post URL or direct image URL…";
       booruInput.className = "db-text-input";
+
+      const actionRow = document.createElement("div");
+      actionRow.className = "db-url-tools-row db-url-tools-actions";
+      const lmStatus = document.createElement("div");
+      lmStatus.className = "db-lm-status";
+      lmStatus.textContent = "LM Studio: checking";
       const booruSearchBtn = document.createElement("button");
-      booruSearchBtn.textContent = "Search";
-      booruSearchBtn.className = "db-lib-btn";
-      booruSearchBtn.style.cssText = "font-size:10px;padding:2px 6px;white-space:nowrap;";
-      booruInputRow.append(booruInput, booruSearchBtn);
-      booruPanel.appendChild(booruInputRow);
+      booruSearchBtn.textContent = "Booru";
+      booruSearchBtn.className = "db-lib-btn db-lora-add-open-btn";
+      const captionBtn = document.createElement("button");
+      captionBtn.textContent = "Caption";
+      captionBtn.className = "db-lib-btn db-lora-add-open-btn";
+      const previewWrap = document.createElement("div");
+      previewWrap.className = "db-url-preview";
+      previewWrap.style.display = "none";
+      const previewImg = document.createElement("img");
+      previewImg.alt = "image preview";
+      previewWrap.appendChild(previewImg);
+      const urlStatus = document.createElement("div");
+      urlStatus.className = "db-url-tools-status";
+      actionRow.append(lmStatus, booruSearchBtn, captionBtn);
+      booruPanel.append(booruInput, previewWrap, actionRow, urlStatus);
       booruWrap.append(booruBtn, booruPanel);
 
       let _booruOpen = false;
-      const booruWidget = node.addDOMWidget("db_booru_btn", "customhtml", booruWrap, {
-        serialize: false, height: 34, getMinHeight: () => _booruOpen ? 70 : 34,
-      });
+      let scriptPanelWidget = null;
 
       function setBooruOpen(open) {
         _booruOpen = open;
         booruPanel.style.display = open ? "flex" : "none";
-        booruBtn.textContent = open ? "✕  Close" : "🏷️  Booru Tags";
-        const h = open ? 70 : 34;
-        if (booruWidget) { booruWidget.height = h; booruWidget.computedHeight = h; }
-        node.setDirtyCanvas(true);
+        booruBtn.textContent = open ? "✕  Close" : "🔗  Image URL Tools";
+        syncPanelH();
+        if (open) refreshLmStatus();
         if (open) requestAnimationFrame(() => booruInput.focus());
       }
 
       booruBtn.addEventListener("click", () => setBooruOpen(!_booruOpen));
 
-      async function doSearch() {
-        const q = booruInput.value.trim();
-        if (!q) return;
-        setBooruOpen(false);
-        booruInput.value = "";
-        const data = await fetchJSON(
-          `/dirtybirds/booru-search?query=${encodeURIComponent(q)}&source=aibooru&max_tags=40`
-        );
-        const tags = data?.tags || [];
-        const items = [];
-        if (!tags.length) {
-          items.push({ content: "(no tags found)", disabled: true });
-        } else {
-          items.push({ content: "Insert all", callback: () => insertText(tags.join(", ")) });
-          items.push(null);
-          for (const tag of tags) {
-            items.push({ content: tag, callback: () => insertText(tag) });
-          }
-        }
-        new LiteGraph.ContextMenu(items, {
-          event: { clientX: booruBtn.getBoundingClientRect().left, clientY: booruBtn.getBoundingClientRect().bottom },
-          title: `🏷️ Booru Tags (${tags.length})`,
-          scale: Math.max(1, app.canvas?.ds?.scale || 1),
-        });
+      function setUrlStatus(text, tone = "") {
+        urlStatus.textContent = text || "";
+        urlStatus.dataset.tone = tone;
+        syncPanelH();
       }
 
+      async function refreshLmStatus() {
+        lmStatus.textContent = "LM Studio: checking";
+        lmStatus.dataset.tone = "";
+        const data = await fetchJSON("/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1");
+        const models = data?.models || [];
+        if (models.length) {
+          lmStatus.textContent = "LM Studio: ready";
+          lmStatus.title = models[0];
+          lmStatus.dataset.tone = "ok";
+        } else {
+          lmStatus.textContent = "LM Studio: offline";
+          lmStatus.title = data?.error || "No model served at localhost:1234";
+          lmStatus.dataset.tone = "err";
+        }
+        syncPanelH();
+      }
+
+      function setPreview(src) {
+        const url = (src || "").trim();
+        if (!url) {
+          previewImg.removeAttribute("src");
+          previewWrap.style.display = "none";
+          syncPanelH();
+          return;
+        }
+        previewImg.src = url;
+        previewImg.title = url;
+        previewWrap.style.display = "flex";
+        syncPanelH();
+      }
+
+      function previewDirectUrl() {
+        const q = booruInput.value.trim();
+        if (/^https?:\/\//i.test(q) && !/aibooru\.online/i.test(q)) setPreview(q);
+        else setPreview("");
+      }
+
+      previewImg.addEventListener("load", () => syncPanelH());
+      previewImg.addEventListener("error", () => {
+        previewWrap.style.display = "none";
+        setUrlStatus("Preview could not load.", "err");
+      });
+
+      async function doSearch() {
+        const q = booruInput.value.trim();
+        if (!q) return setUrlStatus("Paste an AIBooru post URL.", "err");
+        setUrlStatus("Fetching AIBooru tags…");
+        const data = await fetchJSON(`/dirtybirds/aibooru-post-tags?url=${encodeURIComponent(q)}`);
+        const tags = data?.tags || [];
+        if (data?.image_url) setPreview(data.image_url);
+        if (!tags.length) return setUrlStatus(data?.error || "No tags found.", "err");
+        insertText(tags.join(", "));
+        setUrlStatus(`Inserted ${tags.length} tags.`, "ok");
+      }
+
+      async function doCaption() {
+        const q = booruInput.value.trim();
+        if (!q) return setUrlStatus("Paste an image URL or AIBooru post URL.", "err");
+        setUrlStatus("Captioning URL image…");
+        const params = new URLSearchParams({
+          url: q,
+          endpoint: "http://localhost:1234/v1",
+          instruction: "Describe this image as comma-separated image-generation tags. Output only the tags.",
+        });
+        const data = await fetchJSON(`/dirtybirds/url-caption?${params.toString()}`);
+        if (data?.image_url) setPreview(data.image_url);
+        const caption = (data?.caption || "").trim();
+        if (!caption) return setUrlStatus(data?.error || "Caption returned empty.", "err");
+        insertText(caption);
+        setUrlStatus("Caption inserted.", "ok");
+        refreshLmStatus();
+      }
+
+      refreshLmStatus();
       booruSearchBtn.addEventListener("click", doSearch);
+      captionBtn.addEventListener("click", doCaption);
+      booruInput.addEventListener("input", previewDirectUrl);
+      booruInput.addEventListener("blur", previewDirectUrl);
       booruInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { doSearch(); e.preventDefault(); }
         if (e.key === "Escape") { setBooruOpen(false); }
@@ -501,21 +530,75 @@ app.registerExtension({
       }
       loadWildcards();
 
+      // ── Compact single-panel UI ─────────────────────────────────────────
+      function makePromptTextarea(widget, tone) {
+        const ta = document.createElement("textarea");
+        ta.className = `db-script-textarea ${tone === "negative" ? "db-script-negative" : "db-script-positive"}`;
+        ta.placeholder = tone === "negative" ? "negative" : "positive";
+        ta.value = widget?.value || "";
+        ta.spellcheck = false;
+        ta.addEventListener("focus", () => {
+          node._dbLastPromptWidget = widget;
+          node._dbLastPromptTextarea = ta;
+        });
+        ta.addEventListener("input", (e) => {
+          if (widget) widget.value = ta.value;
+          handleAutocompleteInput(e, ta, node);
+          node.setDirtyCanvas(true, true);
+        });
+        ta.addEventListener("keydown", (e) => handleAutocompleteKeydown(e, ta));
+        return ta;
+      }
+
+      const panel = document.createElement("div");
+      panel.className = "db-script-panel";
+
+      const scriptLabel = makeSectionLabel("The Script");
+      const posTA = makePromptTextarea(posWidget, "positive");
+      const negTA = makePromptTextarea(negWidget, "negative");
+      node._dbPositiveTextarea = posTA;
+      node._dbNegativeTextarea = negTA;
+      node._dbLastPromptTextarea = posTA;
+
+      const toolsLabel = makeSectionLabel("The Toybox");
+      const toyboxCols = document.createElement("div");
+      toyboxCols.className = "db-prompt-toybox-columns";
+      const toyboxDivider = document.createElement("div");
+      toyboxDivider.className = "db-prompt-toybox-divider";
+      toyboxCols.append(loadBtn, toyboxDivider, btn);
+
+      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxCols, booruWrap);
+
+      scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
+        serialize: false,
+        height: 190,
+        getMinHeight: () => Math.max(172, panel.scrollHeight || 172),
+      });
+
       // ── Width sync ───────────────────────────────────────────────────────
       function applyWidths() {
         const w = nodeInnerW(node);
-        scriptLabel.style.width = w + "px";
-        seedWrap.style.width = w + "px";
-        btn.style.width = w + "px";
-        loadBtn.style.width = w + "px";
-        booruWrap.style.width = w + "px";
-        node.widgets.forEach(ww => {
-          if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width = w + "px";
+        panel.style.width = w + "px";
+      }
+      function syncPanelH() {
+        applyWidths();
+        requestAnimationFrame(() => {
+          const h = Math.max(172, panel.scrollHeight || 172);
+          if (scriptPanelWidget) {
+            try { scriptPanelWidget.height = h; } catch (_) {}
+            scriptPanelWidget.computedHeight = h;
+          }
+          node.size[1] = Math.max(250, h + 78);
+          node.setDirtyCanvas(true, true);
         });
       }
-      requestAnimationFrame(() => requestAnimationFrame(applyWidths));
+      function applyLayout() {
+        syncPanelH();
+        node.setDirtyCanvas(true, true);
+      }
+      requestAnimationFrame(() => requestAnimationFrame(applyLayout));
       const origResize = node.onResize;
-      node.onResize = function (size) { origResize?.call(this, size); applyWidths(); };
+      node.onResize = function (size) { origResize?.call(this, size); applyLayout(); };
     };
   },
 });

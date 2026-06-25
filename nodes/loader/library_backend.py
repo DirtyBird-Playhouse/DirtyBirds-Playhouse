@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 CACHE_VERSION = 3   # bump to auto-invalidate stale cached entries (v3: civitai.red URLs)
 
+# Cache + settings live alongside this module in the loader folder; web/previews
+# stays under the repo-root web/ dir (browser-served via WEB_DIRECTORY).
 _CACHE_FILE   = os.path.join(os.path.dirname(__file__), "lora_meta_cache.json")
-_PREVIEW_DIR  = os.path.join(os.path.dirname(__file__), "web", "previews")
+_PREVIEW_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "web", "previews")
 _SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "dirtybirds_settings.json")
 
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -581,7 +583,7 @@ async def api_embedding_preview(request):
 
 @PromptServer.instance.routes.get("/dirtybirds/library")
 async def api_library_page(request):
-    html_path = os.path.join(os.path.dirname(__file__), "web", "library.html")
+    html_path = os.path.join(os.path.dirname(__file__), "..", "..", "web", "library.html")
     if not os.path.exists(html_path):
         return web.Response(text="library.html not found", status=404)
     with open(html_path, "r", encoding="utf-8") as f:

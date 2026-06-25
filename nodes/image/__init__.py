@@ -3,11 +3,11 @@ DirtyBirds Playhouse — Load Image node.
 
 A branded Load Image node that pulls an image from the ComfyUI input folder
 (upload picker) OR from a URL / local path, and outputs a clean IMAGE + MASK
-(plus width/height) ready to wire into segmentation (e.g. ComfyUI-RMBG's
-SAM3Segment) or anything else.
+(plus width/height), with optional native SAM3 text-prompted segmentation
+(see sam3.py in this folder).
 
-Self-contained: only torch / numpy / PIL / folder_paths (already present) and
-stdlib urllib. No new pip or node-pack dependencies.
+Segmentation runs through our own native SAM3 module — no dependency on
+ComfyUI-RMBG or any other node pack.
 """
 
 import os
@@ -78,21 +78,14 @@ def _to_tensors(img):
 
 
 def _run_sam3(image_tensor, prompt, confidence):
-    """Segment via ComfyUI-RMBG's SAM3 node (looked up at runtime).
+    """Segment via our native SAM3 module (sam3.py in this folder).
 
-    Returns (cutout_image, mask) tensors, or None if RMBG/SAM3 is unavailable or
-    the call fails (caller then falls back to passthrough)."""
+    Returns (cutout_image, mask) tensors, or None if SAM3 is unavailable or the
+    call fails (caller then falls back to passthrough)."""
     try:
-        import nodes  # ComfyUI's global node registry
-        cls = nodes.NODE_CLASS_MAPPINGS.get("SAM3Segment")
-        if cls is None:
-            logger.warning("[DirtyBirds] Segmentation requested but ComfyUI-RMBG's "
-                           "SAM3Segment node isn't installed; passing image through.")
-            return None
-        # device is positional; remaining kwargs keep SAM3's own defaults.
-        img, mask, _mask_img = cls().segment(
-            image_tensor, prompt, "Auto", confidence_threshold=float(confidence))
-        return img, mask
+        from . import sam3  # native, self-contained — no node-registry lookup
+        cutout, mask = sam3.segment(image_tensor, prompt, float(confidence))
+        return cutout, mask
     except Exception as e:
         logger.warning("[DirtyBirds] SAM3 segmentation failed (%s); passing image through.", e)
         return None
@@ -123,7 +116,7 @@ class DirtyBirdsLoadImage:
                 "segment": ("BOOLEAN", {"default": False}),
                 "segment_prompt": ("STRING", {
                     "default": "",
-                    "placeholder": "describe what to segment (SAM3, via ComfyUI-RMBG)",
+                    "placeholder": "describe what to segment (native SAM3)",
                 }),
                 "confidence": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
             },

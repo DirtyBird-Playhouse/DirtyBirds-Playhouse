@@ -8,12 +8,16 @@ from server import PromptServer
 # The wildcard / dynamic-prompt engine lives in its own ComfyUI-free module so it
 # can be unit-tested standalone. load_wildcard_dict and process are re-exported
 # here for backwards compatibility with anything importing them from this module.
-from ...utils.wildcard_engine import load_wildcard_dict, process
+from .utils.wildcard_engine import load_wildcard_dict, process
+
+# Booru tag fetcher: a widget of this (Dirty Talk) node. Imported for the
+# side-effect of registering its /dirtybirds/booru-search route.
+from . import booru  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-# Prompt .txt files live in a "prompts" folder at the root
-PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "prompts")
+# Prompt .txt files live in a "prompts" folder alongside this node
+PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 
 # ---------------------------------------------------------------------------

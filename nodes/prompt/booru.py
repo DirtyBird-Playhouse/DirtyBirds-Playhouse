@@ -1,11 +1,12 @@
 """
-DirtyBirds Playhouse — Booru Tag Fetcher node.
+DirtyBirds Playhouse — Booru tag fetcher (a widget of the Dirty Talk node).
 
-Fetches tags from Danbooru or Gelbooru for a search query and returns them as
-a comma-separated STRING that can be wired into any prompt input.
+Backs the "Booru Tags" button in the Dirty Talk (prompt) node by serving the
+/dirtybirds/booru-search route. Fetches tags from Danbooru / AIbooru / Gelbooru
+for a search query and returns them as JSON for the node's JS widget.
 
-No API key required for read-only Danbooru tag queries.
-Gelbooru tag endpoint is public as well.
+This is widget-only: it intentionally registers NO standalone ComfyUI node.
+No API key required for read-only Danbooru/AIbooru/Gelbooru tag queries.
 """
 
 import logging
@@ -87,48 +88,8 @@ def _fetch_gelbooru(query, max_tags):
         return []
 
 
-class DirtyBirdsBooruTag:
-    """Fetch booru tags for a query and return them as a prompt-ready string."""
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "query":     ("STRING",  {"default": ""}),
-                "source":    (["aibooru", "danbooru", "gelbooru"],),
-                "max_tags":  ("INT",     {"default": 40, "min": 5, "max": 200, "step": 5}),
-                "blacklist": ("STRING",  {"default": ""}),
-            },
-        }
-
-    RETURN_TYPES  = ("STRING",)
-    RETURN_NAMES  = ("tags",)
-    FUNCTION      = "process"
-    CATEGORY      = "DirtyBirds"
-
-    @classmethod
-    def IS_CHANGED(cls, query="", source="aibooru", max_tags=40, blacklist=""):
-        # Re-run when any input changes; cache when identical.
-        return (query, source, max_tags, blacklist)
-
-    def process(self, query, source, max_tags, blacklist):
-        query = query.strip()
-        if not query:
-            return ("",)
-
-        tags = _dispatch(source, query, max_tags)
-
-        # Apply blacklist filter
-        blocked = {t.strip().lower() for t in blacklist.split(",") if t.strip()}
-        tags = [t for t in tags if t.lower() not in blocked]
-
-        result = ", ".join(tags[:max_tags])
-        logger.info("[DirtyBirds] BooruTag: %d tags for '%s' from %s", len(tags[:max_tags]), query, source)
-        return (result,)
-
-
 # ---------------------------------------------------------------------------
-# Web API Route — used by the DDT "Booru Tags" button
+# Web API Route — used by the Dirty Talk "Booru Tags" button
 # ---------------------------------------------------------------------------
 
 @PromptServer.instance.routes.get("/dirtybirds/booru-search")
@@ -149,11 +110,3 @@ async def booru_search(request):
     tags = await loop.run_in_executor(None, _dispatch, source, query, max_tags)
 
     return web.json_response({"tags": tags[:max_tags]})
-
-
-# ---------------------------------------------------------------------------
-# Mappings
-# ---------------------------------------------------------------------------
-
-NODE_CLASS_MAPPINGS        = {"DirtyBirdsBooruTag": DirtyBirdsBooruTag}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsBooruTag": "🍑 DirtyBirds — Booru Tag Fetcher"}

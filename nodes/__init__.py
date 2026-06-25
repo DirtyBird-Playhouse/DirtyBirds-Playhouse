@@ -1,7 +1,9 @@
 """DirtyBirds Playhouse node aggregator.
 
 Imports and merges NODE_CLASS_MAPPINGS from all node packages.
-Imports side-effect modules (folders, booru) for route registration.
+Imports side-effect module (folders) for route registration. (The booru tag
+fetcher is a widget of the prompt/Dirty Talk node and registers its route from
+there.)
 """
 
 from .loader import (
@@ -39,7 +41,6 @@ from .finalcut import (
 
 # Imported for side effects: route registration
 from . import folders  # noqa: F401
-from . import booru  # noqa: F401
 
 # Merge all node mappings
 NODE_CLASS_MAPPINGS = {

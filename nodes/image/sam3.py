@@ -34,8 +34,8 @@ SAM3_CHECKPOINT = r"C:\Users\mpick\My_AI_Tools\models\sam3\sam3.pt"
 # BPE tokenizer vocab, vendored INTO this pack so we don't rely on the `sam3`
 # package's default lookup — that default resolves relative to whichever `sam3`
 # module Python loaded first (comfyui_sam3's or comfyui-rmbg's), and lands on a
-# path that may not exist. `assets/` is inside the pack (resolves via the symlink).
-BPE_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "bpe_simple_vocab_16e6.txt.gz")
+# path that may not exist. `assets/` lives in this node folder (alongside sam3.py).
+BPE_PATH = os.path.join(os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz")
 
 # The venv that holds comfyui_sam3's installed `sam3` package (matches sam3.pt).
 # comfyui-rmbg ALSO ships a top-level `sam3`, so a bare `import sam3` is a coin
