@@ -38,6 +38,10 @@ from .finalcut import (
     NODE_CLASS_MAPPINGS as _FINALCUT_CLASSES,
     NODE_DISPLAY_NAME_MAPPINGS as _FINALCUT_NAMES,
 )
+from .saveprompt import (
+    NODE_CLASS_MAPPINGS as _SAVEPROMPT_CLASSES,
+    NODE_DISPLAY_NAME_MAPPINGS as _SAVEPROMPT_NAMES,
+)
 
 # Imported for side effects: route registration
 from . import folders  # noqa: F401
@@ -52,6 +56,7 @@ NODE_CLASS_MAPPINGS = {
     **_PIPE_CLASSES,
     **_WARDROBE_CLASSES,
     **_FINALCUT_CLASSES,
+    **_SAVEPROMPT_CLASSES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -63,6 +68,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **_PIPE_NAMES,
     **_WARDROBE_NAMES,
     **_FINALCUT_NAMES,
+    **_SAVEPROMPT_NAMES,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

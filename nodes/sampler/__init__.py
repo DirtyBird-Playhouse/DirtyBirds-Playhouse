@@ -7,7 +7,6 @@ Outputs latent + decoded image with live preview in the node.
 """
 
 import os
-import json
 import random
 import logging
 

@@ -645,8 +645,8 @@ app.registerExtension({
         node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
       }
       function addTitle(name, el, h) {
-        h = Math.max(h || 0, 26); // enough height so centered section text isn't clipped
-        el.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
+        h = Math.max(h || 0, 30); // enough height so centered section text isn't clipped
+        el.style.cssText += "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
         node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
       }
 
@@ -898,6 +898,11 @@ app.registerExtension({
           node.setDirtyCanvas(true);
         });
       });
+      // A seed widget left empty fails Python's INT conversion at run time.
+      // Ensure it always holds a concrete value, regardless of mode.
+      if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+        seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+      }
       refreshSeedRow();
 
       const denoiseRow = document.createElement("div");
@@ -906,7 +911,7 @@ app.registerExtension({
       const denoiseLabel = document.createElement("span"); denoiseLabel.className = "db-slider-label"; denoiseLabel.textContent = "Denoise";
       const denoiseSlider = document.createElement("input");
       denoiseSlider.type = "range"; denoiseSlider.className = "db-sel-slider";
-      denoiseSlider.min = "0"; denoiseSlider.max = "1"; denoiseSlider.step = "0.01"; denoiseSlider.style.flex = "1";
+      denoiseSlider.min = "0"; denoiseSlider.max = "1"; denoiseSlider.step = "0.01"; denoiseSlider.style.flex = "1"; denoiseSlider.style.minWidth = "0";
       const denoiseVal = document.createElement("span"); denoiseVal.className = "db-sel-val";
       function setDenoise(v) {
         v = Math.max(0, Math.min(1, Number(v)));
@@ -1313,7 +1318,11 @@ app.registerExtension({
           batchSlider.value = String(bv); batchVal.textContent = String(bv);
         }
 
-        // Seed mode + denoise reflect restored hidden-widget values
+        // Seed mode + denoise reflect restored hidden-widget values.
+        // A restored seed of '' (or 0) fails Python's INT conversion — repair it.
+        if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+        }
         refreshSeedRow();
         if (denoiseWidget && typeof denoiseWidget.value === "number") setDenoise(denoiseWidget.value);
 

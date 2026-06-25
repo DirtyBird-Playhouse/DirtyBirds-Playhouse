@@ -113,8 +113,18 @@ function openModal(token, images) {
     wrap.className = "db-lp-img-wrap";
     const thumb = document.createElement("img");
     thumb.className = "db-lp-thumb";
+    const reveal = () => thumb.classList.add("db-lp-thumb-loaded");
+    thumb.addEventListener("load", reveal);
+    thumb.addEventListener("error", () => {
+      // Make a broken/404 preview visible instead of an invisible blank box.
+      thumb.classList.add("db-lp-thumb-loaded");
+      thumb.alt = "preview failed: " + (img.filename || "?");
+      thumb.style.opacity = "1";
+      console.warn("[DirtyBirds] Final Cut preview failed:", thumb.src);
+    });
     thumb.src = viewURL(img);
-    thumb.addEventListener("load", () => thumb.classList.add("db-lp-thumb-loaded"));
+    // Cached images can finish loading before the listener attaches; reveal now.
+    if (thumb.complete && thumb.naturalWidth > 0) reveal();
     const badge = document.createElement("div");
     badge.className = "db-lp-cat-badge";
     badge.textContent = "#" + i;

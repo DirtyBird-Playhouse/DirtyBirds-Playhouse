@@ -14,6 +14,7 @@ self-contained so it does not depend on cg-image-filter being installed.
 Face-restore (Stage 2) and model-upscale (Stage 3) are added in follow-up edits.
 """
 
+import os
 import time
 import uuid
 import logging
@@ -33,6 +34,34 @@ from server import PromptServer
 from nodes import PreviewImage
 
 logger = logging.getLogger(__name__)
+
+
+# ── Register the suite's face-restore model folder ───────────────────────────
+# ComfyUI doesn't know about My_AI_Tools\models\facerestore_models by default,
+# so the FACE MODEL picker shows "(none installed)". Register it (absolute, plus
+# a path derived relative to this file in case the suite is relocated) so
+# get_filename_list("facerestore_models") returns the installed .pth models.
+def _register_facerestore_folders():
+    candidates = [
+        r"C:\Users\mpick\My_AI_Tools\models\facerestore_models",
+        os.path.normpath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "models",
+            "facerestore_models")),
+    ]
+    seen = set()
+    for path in candidates:
+        norm = os.path.normpath(path)
+        if norm in seen or not os.path.isdir(norm):
+            continue
+        seen.add(norm)
+        try:
+            folder_paths.add_model_folder_path("facerestore_models", norm)
+        except Exception:
+            logger.debug("[DirtyBirds] could not register facerestore path: %s", norm)
+
+
+_register_facerestore_folders()
+
 
 # Server → client websocket event, and the client → server POST route.
 EVENT = "dirtybirds-finalcut-images"

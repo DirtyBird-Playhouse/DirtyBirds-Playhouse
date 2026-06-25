@@ -1,17 +1,18 @@
 """
-DirtyBirds Playhouse — Booru tag fetcher (a widget of the Dirty Talk node).
+DirtyBirds Playhouse — Booru tag fetcher (widget of the Dirty Talk node).
 
-Backs the "Booru Tags" button in the Dirty Talk (prompt) node by serving the
-/dirtybirds/booru-search route. Fetches tags from Danbooru / AIbooru / Gelbooru
-for a search query and returns them as JSON for the node's JS widget.
-
-This is widget-only: it intentionally registers NO standalone ComfyUI node.
-No API key required for read-only Danbooru/AIbooru/Gelbooru tag queries.
+Backs the "Booru Tags" button and URL-caption tools in the Dirty Talk (prompt)
+node by serving the /dirtybirds/booru-search, /aibooru-post-tags and
+/url-caption routes. Widget-only: registers NO standalone ComfyUI node.
 """
 
+import base64
 import logging
+import mimetypes
+import re
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 
 from aiohttp import web
@@ -30,6 +31,18 @@ _TAG_TYPE_NAMES = {
     4: "character",
     5: "meta",
 }
+
+
+def _resolve_lmstudio_model(endpoint):
+    endpoint = (endpoint or "http://localhost:1234/v1").strip()
+    url = endpoint.rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer lm-studio"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    for item in data.get("data", []):
+        if isinstance(item, dict) and item.get("id"):
+            return item["id"]
+    raise ValueError("LM Studio is running, but no served model was found")
 
 
 def _fetch_danbooru_style(base_url, query, max_tags):
@@ -88,9 +101,189 @@ def _fetch_gelbooru(query, max_tags):
         return []
 
 
+_AIBOORU_POST_URL = "https://aibooru.online/posts/{post_id}.json"
+_AIBOORU_TAG_FIELDS = (
+    "tag_string_general",
+    "tag_string_character",
+    "tag_string_copyright",
+    "tag_string_artist",
+    "tag_string_meta",
+)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _aibooru_post_id(url):
+    parsed = urllib.parse.urlparse((url or "").strip())
+    host = parsed.netloc.lower()
+    if parsed.scheme.lower() != "https" or host not in {"aibooru.online", "www.aibooru.online"}:
+        raise ValueError("AIBooru tools require an https://aibooru.online/ post URL")
+
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) >= 2 and parts[0] == "posts":
+        post_id = parts[1].removesuffix(".json")
+    elif len(parts) >= 3 and parts[0] == "post" and parts[1] == "show":
+        post_id = parts[2]
+    else:
+        post_id = (urllib.parse.parse_qs(parsed.query).get("id") or [""])[0]
+
+    if not re.fullmatch(r"\d+", post_id or ""):
+        raise ValueError("AIBooru URL must look like https://aibooru.online/posts/12345")
+    return post_id
+
+
+def _fetch_aibooru_post(url, timeout=15):
+    api_url = _AIBOORU_POST_URL.format(post_id=_aibooru_post_id(url))
+    req = urllib.request.Request(api_url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("AIBooru response was not a post object")
+    return data
+
+
+def _tags_from_aibooru_post(data):
+    seen = set()
+    tags = []
+    for field in _AIBOORU_TAG_FIELDS:
+        for tag in str(data.get(field) or "").split():
+            if tag and tag not in seen:
+                seen.add(tag)
+                tags.append(tag)
+    if not tags:
+        for tag in str(data.get("tag_string") or "").split():
+            if tag and tag not in seen:
+                seen.add(tag)
+                tags.append(tag)
+    return tags
+
+
+def _resolve_aibooru_image_url(data):
+    for field in ("large_file_url", "file_url", "preview_file_url"):
+        image_url = str(data.get(field) or "").strip()
+        if image_url:
+            return urllib.parse.urljoin("https://aibooru.online/", image_url)
+    raise ValueError("AIBooru post did not contain an image URL")
+
+
+def _fetch_image_data_uri(url, timeout=30, max_bytes=30 * 1024 * 1024):
+    req = urllib.request.Request(url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("image is too large to caption")
+    mime, _ = mimetypes.guess_type(urllib.parse.urlparse(url).path)
+    if not mime or not mime.startswith("image/"):
+        mime = "image/png"
+    return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+
+
+def _clean_completion(content):
+    text = _THINK_RE.sub("", content or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
+
+
+def _caption_url_with_lmstudio(url, model, endpoint, instruction, temperature=0.3, max_tokens=1024):
+    endpoint = (endpoint or "http://localhost:1234/v1").strip()
+    model = (model or "").strip() or _resolve_lmstudio_model(endpoint)
+    instruction = (instruction or "Describe this image as comma-separated image-generation tags.").strip()
+    data_uri = _fetch_image_data_uri(url)
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": instruction},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ],
+        }],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "stream": False,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": "Bearer lm-studio"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")
+            parsed = json.loads(detail)
+            detail = parsed.get("error", parsed) if isinstance(parsed, dict) else detail
+        except Exception:
+            pass
+        raise RuntimeError(f"LM Studio HTTP {e.code}: {detail or e.reason}") from None
+    msg = data["choices"][0].get("message", {})
+    return _clean_completion(msg.get("content") or msg.get("reasoning_content") or "")
+
+
 # ---------------------------------------------------------------------------
-# Web API Route — used by the Dirty Talk "Booru Tags" button
+# Web API Route — used by the DDT "Booru Tags" button
 # ---------------------------------------------------------------------------
+
+
+@PromptServer.instance.routes.get("/dirtybirds/aibooru-post-tags")
+async def aibooru_post_tags(request):
+    import asyncio
+    url = request.rel_url.query.get("url", "").strip()
+    if not url:
+        return web.json_response({"tags": [], "error": "missing AIBooru URL"}, status=400)
+
+    def work():
+        data = _fetch_aibooru_post(url)
+        tags = _tags_from_aibooru_post(data)
+        image_url = ""
+        try:
+            image_url = _resolve_aibooru_image_url(data)
+        except Exception:
+            pass
+        return tags, image_url
+
+    try:
+        tags, image_url = await asyncio.get_event_loop().run_in_executor(None, work)
+        return web.json_response({"tags": tags, "image_url": image_url})
+    except Exception as e:
+        logger.warning("[DirtyBirds] AIBooru post tag fetch failed: %s", e)
+        return web.json_response({"tags": [], "error": str(e)}, status=400)
+
+
+@PromptServer.instance.routes.get("/dirtybirds/url-caption")
+async def url_caption(request):
+    import asyncio
+    source_url = request.rel_url.query.get("url", "").strip()
+    model = request.rel_url.query.get("model", "").strip()
+    endpoint = request.rel_url.query.get("endpoint", "http://localhost:1234/v1").strip()
+    instruction = request.rel_url.query.get(
+        "instruction",
+        "Describe this image as comma-separated image-generation tags. Output only the tags."
+    )
+    if not source_url:
+        return web.json_response({"caption": "", "error": "missing image URL"}, status=400)
+
+    def work():
+        image_url = source_url
+        if "aibooru.online" in source_url.lower():
+            image_url = _resolve_aibooru_image_url(_fetch_aibooru_post(source_url))
+        caption = _caption_url_with_lmstudio(image_url, model, endpoint, instruction)
+        return caption, image_url
+
+    try:
+        caption, image_url = await asyncio.get_event_loop().run_in_executor(None, work)
+        return web.json_response({"caption": caption, "image_url": image_url})
+    except Exception as e:
+        logger.warning("[DirtyBirds] URL caption failed: %s", e)
+        return web.json_response({"caption": "", "error": str(e)}, status=400)
+
 
 @PromptServer.instance.routes.get("/dirtybirds/booru-search")
 async def booru_search(request):
@@ -110,3 +303,8 @@ async def booru_search(request):
     tags = await loop.run_in_executor(None, _dispatch, source, query, max_tags)
 
     return web.json_response({"tags": tags[:max_tags]})
+
+
+# ---------------------------------------------------------------------------
+# Mappings
+# ---------------------------------------------------------------------------

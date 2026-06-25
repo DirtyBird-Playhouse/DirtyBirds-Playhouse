@@ -1,27 +1,16 @@
 """
-DirtyBirds Playhouse — Muse node.
+DirtyBirds Playhouse — Prompt Writer node.
 
-Calls a local LM Studio (OpenAI-compatible) server to:
-  • expand / write prompts from text, or
-  • caption an image (when an IMAGE is connected, sent to a vision model).
-
-Outputs a STRING that chains into the Loader's `positive` input or the Prompt
-node's `concat_positive`. LM Studio's just-in-time model loading means naming a
-model in the request is enough — it loads on demand, so the same node works with
-a text model or a vision model depending on what you pick.
+Calls the local LM Studio OpenAI-compatible server to expand/write prompt text.
+Captioning lives in the Booru/Image URL tools, so this node is text-only.
 """
 
-import io
 import os
 import re
 import json
-import base64
 import logging
 import urllib.request
 import urllib.error
-
-import numpy as np
-from PIL import Image
 
 from server import PromptServer
 from aiohttp import web
@@ -35,46 +24,13 @@ DEFAULT_SYSTEM = (
     "explanations, no refusals."
 )
 
-# System-prompt preset library (.md/.txt) and SDXL-styler libraries (*.yaml).
-PRESETS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "user_files", "presets")
-STYLES_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "user_files", "Styles")
-
-# Built-in presets so the PRESET picker works before any files are dropped in
-# PRESETS_DIR. Disk files with the same name override these (see _load_presets).
-_BUILTIN_PRESETS = [
-    {
-        "name": "Caption",
-        "instruction": "Describe this image as image-generation tags.",
-        "system": DEFAULT_SYSTEM,
-    },
-    {
-        "name": "Enhance",
-        "instruction": "Rewrite the following positive prompt richer and more vivid, keeping the same subject.",
-        "system": (
-            "You are an expert image-prompt writer. Rewrite the user's positive prompt into a "
-            "denser, more vivid, comma-separated list of visual tags/phrases. Keep the original "
-            "subject and intent; add detail (style, lighting, composition, quality). Output only "
-            "the rewritten prompt — no prose, no explanations, no refusals."
-        ),
-    },
-    {
-        "name": "Create",
-        "instruction": "Turn this short idea into a full image-generation positive prompt.",
-        "system": (
-            "You are an expert image-prompt writer. Turn the user's short idea into a complete "
-            "positive prompt: a single comma-separated list of concise visual tags/phrases "
-            "covering subject, style, lighting, composition, and quality. Output only the prompt "
-            "— no prose, no explanations, no refusals."
-        ),
-    },
-]
-
-_NONE_STYLE = {"name": "none", "negative_prompt": "", "prompt": "{prompt}"}
+NODE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+USER_FILES_DIR = os.path.join(NODE_ROOT, "user-files")
+LM_STUDIO_DIR = os.path.join(USER_FILES_DIR, "LM Studio")
 
 
-def _parse_preset_file(path, name_fallback):
-    """Parse a preset file: optional '# Name' first line, optional
-    'INSTRUCTION: ...' line, remainder = system-prompt body."""
+def _parse_prompt_file(path, name_fallback):
+    """Parse a prompt file. Optional '# Name' first line changes display name."""
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.read().splitlines()
@@ -82,133 +38,73 @@ def _parse_preset_file(path, name_fallback):
         logger.warning("[DirtyBirds] Muse preset read failed %s: %s", path, e)
         return None
     name = name_fallback
-    instruction = ""
     body = []
     for i, ln in enumerate(lines):
         if i == 0 and ln.strip().startswith("#"):
             name = ln.strip().lstrip("#").strip() or name_fallback
             continue
-        if not body and ln.strip().upper().startswith("INSTRUCTION:"):
-            instruction = ln.split(":", 1)[1].strip()
-            continue
         body.append(ln)
     system = "\n".join(body).strip()
-    if not system:
-        return None
-    return {"name": name, "instruction": instruction, "system": system}
+    rel = os.path.relpath(path, LM_STUDIO_DIR).replace("\\", "/")
+    return {"name": name, "file": rel, "system": system}
 
 
-def _load_presets():
-    """Built-in presets plus any *.md/*.txt in PRESETS_DIR (disk overrides by
-    name, keeping built-in ordering). Re-read on each call so edits show live."""
-    presets = {p["name"]: dict(p) for p in _BUILTIN_PRESETS}
-    order = [p["name"] for p in _BUILTIN_PRESETS]
+def _load_lm_studio_prompts(include_system=False):
+    """Read *.md/*.txt system prompts from user-files/LM Studio."""
+    prompts = []
     try:
-        if os.path.isdir(PRESETS_DIR):
-            for fn in sorted(os.listdir(PRESETS_DIR)):
-                if not fn.lower().endswith((".md", ".txt")):
-                    continue
-                stem = os.path.splitext(fn)[0]
-                p = _parse_preset_file(os.path.join(PRESETS_DIR, fn), stem)
-                if not p:
-                    continue
-                if p["name"] not in presets:
-                    order.append(p["name"])
-                presets[p["name"]] = p
-    except Exception as e:
-        logger.warning("[DirtyBirds] Muse preset scan failed: %s", e)
-    return [presets[n] for n in order]
-
-
-def _load_styles():
-    """Flatten user_files/Styles/*.yaml (SDXL-styler list of {name, negative_prompt,
-    prompt}) into one list, always including a 'none' passthrough. Degrades to
-    just 'none' if PyYAML is missing. De-duped by name (first wins)."""
-    styles = [dict(_NONE_STYLE)]
-    seen = {"none"}
-    try:
-        import yaml
-    except Exception:
-        return styles
-    try:
-        if os.path.isdir(STYLES_DIR):
-            for fn in sorted(os.listdir(STYLES_DIR)):
-                if not fn.lower().endswith((".yaml", ".yml")):
-                    continue
-                try:
-                    with open(os.path.join(STYLES_DIR, fn), "r", encoding="utf-8", errors="ignore") as f:
-                        data = yaml.safe_load(f) or []
-                except Exception as e:
-                    logger.warning("[DirtyBirds] Muse style read failed %s: %s", fn, e)
-                    continue
-                if not isinstance(data, list):
-                    continue
-                for entry in data:
-                    if not isinstance(entry, dict):
+        if os.path.isdir(LM_STUDIO_DIR):
+            for root, _, files in os.walk(LM_STUDIO_DIR):
+                for fn in sorted(files):
+                    if not fn.lower().endswith((".md", ".txt")):
                         continue
-                    nm = str(entry.get("name", "")).strip()
-                    if not nm or nm.lower() in seen:
+                    path = os.path.join(root, fn)
+                    stem = os.path.splitext(fn)[0]
+                    p = _parse_prompt_file(path, stem)
+                    if not p:
                         continue
-                    seen.add(nm.lower())
-                    styles.append({
-                        "name": nm,
-                        "negative_prompt": str(entry.get("negative_prompt", "") or ""),
-                        "prompt": str(entry.get("prompt", "{prompt}") or "{prompt}"),
-                    })
+                    if not include_system:
+                        p = {k: v for k, v in p.items() if k != "system"}
+                    prompts.append(p)
     except Exception as e:
-        logger.warning("[DirtyBirds] Muse style scan failed: %s", e)
-    return styles
+        logger.warning("[DirtyBirds] LM Studio prompt scan failed: %s", e)
+    prompts.sort(key=lambda p: (p["name"].lower(), p["file"].lower()))
+    return prompts
 
 
-def _find_style(styles, name):
-    name = (name or "").strip().lower()
-    for s in styles:
-        if s["name"].strip().lower() == name:
-            return s
-    return None
+def _load_system_prompt(prompt_file=""):
+    prompts = _load_lm_studio_prompts(include_system=True)
+    wanted = (prompt_file or "").strip().replace("\\", "/")
+    if wanted:
+        for p in prompts:
+            if p["file"] == wanted or p["name"] == wanted:
+                return p["system"] or DEFAULT_SYSTEM, p["file"]
+    if prompts:
+        return prompts[0]["system"] or DEFAULT_SYSTEM, prompts[0]["file"]
+    return DEFAULT_SYSTEM, ""
 
 
-def _apply_style(style, positive_text):
-    """Inject positive_text into the style's {prompt} placeholder; return
-    (positive, negative). 'none'/missing/no-placeholder = passthrough."""
-    if not style or style.get("name", "none").strip().lower() == "none":
-        return (positive_text, "")
-    tpl = style.get("prompt", "") or ""
-    if "{prompt}" not in tpl:
-        return (positive_text, "")
-    return (tpl.replace("{prompt}", positive_text), style.get("negative_prompt", "") or "")
+def _resolve_lmstudio_model(endpoint):
+    endpoint = (endpoint or DEFAULT_ENDPOINT).strip()
+    url = endpoint.rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer lm-studio"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    for item in data.get("data", []):
+        if isinstance(item, dict) and item.get("id"):
+            return item["id"]
+    raise ValueError("LM Studio is running, but no served model was found")
 
 
-_STYLE_NAME_RE   = re.compile(r"^\s*-?\s*name:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-_STYLE_PROMPT_RE = re.compile(r"^\s*-?\s*prompt:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-_STYLE_NEG_RE    = re.compile(r"^\s*-?\s*negative_prompt:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _MARK_POS_RE     = re.compile(r"^\s*POSITIVE\s*:\s*", re.IGNORECASE | re.MULTILINE)
 _MARK_NEG_RE     = re.compile(r"^\s*NEGATIVE\s*:\s*", re.IGNORECASE | re.MULTILINE)
 
 
-def _strip_quotes(s):
-    s = (s or "").strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in "'\"":
-        s = s[1:-1]
-    return s.strip()
-
-
-def _split_pos_neg(completion, subject):
+def _split_pos_neg(completion):
     """Parse an LLM completion into (positive, negative):
-      1) style-definition block (needs both name: and prompt:) -> fill {prompt}
-         with `subject`, take negative_prompt if present;
-      2) POSITIVE:/NEGATIVE: markers;
-      3) plain text -> (completion, "")."""
+      1) POSITIVE:/NEGATIVE: markers;
+      2) plain text -> (completion, "")."""
     text = completion or ""
-
-    name_m = _STYLE_NAME_RE.search(text)
-    prompt_m = _STYLE_PROMPT_RE.search(text)
-    if name_m and prompt_m:
-        tpl = _strip_quotes(prompt_m.group(1))
-        neg_m = _STYLE_NEG_RE.search(text)
-        neg = _strip_quotes(neg_m.group(1)) if neg_m else ""
-        pos = tpl.replace("{prompt}", subject) if "{prompt}" in tpl else tpl
-        return (pos.strip(), neg.strip())
 
     pos_m = _MARK_POS_RE.search(text)
     neg_m = _MARK_NEG_RE.search(text)
@@ -222,21 +118,6 @@ def _split_pos_neg(completion, subject):
         return (pos, neg)
 
     return (text.strip(), "")
-
-
-def _first_image_to_data_url(image):
-    """ComfyUI IMAGE tensor [B,H,W,C] float 0-1 -> base64 PNG data URL (first frame)."""
-    arr = image[0]
-    if hasattr(arr, "cpu"):
-        arr = arr.cpu().numpy()
-    else:
-        arr = np.asarray(arr)
-    arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
-    pil = Image.fromarray(arr)
-    buf = io.BytesIO()
-    pil.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{b64}"
 
 
 def _chat_completion(endpoint, payload, timeout=120):
@@ -284,76 +165,55 @@ def _clean_completion(content):
 
 
 class DirtyBirdsMuse:
-    """LM Studio prompt-writer / image-captioner. Outputs a STRING."""
+    """LM Studio prompt writer. Displays response in the node UI."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model":       ("STRING", {"default": ""}),
-                "endpoint":    ("STRING", {"default": DEFAULT_ENDPOINT}),
-                "system":      ("STRING", {"multiline": True, "default": DEFAULT_SYSTEM}),
                 "instruction": ("STRING", {"multiline": True,
-                                           "default": "Describe this image as image-generation tags."}),
+                                           "default": "Turn this idea into a full image-generation positive prompt."}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "max_tokens":  ("INT", {"default": 1024, "min": 16, "max": 8192, "step": 16}),
+                "prompt_file": ("STRING", {"default": ""}),
             },
             "optional": {
-                "image":   ("IMAGE",),
                 "text_in": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                # Hidden — driven by the STYLE flyout in JS; appended LAST so adding
-                # it can't shift positional widgets_values for already-saved graphs.
-                "style":   ("STRING", {"default": "none"}),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("positive", "negative")
+    RETURN_TYPES = ()
+    RETURN_NAMES = ()
     FUNCTION = "generate"
     CATEGORY = "DirtyBirds"
+    OUTPUT_NODE = True
 
     @classmethod
-    def IS_CHANGED(cls, model="", endpoint="", system="", instruction="",
-                   temperature=0.7, max_tokens=1024, image=None, text_in="", style="none"):
-        # Re-run on any control change; if an image is connected, re-run always
-        # (cheap vs. hashing the tensor, and captions are usually wanted fresh).
-        if image is not None:
-            import random
-            return random.random()
-        return (model, endpoint, system, instruction, temperature, max_tokens, text_in, style)
+    def IS_CHANGED(cls, instruction="", temperature=0.7, max_tokens=1024,
+                   prompt_file="", text_in=""):
+        system, resolved_file = _load_system_prompt(prompt_file)
+        return (instruction, temperature, max_tokens, resolved_file, system, text_in)
 
-    def generate(self, model, endpoint, system, instruction,
-                 temperature=0.7, max_tokens=1024, image=None, text_in="", style="none"):
-        endpoint = (endpoint or DEFAULT_ENDPOINT).strip()
-        if not (model or "").strip():
-            return ("[Muse error: no model selected. Click MODEL and pick a loaded "
-                    "LM Studio model (vision model for captioning an image).]", "")
+    def generate(self, instruction, temperature=0.7, max_tokens=1024,
+                 prompt_file="", text_in=""):
+        endpoint = DEFAULT_ENDPOINT
+        try:
+            model = _resolve_lmstudio_model(endpoint)
+        except Exception as e:
+            logger.warning("[DirtyBirds] Muse model resolve failed (%s): %s", endpoint, e)
+            msg = f"[Muse error: {e} — is LM Studio running at {endpoint}?]"
+            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
+
+        system, resolved_file = _load_system_prompt(prompt_file)
         user_text = instruction or ""
         if text_in and text_in.strip():
             user_text = (user_text + "\n\n" + text_in.strip()).strip()
 
-        messages = []
-        if system and system.strip():
-            messages.append({"role": "system", "content": system.strip()})
-
-        if image is not None:
-            try:
-                data_url = _first_image_to_data_url(image)
-            except Exception as e:
-                logger.warning("[DirtyBirds] Muse image encode failed: %s", e)
-                return (f"[Muse error: could not encode image: {e}]", "")
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_text or "Describe this image."},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            })
-        else:
-            messages.append({"role": "user", "content": user_text})
+        messages = [{"role": "system", "content": system.strip()}]
+        messages.append({"role": "user", "content": user_text})
 
         payload = {
-            "model": (model or "").strip(),
+            "model": model,
             "messages": messages,
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
@@ -364,7 +224,8 @@ class DirtyBirdsMuse:
             resp = _chat_completion(endpoint, payload)
         except Exception as e:
             logger.warning("[DirtyBirds] Muse request failed (%s): %s", endpoint, e)
-            return (f"[Muse error: {e} — is LM Studio's server running at {endpoint}?]", "")
+            msg = f"[Muse error: {e} — is LM Studio's server running at {endpoint}?]"
+            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
 
         text = _clean_completion(resp["content"])
         if not text:
@@ -375,24 +236,22 @@ class DirtyBirdsMuse:
                 logger.warning(
                     "[DirtyBirds] Muse: model used all %s tokens reasoning, no answer.",
                     max_tokens)
-                return (f"[Muse error: '{model}' is a reasoning model and used all "
-                        f"{max_tokens} tokens thinking before answering. Raise max_tokens "
-                        f"(~2000+) or pick a non-reasoning model for prompt writing.]", "")
+                msg = (f"[Muse error: '{model}' is a reasoning model and used all "
+                       f"{max_tokens} tokens thinking before answering. Raise max_tokens "
+                       f"(~2000+) or pick a non-reasoning model for prompt writing.]")
+                return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
             logger.warning("[DirtyBirds] Muse: empty completion (finish=%s).",
                            resp["finish_reason"])
-            return ("[Muse error: model returned empty text.]", "")
+            msg = "[Muse error: model returned empty text.]"
+            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
 
-        # Parse pos/neg out of the completion, then optionally wrap in a named style.
-        subject = (user_text or "").strip()
-        raw_pos, raw_neg = _split_pos_neg(text, subject)
-        chosen = _find_style(_load_styles(), style)
-        pos_out, style_neg = _apply_style(chosen, raw_pos)
-        # An LLM-generated style's own negative (raw_neg) wins over a separately
-        # selected style's negative.
-        neg_out = raw_neg or style_neg
+        raw_pos, raw_neg = _split_pos_neg(text)
+        pos_out = raw_pos
+        neg_out = raw_neg
 
-        logger.info("[DirtyBirds] Muse -> pos=%r neg=%r", pos_out[:120], neg_out[:80])
-        return (pos_out, neg_out)
+        logger.info("[DirtyBirds] Muse (%s) -> pos=%r neg=%r",
+                    resolved_file or "default", pos_out[:120], neg_out[:80])
+        return {"ui": {"db_muse_response": [pos_out, neg_out]}, "result": ()}
 
 
 # ---------------------------------------------------------------------------
@@ -413,25 +272,29 @@ async def api_lm_models(request):
         return web.json_response({"models": [], "error": str(e)})
 
 
+@PromptServer.instance.routes.get("/dirtybirds/muse-prompts")
+async def api_muse_prompts(request):
+    """System prompts from user-files/LM Studio for the prompt flyout."""
+    try:
+        return web.json_response({"prompts": _load_lm_studio_prompts()})
+    except Exception as e:
+        logger.warning("[DirtyBirds] muse-prompts failed: %s", e)
+        return web.json_response({"prompts": [], "error": str(e)})
+
+
 @PromptServer.instance.routes.get("/dirtybirds/muse-presets")
 async def api_muse_presets(request):
-    """System-prompt presets for the Muse PRESET flyout."""
+    """Compatibility alias for older web UIs."""
     try:
-        return web.json_response({"presets": _load_presets()})
+        prompts = _load_lm_studio_prompts()
+        return web.json_response({"presets": [
+            {"name": p["name"], "file": p["file"], "instruction": "", "system": ""}
+            for p in prompts
+        ]})
     except Exception as e:
         logger.warning("[DirtyBirds] muse-presets failed: %s", e)
         return web.json_response({"presets": [], "error": str(e)})
 
 
-@PromptServer.instance.routes.get("/dirtybirds/muse-styles")
-async def api_muse_styles(request):
-    """Named styles (user_files/Styles/*.yaml) for the Muse STYLE flyout."""
-    try:
-        return web.json_response({"styles": _load_styles()})
-    except Exception as e:
-        logger.warning("[DirtyBirds] muse-styles failed: %s", e)
-        return web.json_response({"styles": [], "error": str(e)})
-
-
 NODE_CLASS_MAPPINGS = {"DirtyBirdsMuse": DirtyBirdsMuse}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsMuse": "👁️ Muse — The Eye"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsMuse": "✍️ Prompt Muse — The Writer"}

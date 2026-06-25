@@ -7,9 +7,9 @@ Navigation with rough token estimates. Load the minimum that answers the task.
 ## Session Start (Essential - ~900 tokens)
 
 - `CLAUDE.md` (~450 tokens)
-- `.claude/COMMON_MISTAKES.md` (~400 tokens)
-- `.claude/QUICK_START.md` (~250 tokens)
-- `.claude/ARCHITECTURE_MAP.md` (~400 tokens)
+- `.codex/COMMON_MISTAKES.md` (~400 tokens)
+- `.codex/QUICK_START.md` (~250 tokens)
+- `.codex/ARCHITECTURE_MAP.md` (~400 tokens)
 
 ## Navigation by task type
 
@@ -28,7 +28,7 @@ Navigation with rough token estimates. Load the minimum that answers the task.
 
 Fast lookups (cheatsheet): `docs/QUICK_REFERENCE.md` (~350 tokens).
 
-See also `.claude/LEARNINGS_INDEX.md`.
+See also `.claude/LEARNINGS_INDEX.md` for legacy Claude-specific notes.
 
 ## Decision tree
 

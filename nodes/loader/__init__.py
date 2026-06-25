@@ -2,14 +2,14 @@ import torch
 import json
 import os
 import logging
-from collections import OrderedDict
 import folder_paths
 from aiohttp import web
 from server import PromptServer
 from comfy.sd import load_checkpoint_guess_config, load_lora_for_models, VAE
 import comfy.utils
 
-from .library_backend import get_lora_meta
+# Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
+from .library_backend import get_lora_meta  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
