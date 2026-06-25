@@ -2,14 +2,11 @@ import torch
 import json
 import os
 import logging
-from collections import OrderedDict
 import folder_paths
 from aiohttp import web
 from server import PromptServer
 from comfy.sd import load_checkpoint_guess_config, load_lora_for_models, VAE
 import comfy.utils
-
-from .utils.manager import get_lora_meta
 
 logger = logging.getLogger(__name__)
 

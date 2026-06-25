@@ -9,8 +9,6 @@ path without importing the whole node package.
 import importlib.util
 import os
 
-import pytest
-
 _ENGINE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "utils", "wildcard_engine.py")
 _spec = importlib.util.spec_from_file_location("db_wildcard_engine", _ENGINE_PATH)

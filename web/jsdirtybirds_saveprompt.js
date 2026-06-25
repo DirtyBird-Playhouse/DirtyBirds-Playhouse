@@ -1,22 +1,18 @@
 /**
- * DirtyBirds Playhouse – Prompt (Dirty Talk) Node UI
+ * DirtyBirds Playhouse – Save (Image + Prompt) Node UI
  *
- * Native positive / negative multiline widgets + a "Load Wildcards" button.
- * Clicking it opens a native LiteGraph context menu listing wildcard keys from
- * the node's wildcards/*.yaml folder; picking one inserts a __key__ token at
- * the cursor of the last focused prompt box. The menu is drawn by ComfyUI
- * itself (not a custom DOM flyout), so it stays legible and zoom-aware.
+ * Exact clone of Dirty Talk (jsdirtybirds_prompt.js) with the same script
+ * panel, toybox, and booru tools. Additionally hides the filename_prefix and
+ * prompts_file widgets behind styled rows in a new "The Archive" section.
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel } from "./db_shared.js";
+import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget } from "./db_shared.js";
 
 ensureStylesheet();
 
 const REFRESH = "🔄  Refresh list";
 
-// Resolve the underlying <textarea> for a multiline STRING widget across
-// ComfyUI versions (element may be the textarea or a wrapper containing one).
 function getTextarea(widget) {
   if (!widget) return null;
   const el = widget.element || widget.inputEl;
@@ -116,7 +112,6 @@ function showAutocompleteDropdown(textarea, matches, prefix, partial) {
     autocompleteState.dropdown.appendChild(item);
   });
 
-  // Position dropdown near cursor
   const rect = textarea.getBoundingClientRect();
   const lines = textarea.value.slice(0, textarea.selectionStart).split("\n");
   const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
@@ -131,10 +126,8 @@ function insertAutocompleteSelection(textarea, prefix, name) {
   const cursorPos = textarea.selectionStart;
   const beforeCursor = text.slice(0, cursorPos);
 
-  // Remove the partial match
   const cleanedBefore = beforeCursor.replace(/<lora:[^:>]*$|(\[emb:|<embed:)[^:>]*$/, "");
 
-  // Insert full syntax
   const syntax = `${prefix}${name}:1.0>`;
   const afterCursor = text.slice(cursorPos);
 
@@ -189,10 +182,10 @@ function handleAutocompleteKeydown(event, textarea) {
 }
 
 app.registerExtension({
-  name: "DirtyBirds.Prompt",
+  name: "DirtyBirds.SavePrompt",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "DirtyBirdsPrompt") return;
+    if (nodeData.name !== "DirtyBirdsSavePrompt") return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -202,12 +195,11 @@ app.registerExtension({
       node.bgcolor = DB_BGCOLOR;
       node.size[0] = 420;
 
-      // Saved workflows can carry obsolete DOM widgets from older Script UI
-      // layouts. Drop them before adding the compact panel, otherwise invisible
-      // stale rows keep reserving vertical space.
+      // Drop stale DOM widgets from older layouts.
       const staleWidgets = new Set([
         "db_scriptlabel", "db_toolslabel", "db_seed_row", "db_wildcard_btn",
-        "db_loadprompt_btn", "db_toybox_cols", "db_booru_btn", "db_url_tools", "db_script_panel",
+        "db_loadprompt_btn", "db_toybox_cols", "db_booru_btn", "db_url_tools",
+        "db_script_panel", "db_save_title", "db_save_prefix", "db_save_file",
       ]);
       if (Array.isArray(node.widgets)) {
         for (let i = node.widgets.length - 1; i >= 0; i--) {
@@ -233,13 +225,11 @@ app.registerExtension({
       hideBackingWidget(posWidget);
       hideBackingWidget(negWidget);
 
-      // Track which prompt box was last focused so inserts land in the right one.
       node._dbLastPromptWidget = posWidget;
       node._dbLastPromptTextarea = null;
       node._dbLoraList = [];
       node._dbEmbeddingList = [];
 
-      // Fetch LoRA/embedding lists for autocomplete
       async function loadAutocompleteData() {
         try {
           const loras = await fetchJSON("/dirtybirds/loras");
@@ -252,23 +242,13 @@ app.registerExtension({
       }
       loadAutocompleteData();
 
-      // ── Seed (Fixed / Random) — now folded into the Load Wildcards menu ───
-      function hideWidget(name) {
-        const w = node.widgets?.find(w => w.name === name);
-        if (!w) return undefined;
-        w.computeSize    = () => [0, 0];
-        w.serializeValue = () => w.value;
-        if (typeof w.setHidden === "function") w.setHidden(true);
-        else if ("hidden" in w) w.hidden = true;
-        return w;
-      }
+      // ── Seed (Fixed / Random) ───
+      const seedWidget   = hideWidget(node, "seed");
+      const rerollWidget = hideWidget(node, "reroll_each_run");
+      hideWidget(node, "control_after_generate");
+      const prefixWidget = hideWidget(node, "filename_prefix");
+      const fileWidget   = hideWidget(node, "prompts_file");
 
-      const seedWidget   = hideWidget("seed");
-      const rerollWidget = hideWidget("reroll_each_run");
-      hideWidget("control_after_generate");
-
-      // reroll_each_run true = Random (re-rolls every run), false = Fixed.
-      // Seed mode lives inside the Load Wildcards menu (see openWildcardMenu).
       function setSeedMode(mode) {
         if (rerollWidget) rerollWidget.value = mode;
         if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
@@ -277,7 +257,7 @@ app.registerExtension({
         node.setDirtyCanvas(true);
       }
 
-      // ── "Load Wildcards" button → native LiteGraph context menu ──────────
+      // ── Wildcards menu ──
       node._dbWildcardKeys = [];
 
       function insertText(text) {
@@ -342,7 +322,7 @@ app.registerExtension({
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       btn.addEventListener("click", (e) => openWildcardMenu(e));
 
-      // ── "Load Prompt" button → menu of saved positive prompts ────────────
+      // ── Load Prompt menu ──
       async function openSavedPromptMenu(event) {
         const data = await fetchJSON("/dirtybirds/saved-prompts");
         const prompts = data?.prompts || [];
@@ -380,7 +360,7 @@ app.registerExtension({
       loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       loadBtn.addEventListener("click", (e) => openSavedPromptMenu(e));
 
-      // ── "Booru Tags" button + inline search panel ────────────────────────
+      // ── Booru / Image URL Tools ──
       const booruWrap = document.createElement("div");
       booruWrap.className = "db-prompt-booru-wrap";
 
@@ -567,12 +547,41 @@ app.registerExtension({
       toyboxDivider.className = "db-prompt-toybox-divider";
       toyboxCols.append(loadBtn, toyboxDivider, btn);
 
-      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxCols, booruWrap);
+      // ── The Archive (save-specific settings) ──
+      const archiveLabel = makeSectionLabel("The Archive");
+      const archiveRow = document.createElement("div");
+      archiveRow.className = "db-url-tools-row";
+      archiveRow.style.cssText = "display:flex;flex-direction:column;gap:4px;";
+
+      function makeTextRow(labelText, w, placeholder) {
+        const row = document.createElement("div");
+        row.className = "db-slider-row";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "8px";
+        const lbl = document.createElement("span");
+        lbl.className = "db-slider-label";
+        lbl.textContent = labelText;
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "db-text-input";
+        inp.placeholder = placeholder || "";
+        inp.value = w?.value ?? "";
+        inp.title = inp.value;
+        inp.addEventListener("input", () => { if (w) { w.value = inp.value; inp.title = inp.value; } });
+        row.append(lbl, inp);
+        return { row, sync: () => { inp.value = w?.value ?? ""; inp.title = inp.value; } };
+      }
+
+      const prefixRow = makeTextRow("Filename", prefixWidget, "DirtyBirds");
+      const fileRow = makeTextRow("Prompts file", fileWidget, "path to .txt");
+      archiveRow.append(prefixRow.row, fileRow.row);
+
+      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxCols, booruWrap, archiveLabel, archiveRow);
 
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
         serialize: false,
-        height: 190,
-        getMinHeight: () => Math.max(172, panel.scrollHeight || 172),
+        height: 240,
+        getMinHeight: () => Math.max(220, panel.scrollHeight || 220),
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
@@ -583,12 +592,12 @@ app.registerExtension({
       function syncPanelH() {
         applyWidths();
         requestAnimationFrame(() => {
-          const h = Math.max(172, panel.scrollHeight || 172);
+          const h = Math.max(220, panel.scrollHeight || 220);
           if (scriptPanelWidget) {
             try { scriptPanelWidget.height = h; } catch (_) {}
             scriptPanelWidget.computedHeight = h;
           }
-          node.size[1] = Math.max(250, h + 78);
+          node.size[1] = Math.max(300, h + 78);
           node.setDirtyCanvas(true, true);
         });
       }
@@ -599,6 +608,20 @@ app.registerExtension({
       requestAnimationFrame(() => requestAnimationFrame(applyLayout));
       const origResize = node.onResize;
       node.onResize = function (size) { origResize?.call(this, size); applyLayout(); };
+
+      // Re-sync styled inputs after a saved workflow restores widget values.
+      const onConfigure = node.onConfigure;
+      node.onConfigure = function () {
+        onConfigure?.apply(this, arguments);
+        requestAnimationFrame(() => {
+          if (posWidget) posTA.value = posWidget.value || "";
+          if (negWidget) negTA.value = negWidget.value || "";
+          prefixRow.sync();
+          fileRow.sync();
+        });
+      };
     };
   },
 });
+
+console.log("[DirtyBirds] Save — Image + Prompt UI module loaded");

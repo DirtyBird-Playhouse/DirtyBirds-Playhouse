@@ -1,15 +1,15 @@
 # Quick Reference
 
 Fast lookups for the DirtyBirds-Playhouse ComfyUI node suite. For navigation see
-`docs/INDEX.md`; for the dev loop see `.claude/QUICK_START.md`.
+`docs/INDEX.md`; for the dev loop see `.codex/QUICK_START.md`.
 
 ---
 
 ## Session start checklist
 
-1. `.claude/COMMON_MISTAKES.md` (read first)
-2. `.claude/QUICK_START.md`
-3. `.claude/ARCHITECTURE_MAP.md`
+1. `.codex/COMMON_MISTAKES.md` (read first)
+2. `.codex/QUICK_START.md`
+3. `.codex/ARCHITECTURE_MAP.md`
 4. Task topic from `docs/INDEX.md`
 
 ## Tensor / data contracts
