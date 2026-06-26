@@ -56,9 +56,9 @@ app.registerExtension({
       // ── Trigger-word chip panel ──────────────────────────────────────────────
       const panel = document.createElement("div");
       panel.className = "db-tw-panel";
-      panel.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      panel.style.cssText += "box-sizing:border-box;overflow:auto;width:100%;max-height:180px;";
       const panelWidget = node.addDOMWidget("db_wd_chips", "customhtml", panel, {
-        serialize: false, height: 44, getMinHeight: () => Math.max(44, panel.scrollHeight || 44),
+        serialize: false, height: 44, getMinHeight: () => Math.min(180, Math.max(44, panel.scrollHeight || 44)),
       });
       widthEls.push(panel);
 
@@ -71,7 +71,20 @@ app.registerExtension({
       widthEls.push(status);
 
       function serialize() { if (dataW) dataW.value = JSON.stringify(chips); }
+      function restoreChips() {
+        try {
+          const parsed = JSON.parse(dataW?.value || "[]");
+          if (Array.isArray(parsed)) chips = parsed;
+        } catch (_) {}
+      }
       function activeCount() { return chips.filter(c => c.active).length; }
+      function activeText() {
+        restoreChips();
+        return chips
+          .filter(c => c.active && String(c.text || "").trim())
+          .map(c => String(c.text).trim())
+          .join(", ");
+      }
       function refreshStatus() {
         status.textContent = chips.length
           ? `${activeCount()}/${chips.length} trigger words active`
@@ -79,12 +92,13 @@ app.registerExtension({
       }
       function syncH() {
         requestAnimationFrame(() => {
-          setWidgetHeight(panelWidget, Math.max(44, panel.scrollHeight || 44));
+          setWidgetHeight(panelWidget, Math.min(180, Math.max(44, panel.scrollHeight || 44)));
           node.setDirtyCanvas(true, true);
         });
       }
 
       function renderChips() {
+        restoreChips();
         panel.innerHTML = "";
         if (!chips.length) {
           const hint = document.createElement("div");
@@ -159,8 +173,55 @@ app.registerExtension({
       addBtn.addEventListener("click", async () => {
         const list = await fetchJSON("/dirtybirds/loras");
         const names = Array.isArray(list) ? list : [];
-        showListFlyout("Add Outfit (LoRA)", names, null, (n) => addLora(n),
-          { displayFn: loraDisplay, emptyText: "No LoRAs found" });
+        showListFlyout("Add Outfit (LoRA)", names, null, loraDisplay, addLora);
+      });
+
+      // ── Send active trigger words to Dirty Talk positive prompt ────────────
+      const sendBtn = document.createElement("button");
+      sendBtn.className = "db-lib-btn db-lora-add-open-btn";
+      sendBtn.textContent = "Send to Dirty Talk";
+      sendBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      const sendWrap = document.createElement("div");
+      sendWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
+      sendWrap.appendChild(sendBtn);
+      node.addDOMWidget("db_wd_send", "customhtml", sendWrap, {
+        serialize: false, height: 34, getMinHeight: () => 34,
+      });
+      widthEls.push(sendWrap);
+
+      function findDirtyTalkNode() {
+        return app.graph?._nodes?.find(n => n.type === "DirtyBirdsPrompt" || n.comfyClass === "DirtyBirdsPrompt");
+      }
+
+      function appendToDirtyTalk(text) {
+        const target = findDirtyTalkNode();
+        if (!target) {
+          status.textContent = "Add a Dirty Talk node first.";
+          return;
+        }
+        const posWidget = target.widgets?.find(w => w.name === "positive");
+        const posTA = target._dbPositiveTextarea;
+        const current = String(posWidget?.value ?? posTA?.value ?? "").trim();
+        const sep = current && !/[\s,]$/.test(current) ? ", " : current ? " " : "";
+        const next = current + sep + text;
+        if (posWidget) posWidget.value = next;
+        if (posTA) {
+          posTA.value = next;
+          posTA.dispatchEvent(new Event("input", { bubbles: true }));
+          posTA.focus();
+        }
+        target.setDirtyCanvas?.(true, true);
+        app.graph?.setDirtyCanvas?.(true, true);
+        status.textContent = "Sent active trigger words to Dirty Talk.";
+      }
+
+      sendBtn.addEventListener("click", () => {
+        const text = activeText();
+        if (!text) {
+          status.textContent = "No active trigger words to send.";
+          return;
+        }
+        appendToDirtyTalk(text);
       });
 
       // ── Width sync + restore ────────────────────────────────────────────────
