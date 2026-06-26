@@ -1,13 +1,10 @@
-"""
-DirtyBirds Playhouse — Save — Image + Prompt.
+"""DirtyBirds Playhouse — Save — The Archive.
 
-Full clone of Dirty Talk (DirtyBirdsPrompt) that also saves the generated
-images to ComfyUI's output folder and appends the positive prompt to a
-plain-text prompts file.
+Final archive/output node. Saves generated images on execution, displays the
+final prompt in markdown, and exposes routes for explicit prompt saving.
 """
 
 import os
-import random
 import logging
 
 import numpy as np
@@ -15,13 +12,55 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
 import folder_paths
-
-# wildcard_engine lives in the prompt (Dirty Talk) node folder post-consolidation.
-from ..prompt.utils.wildcard_engine import load_wildcard_dict, process
+from aiohttp import web
+from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PROMPTS_FILE = r"C:\Users\mpick\My_AI_Tools\DirtyBirds-Playhouse_User\prompts\My_Prompts.txt"
+DEFAULT_PROMPTS_FILE = (
+    r"C:\Users\mpick\My_AI_Tools\Comfyui\ComfyUI\custom_nodes"
+    r"\DirtyBirds-Playhouse\user_files\prompts\my_prompts.txt"
+)
+
+
+def _prompt_browser_root(path=""):
+    raw = (path or "").strip() or os.path.dirname(DEFAULT_PROMPTS_FILE)
+    raw = os.path.expanduser(raw)
+    if os.path.isfile(raw):
+        raw = os.path.dirname(raw)
+    if not os.path.isdir(raw):
+        raw = os.path.dirname(DEFAULT_PROMPTS_FILE)
+    return os.path.abspath(raw)
+
+
+@PromptServer.instance.routes.get("/dirtybirds/saveprompt-browse")
+async def api_saveprompt_browse(request):
+    """List folders and prompt filenames for the Save Prompt archive picker.
+
+    This route lists names only. It does not read prompt file contents.
+    """
+    path = _prompt_browser_root(request.rel_url.query.get("path", ""))
+    dirs = []
+    files = []
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir():
+                        dirs.append(entry.name)
+                    elif entry.is_file() and entry.name.lower().endswith(".txt"):
+                        files.append(entry.name)
+                except OSError:
+                    continue
+    except Exception as e:
+        return web.json_response({"error": str(e), "path": path, "dirs": [], "files": []}, status=400)
+    parent = os.path.dirname(path) if os.path.dirname(path) != path else ""
+    return web.json_response({
+        "path": path,
+        "parent": parent,
+        "dirs": sorted(dirs, key=str.lower),
+        "files": sorted(files, key=str.lower),
+    })
 
 
 def _append_prompt(prompts_file, text):
@@ -36,8 +75,62 @@ def _append_prompt(prompts_file, text):
     return True
 
 
+def _collect_prompt_files(folder):
+    if not os.path.isdir(folder):
+        return []
+    return [
+        os.path.join(folder, name)
+        for name in sorted(os.listdir(folder))
+        if name.lower().endswith(".txt")
+        and os.path.isfile(os.path.join(folder, name))
+    ]
+
+
+@PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
+async def api_saved_prompts(request):
+    """Return saved prompt lines for Dirty Talk's Load Prompt menu.
+
+    The Archive node owns the file location. This route reads only .txt prompt
+    library files, not wildcard/style files.
+    """
+    folder = os.path.dirname(DEFAULT_PROMPTS_FILE)
+    files = _collect_prompt_files(folder)
+    prompts, seen = [], set()
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and line not in seen:
+                        seen.add(line)
+                        prompts.append(line)
+        except Exception as e:
+            logger.warning("[DirtyBirds] Could not read prompt file %s: %s", path, e)
+    return web.json_response({"prompts": prompts})
+
+
+@PromptServer.instance.routes.post("/dirtybirds/archive-save-prompt")
+async def api_archive_save_prompt(request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="invalid JSON")
+
+    positive = str(data.get("positive", "") or "").strip()
+    prompts_file = str(data.get("prompts_file", "") or "").strip()
+    if not positive:
+        raise web.HTTPBadRequest(text="nothing to save")
+    try:
+        _append_prompt(prompts_file, positive.replace("\n", " ").strip())
+    except Exception as e:
+        logger.warning("[DirtyBirds] Archive prompt save failed: %s", e)
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    path = os.path.expanduser(prompts_file or DEFAULT_PROMPTS_FILE)
+    return web.json_response({"ok": True, "path": os.path.basename(path)})
+
+
 class DirtyBirdsSavePrompt:
-    """Save — writes images to output, appends positive prompt to a file."""
+    """Archive node: save images and display/save final prompt markdown."""
 
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
@@ -50,49 +143,21 @@ class DirtyBirdsSavePrompt:
                 "images": ("IMAGE",),
                 "positive": ("STRING", {"multiline": True, "default": ""}),
                 "negative": ("STRING", {"multiline": True, "default": ""}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff,
-                                 "control_after_generate": False}),
-                "reroll_each_run": ("BOOLEAN", {"default": True}),
                 "filename_prefix": ("STRING", {"default": "DirtyBirds"}),
                 "prompts_file": ("STRING", {"default": DEFAULT_PROMPTS_FILE}),
             },
-            "optional": {
-                "concat_positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                "concat_negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-            },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("positive", "negative")
+    RETURN_TYPES = ()
+    RETURN_NAMES = ()
     FUNCTION = "save"
     OUTPUT_NODE = True
     CATEGORY = "DirtyBirds"
 
-    @classmethod
-    def IS_CHANGED(cls, positive="", negative="", seed=0, reroll_each_run=True, **kwargs):
-        if reroll_each_run:
-            return random.random()
-        return (positive, negative, seed)
-
-    def save(self, images, positive="", negative="", reroll_each_run=True, seed=0,
-             filename_prefix="DirtyBirds", prompts_file=DEFAULT_PROMPTS_FILE,
-             concat_positive="", concat_negative=""):
-        if reroll_each_run:
-            seed = random.randint(0, 0xffffffffffffffff)
-
-        wd = load_wildcard_dict()
-        try:
-            pos_out = process(positive, seed, wd)
-            neg_out = process(negative, (seed + 1) & 0xffffffffffffffff, wd)
-        except Exception as e:
-            logger.warning("[DirtyBirds] Save: wildcard processing failed (%s); using raw text", e)
-            pos_out, neg_out = positive, negative
-
-        if concat_positive and concat_positive.strip():
-            pos_out = concat_positive.strip() + (", " + pos_out if pos_out else "")
-        if concat_negative and concat_negative.strip():
-            neg_out = concat_negative.strip() + (", " + neg_out if neg_out else "")
-
+    def save(self, images, positive="", negative="", filename_prefix="DirtyBirds",
+             prompts_file=DEFAULT_PROMPTS_FILE):
+        pos_out = positive or ""
+        neg_out = negative or ""
         full_output_folder, filename, counter, subfolder, filename_prefix = \
             folder_paths.get_save_image_path(
                 filename_prefix, self.output_dir,
@@ -115,15 +180,9 @@ class DirtyBirdsSavePrompt:
             results.append({"filename": file, "subfolder": subfolder, "type": self.type})
             counter += 1
 
-        try:
-            if _append_prompt(prompts_file, pos_out):
-                logger.info("[DirtyBirds] Save: appended prompt to %s", prompts_file)
-        except Exception as e:
-            logger.exception("[DirtyBirds] Save: could not append prompt: %s", e)
-
         return {"ui": {"images": results, "db_prompts_md": [pos_out, neg_out]},
-                "result": (pos_out, neg_out)}
+                "result": ()}
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsSavePrompt": DirtyBirdsSavePrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "💾 Save — Image + Prompt"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "Save — The Archive"}

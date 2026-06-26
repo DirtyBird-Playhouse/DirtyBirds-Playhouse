@@ -16,7 +16,8 @@ from . import booru  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-# Prompt .txt files live in a "prompts" folder alongside this node
+# Prompt .txt files live in a "prompts" folder alongside this node.
+# The Archive node owns saving prompts; Dirty Talk only loads them.
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 
@@ -132,4 +133,4 @@ class DirtyBirdsPrompt:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsPrompt": DirtyBirdsPrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "💬 Dirty Talk — The Script"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "Dirty Talk — The Script"}

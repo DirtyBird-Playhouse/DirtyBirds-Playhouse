@@ -150,6 +150,14 @@ function syncTextareaToWidget(textarea, widget, node) {
   node?.setDirtyCanvas?.(true, true);
 }
 
+function seededIndex(seed, length) {
+  if (!length) return 0;
+  let x = Number(seed);
+  if (!Number.isFinite(x) || x <= 0) x = Date.now();
+  x = (Math.imul((x >>> 0) ^ 0x9e3779b9, 1664525) + 1013904223) >>> 0;
+  return x % length;
+}
+
 function handleAutocompleteInput(event, textarea, node) {
   clearTimeout(autocompleteState.timeout);
 
@@ -252,7 +260,7 @@ app.registerExtension({
       }
       loadAutocompleteData();
 
-      // ── Seed (Fixed / Random) — now folded into the Load Wildcards menu ───
+      // ── Seed (Fixed / Random) ───────────────────────────────────────────
       function hideWidget(name) {
         const w = node.widgets?.find(w => w.name === name);
         if (!w) return undefined;
@@ -266,15 +274,15 @@ app.registerExtension({
       const seedWidget   = hideWidget("seed");
       const rerollWidget = hideWidget("reroll_each_run");
       hideWidget("control_after_generate");
+      let paintSeedMode = () => {};
 
-      // reroll_each_run true = Random (re-rolls every run), false = Fixed.
-      // Seed mode lives inside the Load Wildcards menu (see openWildcardMenu).
       function setSeedMode(mode) {
         if (rerollWidget) rerollWidget.value = mode;
         if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
           seedWidget.value = Math.floor(Math.random() * 9007199254740991);
         }
         node.setDirtyCanvas(true);
+        paintSeedMode();
       }
 
       // ── "Load Wildcards" button → native LiteGraph context menu ──────────
@@ -317,12 +325,8 @@ app.registerExtension({
       }
 
       function openWildcardMenu(event) {
-        const seedIsRandom = !!rerollWidget?.value;
         const items = [
           { content: REFRESH, callback: () => loadWildcards() },
-          null,
-          { content: `${seedIsRandom ? "" : "✓ "}📌 Seed: Fixed`,  callback: () => setSeedMode(false) },
-          { content: `${seedIsRandom ? "✓ " : ""}🎲 Seed: Random`, callback: () => setSeedMode(true) },
           null,
           ...toItems(buildTree(node._dbWildcardKeys)),
         ];
@@ -353,7 +357,13 @@ app.registerExtension({
         if (!prompts.length) {
           items.push({ content: "(no saved prompts)", disabled: true });
         } else {
-          const pickRandom = () => prompts[Math.floor(Math.random() * prompts.length)];
+          const pickRandom = () => {
+            if (rerollWidget?.value && seedWidget) {
+              seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+              paintSeedMode();
+            }
+            return prompts[seededIndex(seedWidget?.value, prompts.length)];
+          };
           items.push({
             content: "🎲  Randomize",
             callback: () => insertText(pickRandom()),
@@ -380,149 +390,7 @@ app.registerExtension({
       loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       loadBtn.addEventListener("click", (e) => openSavedPromptMenu(e));
 
-      // ── "Booru Tags" button + inline search panel ────────────────────────
-      const booruWrap = document.createElement("div");
-      booruWrap.className = "db-prompt-booru-wrap";
-
-      const booruBtn = document.createElement("button");
-      booruBtn.className = "db-lib-btn db-lora-add-open-btn";
-      booruBtn.textContent = "🔗  Image URL Tools";
-      booruBtn.style.cssText = "width:100%;box-sizing:border-box;";
-
-      const booruPanel = document.createElement("div");
-      booruPanel.className = "db-url-tools-panel";
-      booruPanel.style.display = "none";
-
-      const booruInput = document.createElement("input");
-      booruInput.type = "text";
-      booruInput.placeholder = "AIBooru post URL or direct image URL…";
-      booruInput.className = "db-text-input";
-
-      const actionRow = document.createElement("div");
-      actionRow.className = "db-url-tools-row db-url-tools-actions";
-      const lmStatus = document.createElement("div");
-      lmStatus.className = "db-lm-status";
-      lmStatus.textContent = "LM Studio: checking";
-      const booruSearchBtn = document.createElement("button");
-      booruSearchBtn.textContent = "Booru";
-      booruSearchBtn.className = "db-lib-btn db-lora-add-open-btn";
-      const captionBtn = document.createElement("button");
-      captionBtn.textContent = "Caption";
-      captionBtn.className = "db-lib-btn db-lora-add-open-btn";
-      const previewWrap = document.createElement("div");
-      previewWrap.className = "db-url-preview";
-      previewWrap.style.display = "none";
-      const previewImg = document.createElement("img");
-      previewImg.alt = "image preview";
-      previewWrap.appendChild(previewImg);
-      const urlStatus = document.createElement("div");
-      urlStatus.className = "db-url-tools-status";
-      actionRow.append(lmStatus, booruSearchBtn, captionBtn);
-      booruPanel.append(booruInput, previewWrap, actionRow, urlStatus);
-      booruWrap.append(booruBtn, booruPanel);
-
-      let _booruOpen = false;
       let scriptPanelWidget = null;
-
-      function setBooruOpen(open) {
-        _booruOpen = open;
-        booruPanel.style.display = open ? "flex" : "none";
-        booruBtn.textContent = open ? "✕  Close" : "🔗  Image URL Tools";
-        syncPanelH();
-        if (open) refreshLmStatus();
-        if (open) requestAnimationFrame(() => booruInput.focus());
-      }
-
-      booruBtn.addEventListener("click", () => setBooruOpen(!_booruOpen));
-
-      function setUrlStatus(text, tone = "") {
-        urlStatus.textContent = text || "";
-        urlStatus.dataset.tone = tone;
-        syncPanelH();
-      }
-
-      async function refreshLmStatus() {
-        lmStatus.textContent = "LM Studio: checking";
-        lmStatus.dataset.tone = "";
-        const data = await fetchJSON("/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1");
-        const models = data?.models || [];
-        if (models.length) {
-          lmStatus.textContent = "LM Studio: ready";
-          lmStatus.title = models[0];
-          lmStatus.dataset.tone = "ok";
-        } else {
-          lmStatus.textContent = "LM Studio: offline";
-          lmStatus.title = data?.error || "No model served at localhost:1234";
-          lmStatus.dataset.tone = "err";
-        }
-        syncPanelH();
-      }
-
-      function setPreview(src) {
-        const url = (src || "").trim();
-        if (!url) {
-          previewImg.removeAttribute("src");
-          previewWrap.style.display = "none";
-          syncPanelH();
-          return;
-        }
-        previewImg.src = url;
-        previewImg.title = url;
-        previewWrap.style.display = "flex";
-        syncPanelH();
-      }
-
-      function previewDirectUrl() {
-        const q = booruInput.value.trim();
-        if (/^https?:\/\//i.test(q) && !/aibooru\.online/i.test(q)) setPreview(q);
-        else setPreview("");
-      }
-
-      previewImg.addEventListener("load", () => syncPanelH());
-      previewImg.addEventListener("error", () => {
-        previewWrap.style.display = "none";
-        setUrlStatus("Preview could not load.", "err");
-      });
-
-      async function doSearch() {
-        const q = booruInput.value.trim();
-        if (!q) return setUrlStatus("Paste an AIBooru post URL.", "err");
-        setUrlStatus("Fetching AIBooru tags…");
-        const data = await fetchJSON(`/dirtybirds/aibooru-post-tags?url=${encodeURIComponent(q)}`);
-        const tags = data?.tags || [];
-        if (data?.image_url) setPreview(data.image_url);
-        if (!tags.length) return setUrlStatus(data?.error || "No tags found.", "err");
-        insertText(tags.join(", "));
-        setUrlStatus(`Inserted ${tags.length} tags.`, "ok");
-      }
-
-      async function doCaption() {
-        const q = booruInput.value.trim();
-        if (!q) return setUrlStatus("Paste an image URL or AIBooru post URL.", "err");
-        setUrlStatus("Captioning URL image…");
-        const params = new URLSearchParams({
-          url: q,
-          endpoint: "http://localhost:1234/v1",
-          instruction: "Describe this image as comma-separated image-generation tags. Output only the tags.",
-        });
-        const data = await fetchJSON(`/dirtybirds/url-caption?${params.toString()}`);
-        if (data?.image_url) setPreview(data.image_url);
-        const caption = (data?.caption || "").trim();
-        if (!caption) return setUrlStatus(data?.error || "Caption returned empty.", "err");
-        insertText(caption);
-        setUrlStatus("Caption inserted.", "ok");
-        refreshLmStatus();
-      }
-
-      refreshLmStatus();
-      booruSearchBtn.addEventListener("click", doSearch);
-      captionBtn.addEventListener("click", doCaption);
-      booruInput.addEventListener("input", previewDirectUrl);
-      booruInput.addEventListener("blur", previewDirectUrl);
-      booruInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { doSearch(); e.preventDefault(); }
-        if (e.key === "Escape") { setBooruOpen(false); }
-      });
 
       async function loadWildcards() {
         const data = await fetchJSON("/dirtybirds/wildcards");
@@ -561,13 +429,51 @@ app.registerExtension({
       node._dbLastPromptTextarea = posTA;
 
       const toolsLabel = makeSectionLabel("The Toybox");
-      const toyboxCols = document.createElement("div");
-      toyboxCols.className = "db-prompt-toybox-columns";
+      const seedRow = document.createElement("div");
+      seedRow.className = "db-prompt-seed-row";
+      const seedModeBtn = document.createElement("button");
+      seedModeBtn.className = "db-lib-btn db-lora-add-open-btn db-prompt-seed-mode";
+      const seedLabel = document.createElement("span");
+      seedLabel.className = "db-slider-label";
+      seedLabel.textContent = "Seed";
+      const seedInput = document.createElement("input");
+      seedInput.type = "text";
+      seedInput.inputMode = "numeric";
+      seedInput.className = "db-text-input db-prompt-seed-input";
+      seedInput.min = "0";
+      seedInput.max = "18446744073709551615";
+      seedInput.value = String(seedWidget?.value ?? 0);
+      paintSeedMode = () => {
+        const random = !!rerollWidget?.value;
+        seedModeBtn.textContent = random ? "Random" : "Fixed";
+        seedModeBtn.dataset.tone = random ? "random" : "fixed";
+        seedInput.disabled = random;
+        seedInput.value = String(seedWidget?.value ?? 0);
+      };
+      seedModeBtn.addEventListener("click", () => setSeedMode(!rerollWidget?.value));
+      seedInput.addEventListener("input", () => {
+        if (seedWidget) seedWidget.value = Number(seedInput.value.replace(/[^\d]/g, "") || 0);
+        node.setDirtyCanvas(true, true);
+      });
+      seedRow.append(seedModeBtn, seedLabel, seedInput);
+      paintSeedMode();
+
+      const toyboxSplit = document.createElement("div");
+      toyboxSplit.className = "db-prompt-toybox-split db-script-tool-split";
+      const toyboxLeft = document.createElement("div");
+      toyboxLeft.className = "db-prompt-toybox-col";
+      const toyboxRight = document.createElement("div");
+      toyboxRight.className = "db-prompt-toybox-col";
       const toyboxDivider = document.createElement("div");
       toyboxDivider.className = "db-prompt-toybox-divider";
-      toyboxCols.append(loadBtn, toyboxDivider, btn);
+      const promptToolGrid = document.createElement("div");
+      promptToolGrid.className = "db-prompt-tool-grid db-prompt-tool-grid-two";
+      promptToolGrid.append(loadBtn, btn);
+      toyboxLeft.append(seedRow);
+      toyboxRight.append(promptToolGrid);
+      toyboxSplit.append(toyboxLeft, toyboxDivider, toyboxRight);
 
-      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxCols, booruWrap);
+      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxSplit);
 
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
         serialize: false,
@@ -581,15 +487,22 @@ app.registerExtension({
         panel.style.width = w + "px";
       }
       function syncPanelH() {
+        if (node._dbPromptSizing) return;
         applyWidths();
         requestAnimationFrame(() => {
+          node._dbPromptSizing = true;
           const h = Math.max(172, panel.scrollHeight || 172);
           if (scriptPanelWidget) {
             try { scriptPanelWidget.height = h; } catch (_) {}
             scriptPanelWidget.computedHeight = h;
           }
-          node.size[1] = Math.max(250, h + 78);
+          const nodeH = Math.max(250, h + 58);
+          if (Math.abs((node.size?.[1] || 0) - nodeH) > 2) {
+            if (typeof node.setSize === "function") node.setSize([node.size[0], nodeH]);
+            else node.size[1] = nodeH;
+          }
           node.setDirtyCanvas(true, true);
+          node._dbPromptSizing = false;
         });
       }
       function applyLayout() {

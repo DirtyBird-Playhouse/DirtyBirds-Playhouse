@@ -74,9 +74,12 @@ app.registerExtension({
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
       const data = message?.db_muse_response;
-      if (!Array.isArray(data)) return;
-      this._dbMusePositive = (data[0] || "").trim();
-      this._dbMuseNegative = (data[1] || "").trim();
+      if (Array.isArray(data)) {
+        this._dbMusePositive = (data[0] || "").trim();
+        this._dbMuseNegative = (data[1] || "").trim();
+      }
+      const status = message?.db_muse_status;
+      if (Array.isArray(status) && status[0]) this._dbMuseRunStatus = status[0];
       this._dbMusePaintResponse?.();
     };
 
@@ -114,12 +117,15 @@ app.registerExtension({
         if (!w) return undefined;
         w.computeSize = () => [0, 0];
         w.serializeValue = () => w.value;
+        w.options = { ...(w.options || {}), hidden: true };
         if (w.element?.style) w.element.style.display = "none";
+        if (w.inputEl?.style) w.inputEl.style.display = "none";
         if (typeof w.setHidden === "function") w.setHidden(true);
         else if ("hidden" in w) w.hidden = true;
         return w;
       }
 
+      const enabledWidget = hideWidget("enabled");
       const instructionWidget = hideWidget("instruction");
       const temperatureWidget = hideWidget("temperature");
       const maxTokensWidget = hideWidget("max_tokens");
@@ -135,6 +141,17 @@ app.registerExtension({
       panel.className = "db-muse-panel";
 
       const titleEl = makeSectionLabel("The Writer");
+      const titleRow = document.createElement("div");
+      titleRow.className = "db-muse-title-row";
+      const power = document.createElement("button");
+      power.type = "button";
+      power.className = "db-muse-power";
+      const powerKnob = document.createElement("span");
+      powerKnob.className = "db-muse-power-knob";
+      const powerText = document.createElement("span");
+      powerText.className = "db-muse-power-text";
+      power.append(powerKnob, powerText);
+      titleRow.append(titleEl, power);
       const split = document.createElement("div");
       split.className = "db-muse-split";
       const leftCol = document.createElement("div");
@@ -187,6 +204,33 @@ app.registerExtension({
       sendBtn.className = "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
       sendBtn.textContent = "Send to Dirty Talk";
 
+      function isEnabled() {
+        return enabledWidget?.value !== false;
+      }
+
+      function paintPower() {
+        const on = isEnabled();
+        panel.classList.toggle("db-muse-off", !on);
+        power.classList.toggle("is-on", on);
+        power.setAttribute("aria-pressed", on ? "true" : "false");
+        powerText.textContent = on ? "On" : "Off";
+        lmStatus.textContent = on ? (node._dbMuseLmStatus || "LM Studio: checking") : "Prompt Muse: off";
+        lmStatus.dataset.tone = on ? (node._dbMuseLmTone || "") : "off";
+        promptRow.classList.toggle("db-disabled", !on);
+        tempRow.classList.toggle("db-disabled", !on);
+        tokenRow.classList.toggle("db-disabled", !on);
+        instructionArea.disabled = !on;
+        sendBtn.disabled = !on || !(node._dbMusePositive || node._dbMuseNegative);
+        syncPanelH();
+      }
+
+      power.addEventListener("click", () => {
+        if (enabledWidget) enabledWidget.value = !isEnabled();
+        node._dbMuseRunStatus = isEnabled() ? "" : "Prompt Muse: off";
+        paintPower();
+        node.setDirtyCanvas(true, true);
+      });
+
       function setWidgetText(targetNode, name, value) {
         const widget = targetNode.widgets?.find((w) => w.name === name);
         if (widget) widget.value = value || "";
@@ -223,6 +267,8 @@ app.registerExtension({
         const pos = node._dbMusePositive || "";
         const neg = node._dbMuseNegative || "";
         responseBox.value = neg ? `POSITIVE:\n${pos}\n\nNEGATIVE:\n${neg}` : pos;
+        if (node._dbMuseRunStatus && !pos && !neg) responseBox.value = node._dbMuseRunStatus;
+        paintPower();
         syncPanelH();
       };
 
@@ -248,23 +294,28 @@ app.registerExtension({
       }
 
       async function refreshLmStatus() {
+        if (!isEnabled()) {
+          paintPower();
+          return;
+        }
         lmStatus.textContent = "LM Studio: checking";
         lmStatus.dataset.tone = "";
         const data = await fetchJSON("/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1");
         const models = data?.models || [];
         if (models.length) {
-          lmStatus.textContent = "LM Studio: ready";
+          node._dbMuseLmStatus = "LM Studio: ready";
           lmStatus.title = models[0];
-          lmStatus.dataset.tone = "ok";
+          node._dbMuseLmTone = "ok";
         } else {
-          lmStatus.textContent = "LM Studio: offline";
+          node._dbMuseLmStatus = "LM Studio: offline";
           lmStatus.title = data?.error || "No model served at localhost:1234";
-          lmStatus.dataset.tone = "err";
+          node._dbMuseLmTone = "err";
         }
-        syncPanelH();
+        paintPower();
       }
 
       promptRow.addEventListener("click", async () => {
+        if (!isEnabled()) return;
         if (!promptOptions.length) await loadPromptOptions();
         showPromptFlyout("LM Studio Prompts", promptOptions, promptFileWidget?.value || "", (prompt) => {
           if (promptFileWidget) promptFileWidget.value = prompt.file;
@@ -276,7 +327,7 @@ app.registerExtension({
       leftCol.append(promptRow, lmStatus);
       rightCol.append(tempRow, tokenRow);
       split.append(leftCol, divider, rightCol);
-      panel.append(titleEl, split, requestLabel, instructionArea, responseLabel, responseBox, sendBtn);
+      panel.append(titleRow, split, requestLabel, instructionArea, responseLabel, responseBox, sendBtn);
 
       const panelWidget = node.addDOMWidget("db_muse_panel", "customhtml", panel, {
         serialize: false,
@@ -360,6 +411,7 @@ app.registerExtension({
 
       loadPromptOptions();
       refreshLmStatus();
+      paintPower();
       node._dbMusePaintResponse();
       requestAnimationFrame(() => requestAnimationFrame(syncPanelH));
     };

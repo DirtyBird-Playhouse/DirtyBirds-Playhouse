@@ -171,6 +171,7 @@ class DirtyBirdsMuse:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "enabled": ("BOOLEAN", {"default": True}),
                 "instruction": ("STRING", {"multiline": True,
                                            "default": "Turn this idea into a full image-generation positive prompt."}),
                 "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
@@ -189,20 +190,29 @@ class DirtyBirdsMuse:
     OUTPUT_NODE = True
 
     @classmethod
-    def IS_CHANGED(cls, instruction="", temperature=0.7, max_tokens=1024,
+    def IS_CHANGED(cls, enabled=True, instruction="", temperature=0.7, max_tokens=1024,
                    prompt_file="", text_in=""):
+        if not enabled:
+            return (enabled, instruction, text_in)
         system, resolved_file = _load_system_prompt(prompt_file)
-        return (instruction, temperature, max_tokens, resolved_file, system, text_in)
+        return (enabled, instruction, temperature, max_tokens, resolved_file, system, text_in)
 
-    def generate(self, instruction, temperature=0.7, max_tokens=1024,
+    def generate(self, enabled=True, instruction="", temperature=0.7, max_tokens=1024,
                  prompt_file="", text_in=""):
+        if not enabled:
+            source = (text_in or instruction or "").strip()
+            return {"ui": {"db_muse_response": [source, ""],
+                           "db_muse_status": ["Prompt Muse: off"]},
+                    "result": ()}
+
         endpoint = DEFAULT_ENDPOINT
         try:
             model = _resolve_lmstudio_model(endpoint)
         except Exception as e:
             logger.warning("[DirtyBirds] Muse model resolve failed (%s): %s", endpoint, e)
             msg = f"[Muse error: {e} — is LM Studio running at {endpoint}?]"
-            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
+            return {"ui": {"db_muse_response": [msg, ""],
+                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
 
         system, resolved_file = _load_system_prompt(prompt_file)
         user_text = instruction or ""
@@ -225,7 +235,8 @@ class DirtyBirdsMuse:
         except Exception as e:
             logger.warning("[DirtyBirds] Muse request failed (%s): %s", endpoint, e)
             msg = f"[Muse error: {e} — is LM Studio's server running at {endpoint}?]"
-            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
+            return {"ui": {"db_muse_response": [msg, ""],
+                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
 
         text = _clean_completion(resp["content"])
         if not text:
@@ -239,11 +250,13 @@ class DirtyBirdsMuse:
                 msg = (f"[Muse error: '{model}' is a reasoning model and used all "
                        f"{max_tokens} tokens thinking before answering. Raise max_tokens "
                        f"(~2000+) or pick a non-reasoning model for prompt writing.]")
-                return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
+                return {"ui": {"db_muse_response": [msg, ""],
+                               "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
             logger.warning("[DirtyBirds] Muse: empty completion (finish=%s).",
                            resp["finish_reason"])
             msg = "[Muse error: model returned empty text.]"
-            return {"ui": {"db_muse_response": [msg, ""]}, "result": ()}
+            return {"ui": {"db_muse_response": [msg, ""],
+                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
 
         raw_pos, raw_neg = _split_pos_neg(text)
         pos_out = raw_pos
@@ -251,7 +264,8 @@ class DirtyBirdsMuse:
 
         logger.info("[DirtyBirds] Muse (%s) -> pos=%r neg=%r",
                     resolved_file or "default", pos_out[:120], neg_out[:80])
-        return {"ui": {"db_muse_response": [pos_out, neg_out]}, "result": ()}
+        return {"ui": {"db_muse_response": [pos_out, neg_out],
+                       "db_muse_status": ["Prompt Muse: on"]}, "result": ()}
 
 
 # ---------------------------------------------------------------------------

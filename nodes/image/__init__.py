@@ -100,13 +100,13 @@ class DirtyBirdsLoadImage:
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
-        files = sorted(
+        files = [""] + sorted(
             f for f in os.listdir(input_dir)
             if os.path.isfile(os.path.join(input_dir, f))
         ) if os.path.isdir(input_dir) else []
         return {
             "required": {
-                "image": (files, {"image_upload": True}),
+                "image": (files, {"image_upload": True, "default": ""}),
             },
             "optional": {
                 "image_url": ("STRING", {

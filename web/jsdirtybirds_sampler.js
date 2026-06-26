@@ -5,7 +5,6 @@
  *   • The Method — Sampler | Scheduler (two columns w/ splitter), noise slider
  *     (CPU / CPU+GPU / GPU), steps, cfg.
  *   • The Payoff — full-width in-node preview of the generated image(s).
- *   • Dirty Talk — read-only markdown of the final prompts + Save Prompt.
  */
 
 import { app } from "../../../scripts/app.js";
@@ -13,7 +12,6 @@ import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, nodeInnerW } 
 
 ensureStylesheet();
 
-const EMPTY_PREVIEW = '<span style="color:#3a3a3a;font-style:italic">— run to preview —</span>';
 const NOISE_MODES = ["cpu", "both", "gpu"];
 const NOISE_LABELS = { cpu: "CPU", both: "Both", gpu: "GPU" };
 
@@ -62,11 +60,6 @@ app.registerExtension({
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
-      const md = message?.db_prompts_md;
-      if (Array.isArray(md)) {
-        this._dbLastPrompts = { pos: md[0] ?? "", neg: md[1] ?? "" };
-        this._dbRefreshPrompts?.();
-      }
       const imgs = message?.db_images;
       if (Array.isArray(imgs)) this._dbRenderImages?.(imgs);
     };
@@ -80,7 +73,15 @@ app.registerExtension({
       const DB_MIN_W = 360;
       node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
 
-      node._dbLastPrompts = node._dbLastPrompts || { pos: "", neg: "", loras: "" };
+      const staleWidgets = new Set(["db_dtlabel", "db_dtpanel", "db_save_btn"]);
+      if (Array.isArray(node.widgets)) {
+        for (let i = node.widgets.length - 1; i >= 0; i--) {
+          if (staleWidgets.has(node.widgets[i]?.name)) {
+            node.widgets[i]?.element?.remove?.();
+            node.widgets.splice(i, 1);
+          }
+        }
+      }
 
       // ── helpers ───────────────────────────────────────────────────────────
       function hideWidget(name) {
@@ -217,7 +218,7 @@ app.registerExtension({
       function syncImgH() {
         requestAnimationFrame(() => {
           const h = Math.max(96, imgPanel.scrollHeight || 96);
-          if (imgWidget) { imgWidget.height = h; imgWidget.computedHeight = h; }
+          if (imgWidget) imgWidget.computedHeight = h;
           node.setDirtyCanvas(true);
         });
       }
@@ -237,98 +238,6 @@ app.registerExtension({
         syncImgH();
       };
 
-      // ── 3. DIRTY TALK ─────────────────────────────────────────────────────
-      addTitle("db_dtlabel", "Dirty Talk");
-
-      const panel = document.createElement("div");
-      panel.className = "db-preview-panel";
-      panel.style.cssText = "box-sizing:border-box;overflow:hidden;";
-
-      const posLabel = document.createElement("div"); posLabel.className = "db-preview-label"; posLabel.textContent = "POSITIVE";
-      const posBlock = document.createElement("div"); posBlock.className = "db-preview-block db-pos";
-      const negLabel = document.createElement("div"); negLabel.className = "db-preview-label"; negLabel.textContent = "NEGATIVE";
-      const negBlock = document.createElement("div"); negBlock.className = "db-preview-block db-neg";
-
-      // Save button appends the current prompt to prompts.txt.
-      const saveBtn = document.createElement("button");
-      saveBtn.className = "db-lib-btn db-lora-add-open-btn";
-      saveBtn.textContent = "💾  Save Prompt";
-      saveBtn.style.cssText += "box-sizing:border-box;width:100%;margin:0;";
-      const saveStatus = document.createElement("div");
-      saveStatus.style.cssText = "font-size:10px;color:#5acc8a;padding:2px 2px 0;min-height:12px;";
-
-      // Two-column row: POSITIVE (left) | splitter | NEGATIVE (right).
-      const dtCols = document.createElement("div"); dtCols.className = "db-talent-columns";
-      const dtLeft = document.createElement("div"); dtLeft.className = "db-talent-loras";
-      dtLeft.style.cssText = "display:flex;flex-direction:column;min-width:0;";
-      dtLeft.append(posLabel, posBlock);
-      const dtDivider = document.createElement("div"); dtDivider.className = "db-talent-divider";
-      const dtRight = document.createElement("div"); dtRight.className = "db-talent-triggerwords";
-      dtRight.style.cssText = "display:flex;flex-direction:column;min-width:0;";
-      dtRight.append(negLabel, negBlock);
-      dtCols.append(dtLeft, dtDivider, dtRight);
-
-      panel.append(dtCols);
-
-      const dtH = () => Math.max(60, panel.scrollHeight || 60);
-      const previewWidget = node.addDOMWidget("db_dtpanel", "customhtml", panel, {
-        serialize: false, height: 60, getMinHeight: dtH,
-      });
-      // Save row is its own fixed widget so it can't be clipped by the panel.
-      const saveWrap = document.createElement("div");
-      saveWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;display:flex;flex-direction:column;";
-      saveWrap.append(saveBtn, saveStatus);
-      node.addDOMWidget("db_save_btn", "customhtml", saveWrap, {
-        serialize: false, height: 46, getMinHeight: () => 46,
-      });
-      widthEls.push(panel, saveWrap);
-      function syncH() {
-        // Double rAF so the measurement happens after layout settles.
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          const h = dtH();
-          if (previewWidget) { previewWidget.height = h; previewWidget.computedHeight = h; }
-          node.setDirtyCanvas(true);
-        }));
-      }
-      function fill(block, value) {
-        if (value) { block.textContent = value; block.classList.remove("db-preview-empty"); }
-        else       { block.innerHTML = EMPTY_PREVIEW; block.classList.add("db-preview-empty"); }
-      }
-      node._dbRefreshPrompts = () => {
-        const p = node._dbLastPrompts || { pos: "", neg: "" };
-        fill(posBlock, p.pos);
-        fill(negBlock, p.neg);
-        syncH();
-      };
-
-      function setStatus(msg, ok) {
-        saveStatus.textContent = msg;
-        saveStatus.style.color = ok ? "#5acc8a" : "#e06060";
-      }
-      saveBtn.addEventListener("click", async (e) => {
-        e.preventDefault(); e.stopPropagation();
-        const p = node._dbLastPrompts || { pos: "", neg: "" };
-        if (!p.pos && !p.neg) { setStatus("Run the graph first — nothing to save.", false); return; }
-        setStatus("Saving…", true);
-        try {
-          const r = await fetch("/dirtybirds/save-prompt", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ positive: p.pos, negative: p.neg }),
-          });
-          const data = await r.json().catch(() => null);
-          if (r.ok && data?.ok) {
-            setStatus("✓ Appended to " + (data.path || "prompts.txt"), true);
-          } else {
-            const msg = (data && (data.error || data.text)) || `HTTP ${r.status}`;
-            setStatus("✕ Failed: " + msg + (r.status === 404 ? " (restart ComfyUI server)" : ""), false);
-          }
-        } catch (err) {
-          console.error("[DirtyBirds] save-prompt failed", err);
-          setStatus("✕ Failed: " + err.message, false);
-        }
-      });
-
       // ── width sync — constrain DOM widgets to the node's inner width so wide
       //    controls reflow instead of overflowing and being clipped ───────────
       function applyWidths() {
@@ -347,7 +256,6 @@ app.registerExtension({
         applyWidths();
         samplerBtn.refresh(); schedulerBtn.refresh();
         noise.paint(); steps.paint(); cfg.paint();
-        node._dbRefreshPrompts();
       }));
     };
   },

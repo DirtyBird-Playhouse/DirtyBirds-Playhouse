@@ -1,9 +1,9 @@
 """
-DirtyBirds Playhouse — Booru tag fetcher (widget of the Dirty Talk node).
+DirtyBirds Playhouse — Booru tag and image-caption route helpers.
 
-Backs the "Booru Tags" button and URL-caption tools in the Dirty Talk (prompt)
-node by serving the /dirtybirds/booru-search, /aibooru-post-tags and
-/url-caption routes. Widget-only: registers NO standalone ComfyUI node.
+Backs the image-derived prompt tools by serving the /dirtybirds/booru-search,
+/aibooru-post-tags, /url-caption, and /image-caption routes. Widget-only:
+registers NO standalone ComfyUI node.
 """
 
 import base64
@@ -227,8 +227,50 @@ def _caption_url_with_lmstudio(url, model, endpoint, instruction, temperature=0.
     return _clean_completion(msg.get("content") or msg.get("reasoning_content") or "")
 
 
+def _caption_data_uri_with_lmstudio(data_uri, model, endpoint, instruction, temperature=0.3, max_tokens=1024):
+    endpoint = (endpoint or "http://localhost:1234/v1").strip()
+    model = (model or "").strip() or _resolve_lmstudio_model(endpoint)
+    instruction = (instruction or "Describe this image as comma-separated image-generation tags.").strip()
+    if not str(data_uri or "").startswith("data:image/"):
+        raise ValueError("image upload must be a data:image URL")
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": instruction},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ],
+        }],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "stream": False,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint.rstrip("/") + "/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": "Bearer lm-studio"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")
+            parsed = json.loads(detail)
+            detail = parsed.get("error", parsed) if isinstance(parsed, dict) else detail
+        except Exception:
+            pass
+        raise RuntimeError(f"LM Studio HTTP {e.code}: {detail or e.reason}") from None
+    msg = data["choices"][0].get("message", {})
+    return _clean_completion(msg.get("content") or msg.get("reasoning_content") or "")
+
+
 # ---------------------------------------------------------------------------
-# Web API Route — used by the DDT "Booru Tags" button
+# Web API Routes — used by image-derived prompt tools
 # ---------------------------------------------------------------------------
 
 
@@ -282,6 +324,35 @@ async def url_caption(request):
         return web.json_response({"caption": caption, "image_url": image_url})
     except Exception as e:
         logger.warning("[DirtyBirds] URL caption failed: %s", e)
+        return web.json_response({"caption": "", "error": str(e)}, status=400)
+
+
+@PromptServer.instance.routes.post("/dirtybirds/image-caption")
+async def image_caption(request):
+    import asyncio
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"caption": "", "error": "invalid JSON"}, status=400)
+
+    data_uri = str(data.get("image") or "").strip()
+    model = str(data.get("model") or "").strip()
+    endpoint = str(data.get("endpoint") or "http://localhost:1234/v1").strip()
+    instruction = str(data.get(
+        "instruction",
+        "Describe this image as comma-separated image-generation tags. Output only the tags."
+    ))
+    if not data_uri:
+        return web.json_response({"caption": "", "error": "missing image"}, status=400)
+
+    def work():
+        return _caption_data_uri_with_lmstudio(data_uri, model, endpoint, instruction)
+
+    try:
+        caption = await asyncio.get_event_loop().run_in_executor(None, work)
+        return web.json_response({"caption": caption})
+    except Exception as e:
+        logger.warning("[DirtyBirds] Image caption failed: %s", e)
         return web.json_response({"caption": "", "error": str(e)}, status=400)
 
 

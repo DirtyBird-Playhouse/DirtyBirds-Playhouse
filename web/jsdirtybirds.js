@@ -827,7 +827,7 @@ app.registerExtension({
       function syncTopRowH() {
         requestAnimationFrame(() => {
           const h = Math.max(30, topRow.scrollHeight || 30);
-          if (topRowWidget) { topRowWidget.height = h; topRowWidget.computedHeight = h; }
+          if (topRowWidget) topRowWidget.computedHeight = h;
           node.setDirtyCanvas(true);
         });
       }
@@ -1151,7 +1151,7 @@ app.registerExtension({
       function syncEmbedH() {
         requestAnimationFrame(() => {
           const h = Math.max(60, embedColsEl.scrollHeight || 60);
-          if (embedColsWidget) { embedColsWidget.height = h; embedColsWidget.computedHeight = h; }
+          if (embedColsWidget) embedColsWidget.computedHeight = h;
           node.setDirtyCanvas(true);
         });
       }
@@ -1244,7 +1244,7 @@ app.registerExtension({
       function syncTalentH() {
         requestAnimationFrame(() => {
           const h = Math.max(60, talentColsEl.scrollHeight || 60);
-          if (talentColsWidget) { talentColsWidget.height = h; talentColsWidget.computedHeight = h; }
+          if (talentColsWidget) talentColsWidget.computedHeight = h;
           node.setDirtyCanvas(true);
         });
       }
@@ -1303,7 +1303,7 @@ app.registerExtension({
         return added;
       };
 
-      // Dirty Talk now lives on the sampler node (read-only markdown preview).
+      // Dirty Talk remains a dedicated prompt-authoring node.
 
       // ── Restore saved state ──────────────────────────────────────────────
       requestAnimationFrame(() => {

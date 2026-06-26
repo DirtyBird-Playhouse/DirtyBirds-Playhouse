@@ -24,9 +24,9 @@ export function ensureStylesheet() {
 }
 
 // ── Fetch JSON with logging ────────────────────────────────────────────────────
-export async function fetchJSON(url) {
+export async function fetchJSON(url, options) {
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, options);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.json();
   } catch (e) {
@@ -59,6 +59,9 @@ export function hideWidget(node, name) {
   if (!w) return undefined;
   w.computeSize    = () => [0, 0];
   w.serializeValue = () => w.value;
+  w.options = { ...(w.options || {}), hidden: true };
+  if (w.element?.style) w.element.style.display = "none";
+  if (w.inputEl?.style) w.inputEl.style.display = "none";
   if (typeof w.setHidden === "function") w.setHidden(true);
   else if ("hidden" in w) w.hidden = true;
   return w;
@@ -185,4 +188,10 @@ export function bindWidthSync(node, els, minW) {
   requestAnimationFrame(() => requestAnimationFrame(applyWidths));
   const origResize = node.onResize;
   node.onResize = function (size) { origResize?.call(this, size); applyWidths(); };
+}
+
+// ── Safely resize a DOM widget ────────────────────────────────────────────────
+export function setWidgetHeight(widget, height) {
+  if (!widget) return;
+  widget.computedHeight = Math.max(0, height || 0);
 }
