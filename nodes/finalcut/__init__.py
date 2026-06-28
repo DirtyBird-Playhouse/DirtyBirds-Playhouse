@@ -1,27 +1,15 @@
 """
 DirtyBirds Playhouse — 🎬 Final Cut.
 
-A monolithic "pick → restore → upscale" node. Stage 1 (this file, for now):
-the interactive picker. When the graph reaches this node it saves the incoming
-image batch as previews, pushes them to the browser, and BLOCKS until you click
-which images to keep (or the timeout fires). Only the picked images flow onward.
-
-The blocking-selection mechanism is adapted from chrisgoringe/cg-image-filter
-(image_filter_messaging.py): the node sends a websocket event and polls a shared
-MessageState that a POST route fills in when the browser replies. Reimplemented
-self-contained so it does not depend on cg-image-filter being installed.
-
-Face-restore (Stage 2) and model-upscale (Stage 3) are added in follow-up edits.
+A "restore → upscale" finishing node: it face-restores and model-upscales every
+incoming image. (Image picking now lives in the Sampler node.)
 """
 
 import os
-import time
-import uuid
 import logging
 
 import numpy as np
 import torch
-from aiohttp import web
 
 import folder_paths
 import comfy.utils
@@ -30,8 +18,6 @@ from comfy.model_management import (
     InterruptProcessingException,
     throw_exception_if_processing_interrupted,
 )
-from server import PromptServer
-from nodes import PreviewImage
 
 logger = logging.getLogger(__name__)
 
@@ -61,83 +47,6 @@ def _register_facerestore_folders():
 
 
 _register_facerestore_folders()
-
-
-# Server → client websocket event, and the client → server POST route.
-EVENT = "dirtybirds-finalcut-images"
-ROUTE = "/dirtybirds/finalcut-message"
-
-
-class _MessageState:
-    """Holds the single in-flight pick request and its eventual response.
-
-    Local/single-user: one request at a time, matched by a per-run token so a
-    stale browser reply can't satisfy the wrong run.
-    """
-
-    _token = None          # token of the run currently waiting
-    _selection = None      # list[int] once the browser replies; None while waiting
-
-    @classmethod
-    def start(cls, token):
-        cls._token = token
-        cls._selection = None
-
-    @classmethod
-    def waiting(cls):
-        return cls._token is not None and cls._selection is None
-
-    @classmethod
-    def deliver(cls, token, selection):
-        """Called from the POST route. True if it matched the waiting run."""
-        if cls._token is not None and str(token) == str(cls._token):
-            cls._selection = [int(x) for x in (selection or [])]
-            return True
-        return False
-
-    @classmethod
-    def take(cls):
-        sel = cls._selection
-        cls._token = None
-        cls._selection = None
-        return sel
-
-
-@PromptServer.instance.routes.post(ROUTE)
-async def _finalcut_message(request):
-    """Browser posts {token, selection:[indices]} when the user confirms."""
-    try:
-        data = await request.json()
-    except Exception:
-        data = {}
-    matched = _MessageState.deliver(data.get("token"), data.get("selection"))
-    if not matched:
-        logger.info("[DirtyBirds] Final Cut: ignoring stale/mismatched reply")
-    return web.json_response({"ok": matched})
-
-
-def _wait_for_pick(token, payload, timeout):
-    """Send the batch to the browser and block until a reply or timeout.
-
-    Returns list[int] of selected indices, or None on timeout.
-    """
-    _MessageState.start(token)
-    payload["token"] = token
-    PromptServer.instance.send_sync(EVENT, payload)
-
-    end = time.monotonic() + max(1, int(timeout))
-    while time.monotonic() < end and _MessageState.waiting():
-        # Honour the Cancel/Interrupt button so a blocked graph can be stopped.
-        throw_exception_if_processing_interrupted()
-        PromptServer.instance.send_sync(
-            EVENT, {"token": token, "tick": int(end - time.monotonic())}
-        )
-        time.sleep(0.5)
-
-    sel = _MessageState.take()
-    if sel is None:
-        PromptServer.instance.send_sync(EVENT, {"token": token, "timeout": True})
-    return sel
 
 
 # ── Stage 2: face restore (spandrel model + facexlib detect/align) ───────────
@@ -309,7 +218,7 @@ def _upscale_images(images, model_name, rescale_mode, percent, longer_side):
 
 
 class DirtyBirdsFinalCut:
-    """🎬 Final Cut — present the batch, keep only the images you pick."""
+    """🎬 Final Cut — face-restore and upscale every incoming image."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -319,7 +228,9 @@ class DirtyBirdsFinalCut:
         up_models = _upscale_model_list()
         return {
             "required": {
-                "images": ("IMAGE",),
+                # Picking moved to the Sampler. These two are kept (hidden in the
+                # UI, ignored by run) only to preserve widget order so existing
+                # saved workflows don't shift their values onto the wrong inputs.
                 "timeout": ("INT", {"default": 600, "min": 1, "max": 86400}),
                 "ontimeout": (["send none", "send all", "send first", "send last"],),
                 "restore_faces": ("BOOLEAN", {"default": True}),
@@ -332,61 +243,44 @@ class DirtyBirdsFinalCut:
                 "rescale_percent": ("INT", {"default": 200, "min": 10, "max": 400, "step": 5}),
                 "longer_side": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
             },
+            "optional": {
+                "pipe": ("DIRTYBIRDS_PIPE",),
+                "images": ("IMAGE",),
+            },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("IMAGE", "picked_indexes")
+    RETURN_TYPES = ("DIRTYBIRDS_PIPE", "IMAGE", "STRING")
+    RETURN_NAMES = ("pipe", "IMAGE", "picked_indexes")
     FUNCTION = "run"
     CATEGORY = "DirtyBirds"
-    # Interactive: always re-run so the picker shows every queue.
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
 
-    def run(self, images, timeout=600, ontimeout="send none",
+    def run(self, timeout=600, ontimeout="send none",
             restore_faces=True, restore_model=None, facedetection="retinaface_resnet50",
             visibility=1.0, upscale=True, upscale_model=None,
-            rescale_mode="model only", rescale_percent=200, longer_side=2048):
+            rescale_mode="model only", rescale_percent=200, longer_side=2048,
+            pipe=None, images=None):
+        if images is None and pipe is not None:
+            images = pipe.get("images")
+        if images is None:
+            raise ValueError("No images provided -- connect an IMAGE input or a pipe with images.")
         batch = images.shape[0]
+        # Process every incoming image (picking now lives in the Sampler).
+        selection = list(range(batch))
+        picked = images
 
-        # Save previews so the browser has real URLs to show.
-        ui = PreviewImage().save_images(images)
-        previews = ui["ui"]["images"]
-
-        token = str(uuid.uuid4())
-        selection = _wait_for_pick(
-            token, {"images": previews, "count": batch}, timeout
-        )
-
-        if selection is None:  # timed out
-            if ontimeout == "send all":
-                selection = list(range(batch))
-            elif ontimeout == "send first":
-                selection = [0]
-            elif ontimeout == "send last":
-                selection = [batch - 1]
-            else:  # send none
-                selection = []
-
-        # Clamp to valid, de-dup, keep order.
-        seen = set()
-        selection = [i for i in selection if 0 <= i < batch and not (i in seen or seen.add(i))]
-
-        if not selection:
-            # Nothing kept -> stop the graph cleanly rather than passing junk on.
-            raise InterruptProcessingException()
-
-        picked = torch.stack([images[i] for i in selection])
-
-        # Stage 2: face restore on the picks.
+        # Stage 2: face restore. Treat this as optional finishing: missing
+        # facexlib/spandrel/model support should not discard a completed batch.
         if restore_faces and visibility > 0 and restore_model and restore_model != "(none installed)":
             try:
                 picked = _restore_faces(picked, restore_model, facedetection, visibility)
             except InterruptProcessingException:
                 raise
             except Exception as e:
-                logger.exception("[DirtyBirds] Final Cut face restore failed")
-                raise RuntimeError(f"Final Cut face restore failed: {e}") from e
+                logger.warning(
+                    "[DirtyBirds] Final Cut face restore skipped: %s",
+                    e,
+                    exc_info=True,
+                )
 
         # Stage 3: model upscale (+ optional resize-to-target).
         if upscale and upscale_model and upscale_model != "(none installed)":
@@ -399,8 +293,8 @@ class DirtyBirdsFinalCut:
                 logger.exception("[DirtyBirds] Final Cut upscale failed")
                 raise RuntimeError(f"Final Cut upscale failed: {e}") from e
 
-        return (picked, ",".join(str(i) for i in selection))
+        return (pipe, picked, ",".join(str(i) for i in selection))
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsFinalCut": DirtyBirdsFinalCut}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFinalCut": "🎬 Final Cut — Pick, Restore, Upscale"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFinalCut": "🎬 Final Cut — Restore, Upscale"}

@@ -5,6 +5,7 @@ web routes in dirtybirds_prompt.py import process() / load_wildcard_dict() here.
 
 Supported syntax (ImpactPack-compatible subset, plus roll-scoped variables):
   __key__ / __parent/child__   -> random entry from a named wildcard list
+  __folder__ / __folder/*__    -> random entry from any matching child list
   {a|b|c}                      -> dynamic prompt, pick one
   {7::a|3::b}                  -> weighted pick (a ~70%, b ~30%)
   {2$$a|b|c}                   -> pick exactly 2
@@ -27,13 +28,18 @@ import os
 import re
 import logging
 import random
+import fnmatch
 
 logger = logging.getLogger(__name__)
 
-# Wildcards live in "user_files/wildcards" folder (.yaml / .yml / .txt)
-WILDCARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "user_files", "wildcards")
+# Wildcards live in the repo-root "user_files/wildcards" folder (.yaml / .yml /
+# .txt). This module sits at nodes/prompt/utils/, so climb three levels to reach
+# the repo root.
+WILDCARDS_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "user_files", "wildcards"
+)
 
-_WILDCARD_RE = re.compile(r"__([\w./\-]+)__")
+_WILDCARD_RE = re.compile(r"__([\w./\-*?]+)__")
 _DYNAMIC_RE = re.compile(r"\{([^{}]*)\}")
 _WEIGHT_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*::\s*(.*)$", re.DOTALL)
 # Roll-scoped variables. [[name=value]] declares; [[name]] references. The value
@@ -162,6 +168,18 @@ def _resolve_wildcard(match, wd, rng):
     """Expand one __key__ reference using the wildcard dict."""
     key = _normalize_key(match.group(1))
     values = wd.get(key)
+    if not values:
+        if "*" in key or "?" in key:
+            # fnmatch's * doesn't cross /, so for trailing * treat as prefix match
+            if key.endswith("*") and "*" not in key[:-1] and "?" not in key:
+                prefix = key[:-1]
+                matched_keys = sorted(k for k in wd if k.startswith(prefix))
+            else:
+                matched_keys = sorted(k for k in wd if fnmatch.fnmatchcase(k, key))
+        else:
+            prefix = key.rstrip("/") + "/"
+            matched_keys = sorted(k for k in wd if k.startswith(prefix))
+        values = [value for k in matched_keys for value in wd.get(k, [])]
     if not values:
         # Unknown key: leave the token untouched so it's visibly unresolved.
         return match.group(0)

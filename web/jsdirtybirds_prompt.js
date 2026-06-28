@@ -9,11 +9,58 @@
  */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel } from "./db_shared.js";
 
 ensureStylesheet();
 
 const REFRESH = "🔄  Refresh list";
+
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function promptToMarkdown(label, value) {
+  const text = String(value || "").trim();
+  return `### ${label}\n${text || "_empty_"}`;
+}
+
+function renderMarkdownText(value) {
+  return escapeHTML(value)
+    .replace(/^### (.*)$/gm, "<h3>$1</h3>")
+    .replace(/\n/g, "<br>");
+}
+
+function showOptionsFlyout(title, options, current, onPick) {
+  document.querySelector(".db-flyout-overlay")?.remove();
+  document.querySelector(".db-flyout")?.remove();
+
+  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
+  const panel = document.createElement("div"); panel.className = "db-flyout";
+  panel.style.left = Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
+  panel.style.top = Math.max(40, window.innerHeight / 2 - 120) + "px";
+
+  const header = document.createElement("div"); header.className = "db-flyout-header";
+  const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
+  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+  header.append(titleEl, closeBtn); panel.appendChild(header);
+
+  const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
+  options.forEach(opt => {
+    const row = document.createElement("div");
+    row.className = "db-res-opt" + (opt.value === current ? " db-selected" : "");
+    row.innerHTML = `<span class="db-res-opt-glyph">${opt.glyph || ""}</span><span class="db-res-opt-label">${escapeHTML(opt.label)}</span>`;
+    row.addEventListener("click", () => { close(); onPick(opt.value); });
+    list.appendChild(row);
+  });
+
+  function close() { overlay.remove(); panel.remove(); }
+  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+  document.body.append(overlay, panel);
+}
 
 // Resolve the underlying <textarea> for a multiline STRING widget across
 // ComfyUI versions (element may be the textarea or a wrapper containing one).
@@ -28,9 +75,9 @@ function getTextarea(widget) {
 function insertAtCursor(textarea, widget, token) {
   if (!textarea) return;
   const start = textarea.selectionStart ?? textarea.value.length;
-  const end   = textarea.selectionEnd ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
   const before = textarea.value.slice(0, start);
-  const after  = textarea.value.slice(end);
+  const after = textarea.value.slice(end);
   const sep = before && !/[\s,]$/.test(before) ? ", " : "";
   const newVal = before + sep + token + after;
   textarea.value = newVal;
@@ -199,16 +246,52 @@ function handleAutocompleteKeydown(event, textarea) {
 app.registerExtension({
   name: "DirtyBirds.Prompt",
 
+  setup() {
+    api.addEventListener("dirtybirds_set_prompt", (event) => {
+      const positive = String(event?.detail?.positive || "");
+      if (!positive) return;
+      const nodes = app.graph?._nodes || [];
+      for (const node of nodes) {
+        if (node?.comfyClass !== "DirtyBirdsPrompt") continue;
+        const widget = node.widgets?.find(w => w.name === "positive");
+        const textarea = node._dbPositiveTextarea;
+        if (textarea) {
+          textarea.value = positive;
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        } else if (widget) {
+          widget.value = positive;
+          node.setDirtyCanvas?.(true, true);
+        }
+      }
+    });
+  },
+
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsPrompt") return;
+
+    const onExecuted = nodeType.prototype.onExecuted;
+    nodeType.prototype.onExecuted = function (message) {
+      onExecuted?.apply(this, arguments);
+      const prompts = message?.db_prompts_md;
+      if (Array.isArray(prompts)) {
+        this._dbResolvedPositive = prompts[0] || "";
+        this._dbResolvedNegative = prompts[1] || "";
+        this._dbRenderPromptMarkdown?.(prompts[0] || "", prompts[1] || "");
+      }
+    };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
-      node.color   = DB_COLOR;
+      node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = 420;
+      const DB_MIN_W = 420;
+      node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
+      const DB_MIN_H = 392;
+      const DB_PANEL_MIN_H = 334;
+      node.min_height = Math.max(node.min_height || 0, DB_MIN_H);
+      node.min_width = Math.max(node.min_width || 0, DB_MIN_W);
 
       // Saved workflows can carry obsolete DOM widgets from older Script UI
       // layouts. Drop them before adding the compact panel, otherwise invisible
@@ -264,22 +347,31 @@ app.registerExtension({
       function hideWidget(name) {
         const w = node.widgets?.find(w => w.name === name);
         if (!w) return undefined;
-        w.computeSize    = () => [0, 0];
+        w.computeSize = () => [0, 0];
         w.serializeValue = () => w.value;
         if (typeof w.setHidden === "function") w.setHidden(true);
         else if ("hidden" in w) w.hidden = true;
         return w;
       }
 
-      const seedWidget   = hideWidget("seed");
+      const seedWidget = hideWidget("seed");
       const rerollWidget = hideWidget("reroll_each_run");
       hideWidget("control_after_generate");
-      let paintSeedMode = () => {};
+      let paintSeedMode = () => { };
+
+      function randomSeedValue() {
+        return Math.floor(Math.random() * 9007199254740991);
+      }
 
       function setSeedMode(mode) {
-        if (rerollWidget) rerollWidget.value = mode;
-        if (!mode && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+        const isRandom = !!mode;
+        if (rerollWidget) rerollWidget.value = isRandom;
+        if (seedWidget) {
+          if (isRandom) {
+            seedWidget.value = randomSeedValue();
+          } else if (!(parseInt(seedWidget.value, 10) > 0)) {
+            seedWidget.value = randomSeedValue();
+          }
         }
         node.setDirtyCanvas(true);
         paintSeedMode();
@@ -293,6 +385,14 @@ app.registerExtension({
         const textarea = node._dbLastPromptTextarea || node._dbPositiveTextarea;
         insertAtCursor(textarea, target, text);
         syncTextareaToWidget(textarea, target, node);
+      }
+
+      function replaceText(text) {
+        const textarea = node._dbPositiveTextarea;
+        if (textarea) textarea.value = text;
+        if (posWidget) posWidget.value = text;
+        node._dbRenderPromptMarkdown?.(text, negWidget?.value || "", true);
+        node.setDirtyCanvas(true, true);
       }
 
       function buildTree(keys) {
@@ -309,12 +409,17 @@ app.registerExtension({
         return root;
       }
 
-      function toItems(treeNode) {
+      function toItems(treeNode, path = "") {
         return Object.keys(treeNode.children).sort().map(name => {
           const child = treeNode.children[name];
           const hasChildren = Object.keys(child.children).length > 0;
+          const childPath = path ? `${path}/${name}` : name;
           if (hasChildren) {
-            const options = toItems(child);
+            const options = toItems(child, childPath);
+            options.unshift({
+              content: "↳ use all in folder",
+              callback: () => insertText(`__${childPath}*__`),
+            });
             if (child.key) {
               options.unshift({ content: "↳ use this", callback: () => insertText(`__${child.key}__`) });
             }
@@ -325,7 +430,9 @@ app.registerExtension({
       }
 
       function openWildcardMenu(event) {
+        const seedLabel = rerollWidget?.value ? "Seed: 🎲 Random" : "Seed: 📌 Fixed";
         const items = [
+          { content: seedLabel, callback: () => { setSeedMode(!rerollWidget?.value); } },
           { content: REFRESH, callback: () => loadWildcards() },
           null,
           ...toItems(buildTree(node._dbWildcardKeys)),
@@ -347,44 +454,187 @@ app.registerExtension({
       btn.addEventListener("click", (e) => openWildcardMenu(e));
 
       // ── "Load Prompt" button → menu of saved positive prompts ────────────
+      function itemLabel(item) {
+        const text = String(item?.text || "");
+        const short = text.length > 54 ? text.slice(0, 54) + "…" : text;
+        const file = item?.file ? `${item.file}:` : "";
+        return `<span style="color:#69b7ff;font-weight:700;">${escapeHTML(file)}#${item?.line ?? "?"}</span> <span style="color:#d8e1e8;">${escapeHTML(short)}</span>`;
+      }
+
+      function normalizePromptItems(data) {
+        if (Array.isArray(data?.items)) return data.items;
+        return (data?.prompts || []).map((text, i) => ({ file: "", line: i + 1, text }));
+      }
+
+      let loadBtn = null;
+
+      function setLoadPromptSource(item) {
+        if (!loadBtn) return;
+        const file = item?.file ? `${item.file}:` : "";
+        const line = item?.line ?? "?";
+        loadBtn.innerHTML = `<span>📥</span><span class="db-load-prompt-source">${escapeHTML(file)}#${line}</span>`;
+        loadBtn.title = `${item?.file || "prompt file"}:${line}`;
+      }
+
+      function closePromptFlyout() {
+        document.querySelector(".db-flyout-overlay")?.remove();
+        document.querySelector(".db-flyout.db-prompt-file-flyout")?.remove();
+      }
+
+      function openPromptFlyout(title, event) {
+        closePromptFlyout();
+        const overlay = document.createElement("div");
+        overlay.className = "db-flyout-overlay";
+        const panel = document.createElement("div");
+        panel.className = "db-flyout db-prompt-file-flyout";
+        panel.style.width = "min(520px, 92vw)";
+        panel.style.left = Math.max(20, Math.min(event?.clientX || 260, window.innerWidth - 540)) + "px";
+        panel.style.top = Math.max(40, Math.min(event?.clientY || 160, window.innerHeight - 520)) + "px";
+
+        const header = document.createElement("div");
+        header.className = "db-flyout-header";
+        const titleEl = document.createElement("span");
+        titleEl.className = "db-flyout-title";
+        titleEl.textContent = title;
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "db-flyout-close";
+        closeBtn.textContent = "✕";
+        header.append(titleEl, closeBtn);
+
+        const list = document.createElement("div");
+        list.className = "db-flyout-list";
+        list.style.maxHeight = "62vh";
+        panel.append(header, list);
+
+        function close() { overlay.remove(); panel.remove(); }
+        closeBtn.addEventListener("click", close);
+        overlay.addEventListener("click", close);
+        document.body.append(overlay, panel);
+        return { panel, list, close };
+      }
+
+      function appendPromptRow(list, item, onInsert, onDelete) {
+        const row = document.createElement("div");
+        row.className = "db-res-opt db-prompt-file-row";
+        const label = document.createElement("div");
+        label.className = "db-prompt-file-label";
+        const prefix = document.createElement("span");
+        prefix.className = "db-prompt-file-line";
+        prefix.textContent = `${item.file ? item.file + ":" : ""}#${item.line ?? "?"}`;
+        const text = document.createElement("span");
+        text.className = "db-prompt-file-text";
+        text.textContent = String(item.text || "");
+        label.append(prefix, text);
+        row.appendChild(label);
+        row.title = `${item.file || "prompt file"}:${item.line}\n${item.text}`;
+
+        if (onDelete) {
+          const actions = document.createElement("div");
+          actions.className = "db-prompt-file-actions";
+          const insertBtn = document.createElement("button");
+          insertBtn.className = "db-prompt-file-action";
+          insertBtn.textContent = "Insert";
+          insertBtn.addEventListener("click", (e) => { e.stopPropagation(); onInsert(item); });
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "db-prompt-file-action db-prompt-file-delete";
+          deleteBtn.textContent = "Delete";
+          deleteBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            if (deleteBtn.dataset.confirm !== "1") {
+              deleteBtn.dataset.confirm = "1";
+              deleteBtn.textContent = "Delete?";
+              return;
+            }
+            await onDelete(item);
+          });
+          actions.append(insertBtn, deleteBtn);
+          row.appendChild(actions);
+        } else {
+          row.addEventListener("click", () => onInsert(item));
+        }
+        list.appendChild(row);
+      }
+
+      async function openManagePromptsMenu(event) {
+        const data = await fetchJSON("/dirtybirds/saved-prompts");
+        const items = normalizePromptItems(data);
+        const flyout = openPromptFlyout(`Manage Prompts (${items.length})`, event);
+        const refresh = document.createElement("div");
+        refresh.className = "db-res-opt";
+        refresh.textContent = REFRESH;
+        refresh.addEventListener("click", () => openManagePromptsMenu(event));
+        flyout.list.appendChild(refresh);
+        if (!items.length) {
+          const empty = document.createElement("div");
+          empty.className = "db-res-opt";
+          empty.textContent = "(no saved prompts)";
+          flyout.list.appendChild(empty);
+        } else {
+          items.slice().reverse().forEach(item => {
+            appendPromptRow(flyout.list, item, (picked) => {
+              replaceText(picked.text);
+              setLoadPromptSource(picked);
+            }, async (picked) => {
+              await fetchJSON("/dirtybirds/delete-saved-prompt", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(picked),
+              });
+              openManagePromptsMenu(event);
+            });
+          });
+        }
+      }
+
       async function openSavedPromptMenu(event) {
         const data = await fetchJSON("/dirtybirds/saved-prompts");
-        const prompts = data?.prompts || [];
-        const items = [
-          { content: REFRESH, callback: () => openSavedPromptMenu(event) },
-          null,
-        ];
-        if (!prompts.length) {
-          items.push({ content: "(no saved prompts)", disabled: true });
+        const promptItems = normalizePromptItems(data);
+        const flyout = openPromptFlyout(`Saved Prompts (${promptItems.length})`, event);
+        const refresh = document.createElement("div");
+        refresh.className = "db-res-opt";
+        refresh.textContent = REFRESH;
+        refresh.addEventListener("click", () => openSavedPromptMenu(event));
+        const manage = document.createElement("div");
+        manage.className = "db-res-opt";
+        manage.textContent = "🗂️  Manage Prompts";
+        manage.addEventListener("click", () => openManagePromptsMenu(event));
+        flyout.list.append(refresh, manage);
+        if (!promptItems.length) {
+          const empty = document.createElement("div");
+          empty.className = "db-res-opt";
+          empty.textContent = "(no saved prompts)";
+          flyout.list.appendChild(empty);
         } else {
           const pickRandom = () => {
             if (rerollWidget?.value && seedWidget) {
               seedWidget.value = Math.floor(Math.random() * 9007199254740991);
               paintSeedMode();
             }
-            return prompts[seededIndex(seedWidget?.value, prompts.length)];
+            return promptItems[Math.floor(Math.random() * promptItems.length)] || null;
           };
-          items.push({
-            content: "🎲  Randomize",
-            callback: () => insertText(pickRandom()),
+          const randomRow = document.createElement("div");
+          randomRow.className = "db-res-opt";
+          randomRow.textContent = "🎲  Randomize";
+          randomRow.addEventListener("click", () => {
+            const picked = pickRandom();
+            if (picked) {
+              replaceText(picked.text);
+              setLoadPromptSource(picked);
+            }
+            flyout.close();
           });
-          items.push(null);
-          prompts.slice().reverse().forEach(text => {
-            const short = text.length > 60 ? text.slice(0, 60) + "…" : text;
-            items.push({
-              content: short, title: text,
-              callback: () => insertText(text),
+          flyout.list.appendChild(randomRow);
+          promptItems.slice().reverse().forEach(item => {
+            appendPromptRow(flyout.list, item, (picked) => {
+              replaceText(picked.text);
+              setLoadPromptSource(picked);
+              flyout.close();
             });
           });
         }
-        new LiteGraph.ContextMenu(items, {
-          event,
-          title: `📥 Saved Prompts (${prompts.length})`,
-          scale: Math.max(1, app.canvas?.ds?.scale || 1),
-        });
       }
 
-      const loadBtn = document.createElement("button");
+      loadBtn = document.createElement("button");
       loadBtn.className = "db-lib-btn db-lora-add-open-btn";
       loadBtn.textContent = "📥  Load Prompt";
       loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -412,6 +662,7 @@ app.registerExtension({
         ta.addEventListener("input", (e) => {
           if (widget) widget.value = ta.value;
           handleAutocompleteInput(e, ta, node);
+          node._dbRenderPromptMarkdown?.(posWidget?.value || "", negWidget?.value || "", true);
           node.setDirtyCanvas(true, true);
         });
         ta.addEventListener("keydown", (e) => handleAutocompleteKeydown(e, ta));
@@ -424,61 +675,137 @@ app.registerExtension({
       const scriptLabel = makeSectionLabel("The Script");
       const posTA = makePromptTextarea(posWidget, "positive");
       const negTA = makePromptTextarea(negWidget, "negative");
+      const promptEditors = [posTA, negTA];
       node._dbPositiveTextarea = posTA;
       node._dbNegativeTextarea = negTA;
       node._dbLastPromptTextarea = posTA;
 
       const toolsLabel = makeSectionLabel("The Toybox");
-      const seedRow = document.createElement("div");
-      seedRow.className = "db-prompt-seed-row";
-      const seedModeBtn = document.createElement("button");
-      seedModeBtn.className = "db-lib-btn db-lora-add-open-btn db-prompt-seed-mode";
-      const seedLabel = document.createElement("span");
-      seedLabel.className = "db-slider-label";
-      seedLabel.textContent = "Seed";
-      const seedInput = document.createElement("input");
-      seedInput.type = "text";
-      seedInput.inputMode = "numeric";
-      seedInput.className = "db-text-input db-prompt-seed-input";
-      seedInput.min = "0";
-      seedInput.max = "18446744073709551615";
-      seedInput.value = String(seedWidget?.value ?? 0);
-      paintSeedMode = () => {
-        const random = !!rerollWidget?.value;
-        seedModeBtn.textContent = random ? "Random" : "Fixed";
-        seedModeBtn.dataset.tone = random ? "random" : "fixed";
-        seedInput.disabled = random;
-        seedInput.value = String(seedWidget?.value ?? 0);
+      if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+        seedWidget.value = randomSeedValue();
+      }
+
+      const origExecuted = node.onExecuted;
+      node.onExecuted = function (message) {
+        origExecuted?.call(this, message);
+        if (rerollWidget?.value && seedWidget) {
+          seedWidget.value = randomSeedValue();
+          node.setDirtyCanvas(true, true);
+        }
       };
-      seedModeBtn.addEventListener("click", () => setSeedMode(!rerollWidget?.value));
-      seedInput.addEventListener("input", () => {
-        if (seedWidget) seedWidget.value = Number(seedInput.value.replace(/[^\d]/g, "") || 0);
-        node.setDirtyCanvas(true, true);
+
+      const toyboxGrid = document.createElement("div");
+      toyboxGrid.className = "db-prompt-tool-grid";
+      toyboxGrid.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
+      // ── Booru / Caption tools ───────────────────────────────────────────
+      function currentImageUrl() {
+        const peepShow = (app.graph?._nodes || []).find(
+          (n) => n.comfyClass === "DirtyBirdsLoadImage" || n.type === "DirtyBirdsLoadImage"
+        );
+        if (!peepShow) return "";
+        const urlW = peepShow.widgets?.find((w) => w.name === "image_url");
+        const u = String(urlW?.value || "").trim();
+        if (u) return u;
+        return String(peepShow.imgs?.[0]?.src || "").trim();
+      }
+
+      const booruBtn = document.createElement("button");
+      booruBtn.className = "db-lib-btn db-lora-add-open-btn";
+      booruBtn.textContent = "Booru";
+      booruBtn.addEventListener("click", async () => {
+        const url = currentImageUrl();
+        if (!url) return showOptionsFlyout("Booru", [{ value: "", label: "No image URL -- load one in Peep Show", glyph: "⚠" }], "", () => {});
+        const flyout = openCaptionFlyout("Booru Tags", booruBtn);
+        flyout.setStatus("Fetching AIBooru tags...");
+        const data = await fetchJSON(`/dirtybirds/aibooru-post-tags?url=${encodeURIComponent(url)}`);
+        const tags = data?.tags || [];
+        if (!tags.length) { flyout.setStatus(data?.error || "No tags found.", "err"); return; }
+        replaceText(tags.join(", "));
+        flyout.setStatus(`${tags.length} tags replaced.`, "ok");
+        setTimeout(() => flyout.close(), 1200);
       });
-      seedRow.append(seedModeBtn, seedLabel, seedInput);
-      paintSeedMode();
 
-      const toyboxSplit = document.createElement("div");
-      toyboxSplit.className = "db-prompt-toybox-split db-script-tool-split";
-      const toyboxLeft = document.createElement("div");
-      toyboxLeft.className = "db-prompt-toybox-col";
-      const toyboxRight = document.createElement("div");
-      toyboxRight.className = "db-prompt-toybox-col";
-      const toyboxDivider = document.createElement("div");
-      toyboxDivider.className = "db-prompt-toybox-divider";
-      const promptToolGrid = document.createElement("div");
-      promptToolGrid.className = "db-prompt-tool-grid db-prompt-tool-grid-two";
-      promptToolGrid.append(loadBtn, btn);
-      toyboxLeft.append(seedRow);
-      toyboxRight.append(promptToolGrid);
-      toyboxSplit.append(toyboxLeft, toyboxDivider, toyboxRight);
+      function openCaptionFlyout(title, anchor) {
+        document.querySelector(".db-flyout-overlay")?.remove();
+        document.querySelector(".db-flyout")?.remove();
+        const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
+        const panel = document.createElement("div"); panel.className = "db-flyout";
+        panel.style.width = "min(360px, 80vw)";
+        const rect = anchor.getBoundingClientRect();
+        panel.style.left = Math.max(20, rect.left) + "px";
+        panel.style.top = (rect.bottom + 6) + "px";
+        const header = document.createElement("div"); header.className = "db-flyout-header";
+        const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
+        const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+        header.append(titleEl, closeBtn);
+        const statusEl = document.createElement("div");
+        statusEl.className = "db-url-tools-status";
+        statusEl.style.padding = "10px 12px";
+        panel.append(header, statusEl);
+        function close() { overlay.remove(); panel.remove(); }
+        closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+        document.body.append(overlay, panel);
+        return {
+          close,
+          setStatus(text, tone = "") { statusEl.textContent = text; statusEl.dataset.tone = tone; },
+          el: statusEl,
+        };
+      }
 
-      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxSplit);
+      const captionBtn = document.createElement("button");
+      captionBtn.className = "db-lib-btn db-lora-add-open-btn";
+      captionBtn.textContent = "Caption";
+      captionBtn.addEventListener("click", async () => {
+        const flyout = openCaptionFlyout("Caption", captionBtn);
+        flyout.setStatus("Checking LM Studio...");
+        const lmData = await fetchJSON("/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1");
+        const models = lmData?.models || [];
+        if (!models.length) { flyout.setStatus(lmData?.error || "LM Studio offline -- start it and load a vision model.", "err"); return; }
+        flyout.setStatus(`LM Studio: ${models[0]}`);
+        const url = currentImageUrl();
+        if (!url) { flyout.setStatus("No image -- load one in Peep Show first.", "err"); return; }
+        flyout.setStatus("Captioning image...");
+        const params = new URLSearchParams({
+          url,
+          endpoint: "http://localhost:1234/v1",
+          instruction: "Describe this image as comma-separated image-generation tags. Output only the tags.",
+        });
+        const data = await fetchJSON(`/dirtybirds/url-caption?${params.toString()}`);
+        const caption = (data?.caption || "").trim();
+        if (!caption) { flyout.setStatus(data?.error || "Caption returned empty.", "err"); return; }
+        replaceText(caption);
+        flyout.setStatus("Caption replaced.", "ok");
+        setTimeout(() => flyout.close(), 1200);
+      });
+
+      toyboxGrid.append(loadBtn, btn, booruBtn, captionBtn);
+
+      const previewLabel = makeSectionLabel("The Prompt");
+      const previewSplit = document.createElement("div");
+      previewSplit.className = "db-prompt-md-split";
+      const previewPos = document.createElement("div");
+      previewPos.className = "db-prompt-md-box db-prompt-md-positive";
+      const previewNeg = document.createElement("div");
+      previewNeg.className = "db-prompt-md-box db-prompt-md-negative";
+      const previewDivider = document.createElement("div");
+      previewDivider.className = "db-prompt-toybox-divider";
+      previewSplit.append(previewPos, previewDivider, previewNeg);
+
+      node._dbRenderPromptMarkdown = (positive, negative, draft = false) => {
+        const posMd = promptToMarkdown(draft ? "Positive Draft" : "Positive", positive);
+        const negMd = promptToMarkdown(draft ? "Negative Draft" : "Negative", negative);
+        previewPos.innerHTML = renderMarkdownText(posMd);
+        previewNeg.innerHTML = renderMarkdownText(negMd);
+        syncPanelH();
+      };
+
+      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxGrid, previewLabel, previewSplit);
+      node._dbRenderPromptMarkdown(posWidget?.value || "", negWidget?.value || "", true);
 
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
         serialize: false,
-        height: 190,
-        getMinHeight: () => Math.max(172, panel.scrollHeight || 172),
+        height: DB_PANEL_MIN_H,
+        getMinHeight: () => Math.max(DB_PANEL_MIN_H, panel.scrollHeight || DB_PANEL_MIN_H),
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
@@ -486,21 +813,32 @@ app.registerExtension({
         const w = nodeInnerW(node);
         panel.style.width = w + "px";
       }
+      function applyEditorHeight(totalH) {
+        const extra = Math.max(0, totalH - DB_MIN_H);
+        const editorH = Math.min(180, 48 + Math.floor(extra / 2));
+        promptEditors.forEach((ta) => {
+          ta.style.height = editorH + "px";
+          ta.style.minHeight = editorH + "px";
+          ta.style.maxHeight = editorH + "px";
+        });
+      }
       function syncPanelH() {
         if (node._dbPromptSizing) return;
         applyWidths();
         requestAnimationFrame(() => {
           node._dbPromptSizing = true;
-          const h = Math.max(172, panel.scrollHeight || 172);
+          applyEditorHeight(node.size?.[1] || DB_MIN_H);
+          const h = Math.max(DB_PANEL_MIN_H, panel.scrollHeight || DB_PANEL_MIN_H);
           if (scriptPanelWidget) {
-            try { scriptPanelWidget.height = h; } catch (_) {}
+            try { scriptPanelWidget.height = h; } catch (_) { }
             scriptPanelWidget.computedHeight = h;
           }
-          const nodeH = Math.max(250, h + 58);
+          const nodeH = Math.max(DB_MIN_H, h + 58);
           if (Math.abs((node.size?.[1] || 0) - nodeH) > 2) {
             if (typeof node.setSize === "function") node.setSize([node.size[0], nodeH]);
             else node.size[1] = nodeH;
           }
+          node.min_height = DB_MIN_H;
           node.setDirtyCanvas(true, true);
           node._dbPromptSizing = false;
         });
@@ -511,7 +849,29 @@ app.registerExtension({
       }
       requestAnimationFrame(() => requestAnimationFrame(applyLayout));
       const origResize = node.onResize;
-      node.onResize = function (size) { origResize?.call(this, size); applyLayout(); };
+      node.onResize = function (size) {
+        size[0] = Math.max(DB_MIN_W, size[0] || DB_MIN_W);
+        const h = Math.max(DB_MIN_H, size[1] || DB_MIN_H);
+        origResize?.call(this, [size[0], h]);
+        this.size[0] = Math.max(DB_MIN_W, this.size?.[0] || DB_MIN_W);
+        this.size[1] = h;
+        applyEditorHeight(h);
+        applyLayout();
+      };
+      const origDrawForeground = node.onDrawForeground;
+      node.onDrawForeground = function (ctx) {
+        if (!this.flags?.collapsed) {
+          if (this.size?.[0] < DB_MIN_W) {
+            if (typeof this.setSize === "function") this.setSize([DB_MIN_W, this.size[1]]);
+            else this.size[0] = DB_MIN_W;
+          }
+          if (this.size?.[1] < DB_MIN_H) {
+            if (typeof this.setSize === "function") this.setSize([this.size[0], DB_MIN_H]);
+            else this.size[1] = DB_MIN_H;
+          }
+        }
+        origDrawForeground?.call(this, ctx);
+      };
     };
   },
 });

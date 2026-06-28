@@ -171,4 +171,4 @@ class DirtyBirdsLoadImage:
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsLoadImage": DirtyBirdsLoadImage}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoadImage": "🖼️ DirtyBirds Load Image"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoadImage": "📸 Peep Show"}

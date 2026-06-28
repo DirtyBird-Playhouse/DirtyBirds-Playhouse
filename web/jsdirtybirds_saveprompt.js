@@ -264,7 +264,16 @@ app.registerExtension({
       });
 
       savePromptBtn.addEventListener("click", async () => {
-        const positive = (posWidget?.value || node._dbArchivePositive || "").trim();
+        // Pull prompt from Dirty Talk node if Archive's own inputs are empty.
+        let positive = (posWidget?.value || node._dbArchivePositive || "").trim();
+        if (!positive) {
+          const dt = (app.graph?._nodes || []).find(
+            (n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt"
+          );
+          if (dt) {
+            positive = (dt._dbResolvedPositive || dt._dbPositiveTextarea?.value || dt.widgets?.find(w => w.name === "positive")?.value || "").trim();
+          }
+        }
         if (!positive) {
           status.textContent = "Positive prompt is empty.";
           status.dataset.tone = "err";
@@ -299,8 +308,17 @@ app.registerExtension({
       });
 
       node._dbArchivePaint = () => {
-        const positive = posWidget?.value || node._dbArchivePositive || "";
-        const negative = negWidget?.value || node._dbArchiveNegative || "";
+        let positive = posWidget?.value || node._dbArchivePositive || "";
+        let negative = negWidget?.value || node._dbArchiveNegative || "";
+        if (!positive.trim()) {
+          const dt = (app.graph?._nodes || []).find(
+            (n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt"
+          );
+          if (dt) {
+            positive = dt._dbResolvedPositive || dt._dbPositiveTextarea?.value || dt.widgets?.find(w => w.name === "positive")?.value || "";
+            negative = negative || dt._dbResolvedNegative || dt._dbNegativeTextarea?.value || dt.widgets?.find(w => w.name === "negative")?.value || "";
+          }
+        }
         promptBox.value = markdownPrompt(positive, negative);
         syncPanelH();
       };

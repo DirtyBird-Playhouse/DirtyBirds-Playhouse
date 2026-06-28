@@ -6,21 +6,111 @@ Provides configurable sampler, scheduler, steps, CFG, and noise placement (GPU/C
 Outputs latent + decoded image with live preview in the node.
 """
 
-import os
-import random
+import time
+import uuid
 import logging
 
 import numpy as np
 import torch
-from PIL import Image
+from aiohttp import web
 
 import comfy.sample
 import comfy.samplers
 import comfy.utils
 import latent_preview
-import folder_paths
+from server import PromptServer
+from nodes import PreviewImage
+from comfy.model_management import (
+    InterruptProcessingException,
+    throw_exception_if_processing_interrupted,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ── Interactive in-node image picker (blocking handshake) ────────────────────
+# After sampling, the node pushes the batch to the browser and BLOCKS until the
+# user multi-selects images inline in the node and confirms. Only picked images
+# (and their matching latents) flow onward. Adapted from the mechanism that used
+# to live in Final Cut: a websocket event + a POST route filling a shared state.
+EVENT = "dirtybirds-sampler-pick"
+ROUTE = "/dirtybirds/sampler-pick"
+
+# On timeout we keep ALL images rather than dropping the generation (no timeout
+# UI is exposed; this is a safety net only).
+PICK_TIMEOUT = 600
+
+
+class _PickState:
+    """Single in-flight pick request, matched by a per-run token."""
+
+    _token = None
+    _selection = None
+
+    @classmethod
+    def start(cls, token):
+        cls._token = token
+        cls._selection = None
+
+    @classmethod
+    def waiting(cls):
+        return cls._token is not None and cls._selection is None
+
+    @classmethod
+    def deliver(cls, token, selection):
+        if cls._token is not None and str(token) == str(cls._token):
+            clean = []
+            for item in selection or []:
+                try:
+                    clean.append(int(item))
+                except (TypeError, ValueError):
+                    continue
+            cls._selection = clean
+            return True
+        return False
+
+    @classmethod
+    def take(cls):
+        sel = cls._selection
+        cls._token = None
+        cls._selection = None
+        return sel
+
+
+@PromptServer.instance.routes.post(ROUTE)
+async def _sampler_pick_message(request):
+    """Browser posts {token, selection:[indices]} when the user confirms."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    matched = _PickState.deliver(data.get("token"), data.get("selection"))
+    if not matched:
+        logger.info("[DirtyBirds] Sampler pick: ignoring stale/mismatched reply")
+    return web.json_response({"ok": matched})
+
+
+def _wait_for_pick(token, payload, timeout):
+    """Send the batch to the browser and block until a reply or timeout.
+
+    Returns list[int] of selected indices, or None on timeout."""
+    _PickState.start(token)
+    payload["token"] = token
+    PromptServer.instance.send_sync(EVENT, payload)
+
+    end = time.monotonic() + max(1, int(timeout))
+    while time.monotonic() < end and _PickState.waiting():
+        # Honour the Cancel/Interrupt button so a blocked graph can be stopped.
+        throw_exception_if_processing_interrupted()
+        PromptServer.instance.send_sync(
+            EVENT, {"token": token, "tick": int(end - time.monotonic())}
+        )
+        time.sleep(0.5)
+
+    sel = _PickState.take()
+    if sel is None:
+        PromptServer.instance.send_sync(EVENT, {"token": token, "timeout": True})
+    return sel
 
 
 def _prepare_noise(latent_image, seed, noise_inds, device):
@@ -60,16 +150,24 @@ class DirtyBirdsSampler:
                 #   gpu  = A1111-style grain (GPU RNG)
                 #   both = run both and batch the results
                 "noise_mode":     (["cpu", "both", "gpu"], {"default": "both"}),
+                "batch_mode":     ("BOOLEAN", {"default": False}),
             },
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("LATENT", "IMAGE")
-    RETURN_NAMES = ("latent", "image")
+    RETURN_TYPES = ("DIRTYBIRDS_PIPE", "LATENT", "IMAGE")
+    RETURN_NAMES = ("pipe", "latent", "image")
     FUNCTION = "sample"
     CATEGORY = "DirtyBirds"
     OUTPUT_NODE = True
 
-    def sample(self, pipe, sampler_name, scheduler, steps, cfg, noise_mode="both"):
+    # Interactive: always re-run so the inline picker shows on every queue.
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
+
+    def sample(self, pipe, sampler_name, scheduler, steps, cfg, noise_mode="both",
+               batch_mode=False, unique_id=None):
         model = pipe["model"]
         positive = pipe["positive"]
         negative = pipe["negative"]
@@ -123,31 +221,54 @@ class DirtyBirdsSampler:
         # Single "make batch" output carrying every requested pass.
         samples = torch.cat(latent_parts, dim=0)
         latent_out = latent.copy()
-        latent_out["samples"] = samples
         image = torch.cat(image_parts, dim=0)
+        batch = image.shape[0]
 
-        # Save preview(s) to the temp dir; the node's JS renders them in-place
-        # from db_images. Each pass is a separate preview, in the order run.
-        out_dir = folder_paths.get_temp_directory()
-        prefix = "dirtybirds_temp_" + "".join(
-            random.choice("abcdefghijklmnopqrstupvxyz") for _ in range(5))
-        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            prefix, out_dir, image.shape[2], image.shape[1])
+        # Save preview(s) so the browser has real URLs to render the picker grid.
+        ui = PreviewImage().save_images(image)
+        previews = ui["ui"]["images"]
+        for preview in previews:
+            preview["width"] = int(image.shape[2])
+            preview["height"] = int(image.shape[1])
 
-        results = []
-        for img_t in image:
-            arr = np.clip(img_t.cpu().numpy() * 255, 0, 255).astype(np.uint8)
-            pil_image = Image.fromarray(arr)
-            file = f"{filename}_{counter:05}_.png"
-            pil_image.save(os.path.join(full_output_folder, file), compress_level=1)
-            results.append({"filename": file, "subfolder": subfolder, "type": "temp"})
-            counter += 1
+        if batch_mode:
+            # Batch mode: skip the interactive picker, pass everything through.
+            latent_out["samples"] = samples
+            pipe = dict(pipe)
+            pipe["images"] = image
+            return {
+                "ui": {"db_images": previews},
+                "result": (pipe, latent_out, image),
+            }
 
-        # Use a custom UI key so ComfyUI does NOT render its own default preview
-        # widget — the node draws the preview itself from db_images.
+        # Push the batch to the node and BLOCK until the user picks inline.
+        token = str(uuid.uuid4())
+        selection = _wait_for_pick(
+            token,
+            {"images": previews, "count": batch, "node_id": str(unique_id)},
+            PICK_TIMEOUT,
+        )
+        if selection is None:  # timed out -> keep everything
+            selection = list(range(batch))
+
+        # Clamp to valid, de-dup, keep order.
+        seen = set()
+        selection = [i for i in selection if 0 <= i < batch and not (i in seen or seen.add(i))]
+        if not selection:
+            # Nothing kept -> stop the graph cleanly rather than passing junk on.
+            raise InterruptProcessingException()
+
+        # Filter image + matching latents to the picks (kept aligned).
+        image = torch.stack([image[i] for i in selection])
+        latent_out["samples"] = torch.stack([samples[i] for i in selection])
+        latent_out.pop("batch_index", None)
+        picked_previews = [previews[i] for i in selection]
+
+        pipe = dict(pipe)
+        pipe["images"] = image
         return {
-            "ui": {"db_images": results},
-            "result": (latent_out, image),
+            "ui": {"db_images": picked_previews},
+            "result": (pipe, latent_out, image),
         }
 
 

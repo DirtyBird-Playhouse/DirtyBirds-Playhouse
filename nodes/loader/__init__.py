@@ -80,6 +80,46 @@ async def get_dimensions(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+@PromptServer.instance.routes.post("/dirtybirds/dimensions")
+async def save_dimensions(request):
+    json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
+    try:
+        data = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="invalid JSON")
+
+    if not isinstance(data, dict):
+        raise web.HTTPBadRequest(text="dimensions must be an object")
+
+    cleaned = {}
+    for label, value in data.items():
+        label = str(label or "").strip()
+        if not label or len(label) > 64:
+            raise web.HTTPBadRequest(text="invalid resolution label")
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise web.HTTPBadRequest(text=f"invalid resolution value for {label}")
+        try:
+            width = int(value[0])
+            height = int(value[1])
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text=f"invalid resolution value for {label}")
+        if width < 64 or height < 64 or width > 8192 or height > 8192:
+            raise web.HTTPBadRequest(text=f"resolution out of range for {label}")
+        cleaned[label] = [width, height]
+
+    if not cleaned:
+        raise web.HTTPBadRequest(text="at least one resolution is required")
+
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(cleaned, f, indent=2)
+            f.write("\n")
+    except Exception as e:
+        logger.error("[DirtyBirds] Failed to save dimensions.json: %s", e)
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(cleaned)
+
+
 @PromptServer.instance.routes.post("/dirtybirds/send-embedding")
 async def send_embedding(request):
     data = await request.json()

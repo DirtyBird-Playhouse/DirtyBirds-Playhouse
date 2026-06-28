@@ -25,6 +25,18 @@ PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 # Web API Routes
 # ---------------------------------------------------------------------------
 
+@PromptServer.instance.routes.post("/dirtybirds/send-prompt")
+async def send_prompt(request):
+    """Inject a positive prompt into every live Dirty Talk node in ComfyUI."""
+    data = await request.json()
+    positive = str(data.get("positive", "") or "").strip()
+    if not positive:
+        return web.json_response(
+            {"success": False, "error": "positive prompt required"}, status=400)
+    PromptServer.instance.send_sync(
+        "dirtybirds_set_prompt", {"positive": positive})
+    return web.json_response({"success": True})
+
 @PromptServer.instance.routes.get("/dirtybirds/wildcards")
 async def get_wildcards(request):
     """List available wildcard keys for the 'Load Wildcards' picker."""
@@ -83,7 +95,7 @@ class DirtyBirdsPrompt:
                 "reroll_each_run": ("BOOLEAN", {"default": True}),
             },
             "optional": {
-                # Concatenate additional prompt text before the node's own output.
+                # Concatenate additional prompt text after the node's own output.
                 "concat_positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
                 "concat_negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
             },
@@ -101,7 +113,7 @@ class DirtyBirdsPrompt:
         return (positive, negative, seed)
 
     def process(self, positive, negative, reroll_each_run=True, seed=0,
-                concat_positive="", concat_negative=""):
+                concat_positive=None, concat_negative=None):
         if reroll_each_run:
             seed = random.randint(0, 0xffffffffffffffff)
 
@@ -113,15 +125,17 @@ class DirtyBirdsPrompt:
             logger.warning("[DirtyBirds] Wildcard processing failed (%s); using raw text", e)
             pos_out, neg_out = positive, negative
 
-        # Prepend concat strings when provided.
-        if concat_positive and concat_positive.strip():
-            pos_out = concat_positive.strip() + (", " + pos_out if pos_out else "")
-        if concat_negative and concat_negative.strip():
-            neg_out = concat_negative.strip() + (", " + neg_out if neg_out else "")
+        # Append concat strings when provided.
+        cp = str(concat_positive or "").strip()
+        cn = str(concat_negative or "").strip()
+        if cp:
+            pos_out = (pos_out + ", " + cp) if pos_out else cp
+        if cn:
+            neg_out = (neg_out + ", " + cn) if neg_out else cn
 
         logger.info(
             "[DirtyBirds] Script: concat_positive=%r -> final positive=%r",
-            (concat_positive or "")[:120], (pos_out or "")[:120])
+            cp[:120], (pos_out or "")[:120])
 
         # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
         # before the sampler runs, letting the user cancel early if it's wrong.
@@ -133,4 +147,4 @@ class DirtyBirdsPrompt:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsPrompt": DirtyBirdsPrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "Dirty Talk — The Script"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "🗨️ Dirty Talk"}

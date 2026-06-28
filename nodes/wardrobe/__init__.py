@@ -1,13 +1,13 @@
 """
-DirtyBirds Playhouse — Wardrobe node ("The Outfit").
+DirtyBirds Playhouse — Pillow Talk node.
 
-Pick LoRAs, toggle their trigger words on/off, and emit the active ones as a
-comma-separated STRING you wire into a prompt (the Script node's
-`concat_positive`) or the Loader's `positive` input.
+Pick LoRAs and toggle their trigger words on/off. The active words are pushed
+straight into the Dirty Talk positive prompt via the node's "Send to Dirty
+Talk" button — no output wiring required.
 
-This node does NOT load LoRA weights — it only emits trigger words. Weight
-loading stays in the Loader, so you can mix-and-match "outfits" (trigger-word
-sets) without touching your checkpoint/LoRA wiring.
+This node does NOT load LoRA weights — it only manages trigger words. Weight
+loading stays in the Loader, so you can mix-and-match trigger-word sets without
+touching your checkpoint/LoRA wiring.
 """
 
 import json
@@ -27,26 +27,23 @@ class DirtyBirdsWardrobe:
                 # JS UI. Hidden in the UI; the styled chip panel drives it.
                 "trigger_words_data": ("STRING", {"default": "[]"}),
             },
-            "optional": {
-                # Prepend upstream text so this can sit inline in a prompt chain.
-                "text_in": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-            },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("trigger_words",)
+    RETURN_TYPES = ()
+    RETURN_NAMES = ()
     FUNCTION = "build"
     CATEGORY = "DirtyBirds"
+    OUTPUT_NODE = True
 
     @classmethod
-    def IS_CHANGED(cls, trigger_words_data="[]", text_in=""):
-        return (trigger_words_data, text_in)
+    def IS_CHANGED(cls, trigger_words_data="[]"):
+        return (trigger_words_data,)
 
-    def build(self, trigger_words_data="[]", text_in=""):
+    def build(self, trigger_words_data="[]"):
         try:
             chips = json.loads(trigger_words_data or "[]")
         except Exception as e:
-            logger.warning("[DirtyBirds] Wardrobe: bad trigger_words_data (%s)", e)
+            logger.warning("[DirtyBirds] Pillow Talk: bad trigger_words_data (%s)", e)
             chips = []
 
         words, seen = [], set()
@@ -58,13 +55,9 @@ class DirtyBirdsWardrobe:
                 seen.add(t.lower())
                 words.append(t)
 
-        out = ", ".join(words)
-        if text_in and text_in.strip():
-            out = text_in.strip() + (", " + out if out else "")
-
-        logger.info("[DirtyBirds] Wardrobe -> %d active trigger words", len(words))
-        return (out,)
+        logger.info("[DirtyBirds] Pillow Talk -> %d active trigger words", len(words))
+        return ()
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsWardrobe": DirtyBirdsWardrobe}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "👗 Wardrobe — The Outfit"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "🗣️ Pillow Talk"}

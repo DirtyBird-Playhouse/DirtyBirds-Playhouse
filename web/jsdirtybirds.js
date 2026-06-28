@@ -122,7 +122,7 @@ function loraCategory(f)    { const p = f.replace(/\\/g,"/").split("/"); return 
 function loraDisplayName(f) { return f.replace(/\\/g,"/").split("/").pop().replace(/\.[^.]+$/,""); }
 
 // ── Resolution dropdown flyout ────────────────────────────────────────────────
-function showResolutionFlyout(dimData, keys, current, randomActive, onPick) {
+function showResolutionFlyout(dimData, keys, current, randomActive, onPick, onCustom, onEdit) {
   document.querySelector(".db-flyout-overlay")?.remove();
   document.querySelector(".db-flyout")?.remove();
 
@@ -144,6 +144,18 @@ function showResolutionFlyout(dimData, keys, current, randomActive, onPick) {
   randomRow.addEventListener("click", () => { close(); onPick("__random__"); });
   list.appendChild(randomRow);
 
+  const customRow = document.createElement("div");
+  customRow.className = "db-res-opt";
+  customRow.innerHTML = '<span class="db-res-opt-glyph">+</span><span class="db-res-opt-label">Custom resolution</span>';
+  customRow.addEventListener("click", () => { close(); onCustom?.(); });
+  list.appendChild(customRow);
+
+  const editRow = document.createElement("div");
+  editRow.className = "db-res-opt";
+  editRow.innerHTML = '<span class="db-res-opt-glyph">✎</span><span class="db-res-opt-label">Edit stored resolutions</span>';
+  editRow.addEventListener("click", () => { close(); onEdit?.(); });
+  list.appendChild(editRow);
+
   const sep = document.createElement("div"); sep.className = "db-res-sep"; list.appendChild(sep);
 
   keys.forEach(key => {
@@ -160,6 +172,60 @@ function showResolutionFlyout(dimData, keys, current, randomActive, onPick) {
 
   function close() { overlay.remove(); panel.remove(); }
   closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+  document.body.append(overlay, panel);
+}
+
+function showResolutionForm(title, fields, onSave) {
+  document.querySelector(".db-flyout-overlay")?.remove();
+  document.querySelector(".db-flyout")?.remove();
+
+  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
+  const panel = document.createElement("div"); panel.className = "db-flyout db-res-edit-flyout";
+  panel.style.width = "min(520px, 92vw)";
+  panel.style.left = Math.max(20, (window.innerWidth - 520) / 2) + "px";
+  panel.style.top = Math.max(40, (window.innerHeight - 520) / 2) + "px";
+
+  const header = document.createElement("div"); header.className = "db-flyout-header";
+  const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
+  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+  header.append(titleEl, closeBtn);
+
+  const body = document.createElement("div"); body.className = "db-res-edit-list";
+  const rows = [];
+  function addRow(label = "", width = "", height = "") {
+    const row = document.createElement("div"); row.className = "db-res-edit-row";
+    const labelInput = document.createElement("input"); labelInput.className = "db-text-input"; labelInput.placeholder = "label"; labelInput.value = label;
+    const widthInput = document.createElement("input"); widthInput.className = "db-text-input"; widthInput.placeholder = "width"; widthInput.inputMode = "numeric"; widthInput.value = width;
+    const heightInput = document.createElement("input"); heightInput.className = "db-text-input"; heightInput.placeholder = "height"; heightInput.inputMode = "numeric"; heightInput.value = height;
+    const removeBtn = document.createElement("button"); removeBtn.className = "db-res-edit-remove"; removeBtn.textContent = "✕"; removeBtn.title = "Remove";
+    removeBtn.addEventListener("click", () => { row.remove(); });
+    row.append(labelInput, widthInput, heightInput, removeBtn);
+    body.appendChild(row);
+    rows.push({ row, labelInput, widthInput, heightInput });
+  }
+  fields.forEach((f) => addRow(f.label, f.width, f.height));
+
+  const actions = document.createElement("div"); actions.className = "db-res-edit-actions";
+  const addBtn = document.createElement("button"); addBtn.className = "db-lib-btn db-lora-add-open-btn"; addBtn.textContent = "+ Add";
+  const saveBtn = document.createElement("button"); saveBtn.className = "db-lib-btn db-lora-add-open-btn"; saveBtn.textContent = "Save";
+  addBtn.addEventListener("click", () => addRow());
+  saveBtn.addEventListener("click", async () => {
+    const values = rows
+      .filter((r) => r.row.isConnected)
+      .map((r) => ({
+        label: r.labelInput.value.trim(),
+        width: parseInt(r.widthInput.value, 10),
+        height: parseInt(r.heightInput.value, 10),
+      }))
+      .filter((r) => r.label && Number.isFinite(r.width) && Number.isFinite(r.height));
+    await onSave(values);
+    close();
+  });
+  actions.append(addBtn, saveBtn);
+
+  function close() { overlay.remove(); panel.remove(); }
+  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+  panel.append(header, body, actions);
   document.body.append(overlay, panel);
 }
 
@@ -296,12 +362,17 @@ function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
       const hint = document.createElement("div"); hint.className="db-sel-empty"; hint.textContent="No LoRAs selected"; container.appendChild(hint); return;
     }
     entries.forEach((entry, idx) => {
-      const row = document.createElement("div"); row.className = "db-sel-row" + (entry.active?"":" db-inactive");
-      const thumb = document.createElement("div"); thumb.className="db-sel-thumb"; thumb.style.cssText="overflow:hidden;";
-      loadMediaUrl(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(entry.name)}`, null, () => { thumb.style.display="none"; });
+      const row = document.createElement("div"); row.className = "db-sel-row db-weight-row" + (entry.active?"":" db-inactive");
+      const preview = document.createElement("div"); preview.className="db-model-preview db-sel-large-preview"; preview.style.display = "none";
+      loadMediaUrl(preview, `/dirtybirds/lora-preview?name=${encodeURIComponent(entry.name)}`,
+        () => { preview.style.display = ""; onChange(); },
+        () => { preview.style.display = "none"; preview.innerHTML = ""; },
+        "cover");
       const toggle = document.createElement("button"); toggle.className="db-sel-toggle"; toggle.textContent=entry.active?"●":"○"; toggle.title=entry.active?"Disable":"Enable";
       toggle.addEventListener("click", () => { entry.active=!entry.active; onChange(); refresh(); });
+      const controls = document.createElement("div"); controls.className = "db-weight-controls";
       const nameEl = document.createElement("span"); nameEl.className="db-sel-name"; nameEl.textContent=loraDisplayName(entry.name); nameEl.title=entry.name;
+      const sliderRow = document.createElement("div"); sliderRow.className = "db-weight-slider-row";
       const valEl  = document.createElement("span"); valEl.className="db-sel-val"; valEl.textContent=entry.strength.toFixed(2);
       const slider = document.createElement("input"); slider.type="range"; slider.className="db-sel-slider"; slider.min="0"; slider.max="2"; slider.step="0.05"; slider.value=String(entry.strength);
       slider.addEventListener("input", () => { entry.strength=entry.clip_strength=parseFloat(slider.value); valEl.textContent=entry.strength.toFixed(2); onChange(); });
@@ -314,7 +385,9 @@ function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
         onLoraRemoved?.(removedName);
         node.setDirtyCanvas(true);
       });
-      row.append(thumb, toggle, nameEl, slider, valEl, rmBtn); container.appendChild(row);
+      sliderRow.append(slider, valEl);
+      controls.append(nameEl, sliderRow);
+      row.append(preview, toggle, controls, rmBtn); container.appendChild(row);
     });
   }
   refresh();
@@ -591,9 +664,9 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsLoader") return;
 
-    const dimensions    = await fetchJSON("/dirtybirds/dimensions");
-    const dimData       = dimensions || { "1024x1024": [1024, 1024] };
-    const dimensionKeys = Object.keys(dimData);
+    const dimensions = await fetchJSON("/dirtybirds/dimensions");
+    let dimData = dimensions || { "1024x1024": [1024, 1024] };
+    let dimensionKeys = Object.keys(dimData);
 
     // Receive executed prompt text → update the "Dirty Talk" preview
     // Also receive external lora_stack names → show as read-only chips.
@@ -741,14 +814,6 @@ app.registerExtension({
       leftCol.append(ckptBtn, ckptPreview);
 
       // Resolution is stored as "WIDTHxHEIGHT" or the RANDOM_DIM sentinel in the hidden `dimension` widget.
-      const RESOLUTIONS = [
-        { label: "1:1",  w: 1024, h: 1024 },
-        { label: "16:9", w: 1344, h: 768  },
-        { label: "9:16", w: 768,  h: 1344 },
-        { label: "3:2",  w: 1216, h: 832  },
-        { label: "2:3",  w: 832,  h: 1216 },
-        { label: "4:3",  w: 1152, h: 896  },
-      ];
       if (dimensionWidget && dimensionWidget.value !== RANDOM_DIM &&
           !/^\d+x\d+$/.test(dimensionWidget.value || "")) {
         dimensionWidget.value = "1024x1024";
@@ -779,32 +844,70 @@ app.registerExtension({
           resLabel.textContent = "🎲 Random";
         } else {
           const [w, h] = cur.split("x").map(Number);
-          const res = RESOLUTIONS.find(r => r.w === w && r.h === h);
-          resLabel.textContent = res ? `${res.label} (${w}×${h})` : `${w}×${h}`;
+          const key = Object.keys(dimData).find(k => {
+            const wh = dimData[k] || [];
+            return Number(wh[0]) === w && Number(wh[1]) === h;
+          });
+          resLabel.textContent = key ? `${key} (${w}×${h})` : `${w}×${h}`;
         }
       }
       // Flyout (same styled panel as the checkpoint picker); Random is an option.
-      const resDimData = {}; RESOLUTIONS.forEach(r => { resDimData[r.label] = [r.w, r.h]; });
-      const resKeys = RESOLUTIONS.map(r => r.label);
       function currentResKey() {
         const cur = dimensionWidget?.value;
         if (!cur || cur === RANDOM_DIM) return null;
         const [w, h] = cur.split("x").map(Number);
-        const r = RESOLUTIONS.find(x => x.w === w && x.h === h);
-        return r ? r.label : null;
+        return Object.keys(dimData).find(k => {
+          const wh = dimData[k] || [];
+          return Number(wh[0]) === w && Number(wh[1]) === h;
+        }) || null;
+      }
+      function applyDimensionMap(nextData) {
+        dimData = nextData || dimData;
+        dimensionKeys = Object.keys(dimData);
+        refreshResRow();
+      }
+      function openCustomResolution() {
+        const cur = dimensionWidget?.value && dimensionWidget.value !== RANDOM_DIM ? dimensionWidget.value : "1024x1024";
+        const [curW, curH] = cur.split("x").map(Number);
+        showResolutionForm("Custom Resolution", [
+          { label: "Custom", width: curW || 1024, height: curH || 1024 },
+        ], async (values) => {
+          const item = values[0];
+          if (!item) return;
+          if (dimensionWidget) dimensionWidget.value = `${item.width}x${item.height}`;
+          refreshResRow();
+          node.setDirtyCanvas(true);
+        });
+      }
+      function openEditResolutions() {
+        const fields = dimensionKeys.map((label) => {
+          const [width, height] = dimData[label] || [1024, 1024];
+          return { label, width, height };
+        });
+        showResolutionForm("Edit Resolutions", fields, async (values) => {
+          const next = {};
+          values.forEach((item) => { next[item.label] = [item.width, item.height]; });
+          const saved = await fetchJSON("/dirtybirds/dimensions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(next),
+          });
+          applyDimensionMap(saved);
+          node.setDirtyCanvas(true);
+        });
       }
       resRow.addEventListener("click", () => {
-        showResolutionFlyout(resDimData, resKeys, currentResKey(),
+        showResolutionFlyout(dimData, dimensionKeys, currentResKey(),
           dimensionWidget?.value === RANDOM_DIM, (pick) => {
             if (pick === "__random__") {
               if (dimensionWidget) dimensionWidget.value = RANDOM_DIM;
-            } else if (resDimData[pick]) {
-              const [w, h] = resDimData[pick];
+            } else if (dimData[pick]) {
+              const [w, h] = dimData[pick];
               if (dimensionWidget) dimensionWidget.value = `${w}x${h}`;
             }
             refreshResRow();
             node.setDirtyCanvas(true);
-          });
+          }, openCustomResolution, openEditResolutions);
       });
 
       // Right column: Resolutions selector
@@ -1010,7 +1113,7 @@ app.registerExtension({
           }
 
           // Populated state: mirror buildLoraPanel's row (controls; preview below).
-          row.className = "db-sel-row " + slotClass + (current.active ? "" : " db-inactive");
+          row.className = "db-sel-row db-weight-row " + slotClass + (current.active ? "" : " db-inactive");
 
           const toggle = document.createElement("button");
           toggle.className = "db-sel-toggle";
@@ -1028,6 +1131,11 @@ app.registerExtension({
           nameEl.className = "db-sel-name";
           nameEl.textContent = current.name;
           nameEl.title = current.name;
+
+          const controls = document.createElement("div");
+          controls.className = "db-weight-controls";
+          const sliderRow = document.createElement("div");
+          sliderRow.className = "db-weight-slider-row";
 
           const slider = document.createElement("input");
           slider.type = "range";
@@ -1060,7 +1168,9 @@ app.registerExtension({
             syncEmbedH();
           });
 
-          row.append(toggle, nameEl, slider, valEl, rmBtn);
+          sliderRow.append(slider, valEl);
+          controls.append(nameEl, sliderRow);
+          row.append(toggle, controls, rmBtn);
           refreshEmbedPreview();
         }
 

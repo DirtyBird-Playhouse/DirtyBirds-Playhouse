@@ -26,6 +26,10 @@ WD = {
     "clothing/bottoms/business": ["slacks"],
     "clothing/footwear/casual": ["sneakers"],
     "clothing/footwear/business": ["heels"],
+    "hair/style/short": ["bob"],
+    "hair/style/long": ["ponytail"],
+    "hair/style-curly": ["ringlets"],
+    "hair/color/blonde": ["blonde hair"],
 }
 
 CASUAL = {"t-shirt", "jeans", "sneakers"}
@@ -111,6 +115,22 @@ def test_multiple_independent_variables():
 def test_plain_dynamic_and_wildcard_still_work():
     assert engine.process("__clothing/tops/casual__", 0, WD) == "t-shirt"
     assert engine.process("{only}", 0, WD) == "only"
+
+
+def test_folder_wildcard_picks_from_child_lists():
+    seen = {engine.process("__hair/style__", seed, WD) for seed in range(30)}
+    assert seen <= {"bob", "ponytail"}
+    assert seen == {"bob", "ponytail"}
+
+
+def test_glob_wildcard_picks_from_matching_lists():
+    seen = {engine.process("__hair/style*__", seed, WD) for seed in range(60)}
+    assert seen <= {"bob", "ponytail", "ringlets"}
+    assert seen == {"bob", "ponytail", "ringlets"}
+
+
+def test_unknown_glob_left_visible():
+    assert engine.process("__hair/texture*__", 0, WD) == "__hair/texture*__"
 
 
 def test_no_variable_template_is_seed_reproducible():

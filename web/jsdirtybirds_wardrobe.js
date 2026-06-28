@@ -1,16 +1,17 @@
 /**
- * DirtyBirds Playhouse — Wardrobe node UI ("The Outfit").
+ * DirtyBirds Playhouse — Pillow Talk node UI.
  *
  * Themed to match the suite. Add LoRAs via a flyout (from /dirtybirds/loras);
  * each LoRA's trigger words (from /dirtybirds/lora-meta) become toggleable,
  * editable chips. Active chip text is serialized into the hidden
- * `trigger_words_data` widget and emitted as a STRING by the Python node.
+ * `trigger_words_data` widget and pushed into the Dirty Talk positive prompt
+ * via the "Send to Dirty Talk" button.
  */
 
 import { app } from "../../../scripts/app.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON,
-  hideWidget, addTitle, showListFlyout, bindWidthSync, setWidgetHeight,
+  hideWidget, showListFlyout, bindWidthSync, setWidgetHeight,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -37,8 +38,7 @@ app.registerExtension({
 
       const widthEls = [];
 
-      // ── Title ──────────────────────────────────────────────────────────────
-      widthEls.push(addTitle(node, "db_wd_title", "The Outfit"));
+      // Header already reads "Pillow Talk" — no redundant in-node title.
 
       // ── Add-LoRA button ──────────────────────────────────────────────────────
       const addBtn = document.createElement("button");
@@ -88,11 +88,17 @@ app.registerExtension({
       function refreshStatus() {
         status.textContent = chips.length
           ? `${activeCount()}/${chips.length} trigger words active`
-          : "No outfit yet — add a LoRA.";
+          : "No trigger words yet — add a LoRA.";
+      }
+      function fitNode() {
+        // Grow the node so the last widget (Send button) is never clipped.
+        const need = node.computeSize();
+        if ((node.size?.[1] || 0) < need[1]) node.setSize([node.size[0], need[1]]);
       }
       function syncH() {
         requestAnimationFrame(() => {
           setWidgetHeight(panelWidget, Math.min(180, Math.max(44, panel.scrollHeight || 44)));
+          fitNode();
           node.setDirtyCanvas(true, true);
         });
       }

@@ -1,7 +1,9 @@
 /**
- * DirtyBirds Playhouse — Load Image node UI.
+ * DirtyBirds Playhouse — Peep Show (Load Image) node UI.
  *
- * Image ingest, segmentation, and image-derived prompt helpers live here.
+ * Image loader with upload/URL input, native preview, optional SAM3
+ * segmentation toggle + confidence slider. Pixel dimensions drawn under
+ * the preview.
  */
 
 import { app } from "../../../scripts/app.js";
@@ -9,33 +11,27 @@ import {
   DB_COLOR,
   DB_BGCOLOR,
   ensureStylesheet,
-  fetchJSON,
   makeSectionLabel,
+  makeSlider,
+  hideWidget,
   nodeInnerW,
 } from "./db_shared.js";
 
 ensureStylesheet();
 
-function setWidgetText(targetNode, name, value) {
-  const widget = targetNode.widgets?.find((w) => w.name === name);
-  if (widget) widget.value = value || "";
-  const ta = name === "positive" ? targetNode._dbPositiveTextarea : targetNode._dbNegativeTextarea;
-  if (ta) {
-    ta.value = value || "";
-    ta.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-}
-
-function findDirtyTalkNode() {
-  const nodes = app.graph?._nodes || [];
-  return nodes.find((n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt");
-}
-
-function hideBackingWidget(node, name) {
+function hideNative(node, name) {
   const w = node.widgets?.find((widget) => widget.name === name);
   if (!w) return undefined;
-  w.serializeValue = () => w.value;
+  hideWidget(node, name);
   return w;
+}
+
+function removeWidget(node, w) {
+  const i = node.widgets?.indexOf(w);
+  if (i >= 0) {
+    w.element?.remove?.();
+    node.widgets.splice(i, 1);
+  }
 }
 
 function clearDefaultImageWidget(node) {
@@ -60,13 +56,29 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsLoadImage") return;
 
+    const origDrawForeground = nodeType.prototype.onDrawForeground;
+    nodeType.prototype.onDrawForeground = function (ctx) {
+      origDrawForeground?.apply(this, arguments);
+      if (this.flags?.collapsed) return;
+      const img = this.imgs?.[0];
+      if (!img || !img.naturalWidth) return;
+      const txt = `${img.naturalWidth} × ${img.naturalHeight}`;
+      ctx.save();
+      ctx.font = "10px sans-serif";
+      ctx.fillStyle = "#9fb3c0";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(txt, this.size[0] / 2, this.size[1] - 5);
+      ctx.restore();
+    };
+
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 430);
+      node.size[0] = Math.max(node.size[0] || 0, 300);
 
       const staleWidgets = new Set(["db_image_tools_panel"]);
       if (Array.isArray(node.widgets)) {
@@ -78,65 +90,65 @@ app.registerExtension({
         }
       }
 
-      const imageUrlWidget = hideBackingWidget(node, "image_url");
-      hideBackingWidget(node, "segment");
-      hideBackingWidget(node, "segment_prompt");
-      hideBackingWidget(node, "confidence");
+      const imageWidget = node.widgets?.find((w) => w.name === "image");
+      const imageUrlWidget = hideNative(node, "image_url");
+      const segmentWidget = hideNative(node, "segment");
+      const segPromptWidget = hideNative(node, "segment_prompt");
+      const confidenceWidget = hideNative(node, "confidence");
+
+      function hideStockWidgets() {
+        hideNative(node, "image");
+        for (const w of [...(node.widgets || [])]) {
+          if (w === imageWidget) continue;
+          const nm = String(w.name || "");
+          if (/upload|choose file/i.test(nm) || (w.type === "button" && !w.element)) {
+            removeWidget(node, w);
+          }
+        }
+      }
+      hideStockWidgets();
       clearDefaultImageWidget(node);
 
       const panel = document.createElement("div");
       panel.className = "db-image-panel";
 
-      const sourceLabel = makeSectionLabel("The Tags");
-      const split = document.createElement("div");
-      split.className = "db-image-split";
-      const leftCol = document.createElement("div");
-      leftCol.className = "db-image-col";
-      const rightCol = document.createElement("div");
-      rightCol.className = "db-image-col";
-      const divider = document.createElement("div");
-      divider.className = "db-prompt-toybox-divider";
-
+      // ── Load Image button ─────────────────────────────────────────────────
       const sourceRow = document.createElement("div");
-      sourceRow.className = "db-image-actions db-image-actions-three";
-      const uploadCaptionBtn = document.createElement("button");
-      uploadCaptionBtn.className = "db-lib-btn db-lora-add-open-btn";
-      uploadCaptionBtn.textContent = "Load Image";
-      const booruBtn = document.createElement("button");
-      booruBtn.className = "db-lib-btn db-lora-add-open-btn";
-      booruBtn.textContent = "Booru";
-      const captionBtn = document.createElement("button");
-      captionBtn.className = "db-lib-btn db-lora-add-open-btn";
-      captionBtn.textContent = "Caption";
-      sourceRow.append(uploadCaptionBtn, booruBtn, captionBtn);
+      sourceRow.className = "db-image-actions";
+      sourceRow.style.gridTemplateColumns = "minmax(0, 1fr)";
+      const uploadBtn = document.createElement("button");
+      uploadBtn.className = "db-lib-btn db-lora-add-open-btn";
+      uploadBtn.textContent = "Load Image";
+      sourceRow.append(uploadBtn);
 
-      const captionFileInput = document.createElement("input");
-      captionFileInput.type = "file";
-      captionFileInput.accept = "image/*";
-      captionFileInput.style.display = "none";
-      let uploadedImageData = "";
+      // ── URL input ─────────────────────────────────────────────────────────
+      const urlInput = document.createElement("input");
+      urlInput.type = "text";
+      urlInput.className = "db-text-input";
+      urlInput.placeholder = "image URL or local path";
+      urlInput.style.cssText += "flex:0 0 auto;height:24px;width:100%;box-sizing:border-box;";
+      urlInput.value = String(imageUrlWidget?.value || "");
+      urlInput.addEventListener("input", () => {
+        if (imageUrlWidget) imageUrlWidget.value = urlInput.value;
+      });
 
-      const lmStatus = document.createElement("div");
-      lmStatus.className = "db-lm-status";
-      lmStatus.textContent = "LM Studio: checking";
-      const promptActions = document.createElement("div");
-      promptActions.className = "db-image-actions";
-      const sendBtn = document.createElement("button");
-      sendBtn.className = "db-lib-btn db-lora-add-open-btn";
-      sendBtn.textContent = "Send";
-      const clearBtn = document.createElement("button");
-      clearBtn.className = "db-lib-btn db-lora-add-open-btn";
-      clearBtn.textContent = "Clear";
-      promptActions.append(sendBtn, clearBtn);
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = "image/png,image/jpeg,image/jpg,image/webp,image/gif";
+      fileInput.style.display = "none";
 
-      const promptBox = document.createElement("textarea");
-      promptBox.className = "db-script-textarea db-image-prompt-box";
-      promptBox.placeholder = "Booru tags or image caption";
-      promptBox.spellcheck = false;
+      function selectImage(path) {
+        if (!imageWidget) return;
+        const opts = imageWidget.options || (imageWidget.options = {});
+        opts.values = opts.values || [];
+        if (path && !opts.values.includes(path)) opts.values.push(path);
+        imageWidget.value = path;
+        imageWidget.callback?.(path);
+        node.setDirtyCanvas(true, true);
+      }
 
       const status = document.createElement("div");
       status.className = "db-url-tools-status";
-      let latestPrompt = "";
 
       function setStatus(text, tone = "") {
         status.textContent = text || "";
@@ -144,118 +156,75 @@ app.registerExtension({
         syncPanelH();
       }
 
-      function setPrompt(text, tone = "ok") {
-        latestPrompt = (text || "").trim();
-        promptBox.value = latestPrompt;
-        setStatus(latestPrompt ? "Prompt text ready." : "", tone);
-      }
-
-      async function refreshLmStatus() {
-        lmStatus.textContent = "LM Studio: checking";
-        lmStatus.dataset.tone = "";
-        const data = await fetchJSON("/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1");
-        const models = data?.models || [];
-        if (models.length) {
-          lmStatus.textContent = "LM Studio: ready";
-          lmStatus.title = models[0];
-          lmStatus.dataset.tone = "ok";
-        } else {
-          lmStatus.textContent = "LM Studio: offline";
-          lmStatus.title = data?.error || "No model served at localhost:1234";
-          lmStatus.dataset.tone = "err";
-        }
-        syncPanelH();
-      }
-
-      async function doBooru() {
-        const q = String(imageUrlWidget?.value || "").trim();
-        if (!q) return setStatus("Paste an AIBooru post URL.", "err");
-        setStatus("Fetching AIBooru tags...");
-        const data = await fetchJSON(`/dirtybirds/aibooru-post-tags?url=${encodeURIComponent(q)}`);
-        const tags = data?.tags || [];
-        if (data?.image_url) {
-          if (imageUrlWidget) imageUrlWidget.value = data.image_url;
-        }
-        if (!tags.length) return setStatus(data?.error || "No tags found.", "err");
-        setPrompt(tags.join(", "));
-      }
-
-      async function doCaption() {
-        const q = String(imageUrlWidget?.value || "").trim();
-        if (!q && !uploadedImageData) return setStatus("Paste an image URL or load an image.", "err");
-        setStatus("Captioning image...");
-        let data;
-        if (uploadedImageData) {
-          data = await fetchJSON("/dirtybirds/image-caption", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              image: uploadedImageData,
-              endpoint: "http://localhost:1234/v1",
-              instruction: "Describe this image as comma-separated image-generation tags. Output only the tags.",
-            }),
-          });
-        } else {
-          const params = new URLSearchParams({
-            url: q,
-            endpoint: "http://localhost:1234/v1",
-            instruction: "Describe this image as comma-separated image-generation tags. Output only the tags.",
-          });
-          data = await fetchJSON(`/dirtybirds/url-caption?${params.toString()}`);
-          if (data?.image_url) {
-            if (imageUrlWidget) imageUrlWidget.value = data.image_url;
-          }
-        }
-        const caption = (data?.caption || "").trim();
-        if (!caption) return setStatus(data?.error || "Caption returned empty.", "err");
-        setPrompt(caption);
-        refreshLmStatus();
-      }
-
-      function sendToDirtyTalk() {
-        const target = findDirtyTalkNode();
-        if (!target) return setStatus("No Dirty Talk node found.", "err");
-        setWidgetText(target, "positive", latestPrompt || promptBox.value || "");
-        target.setDirtyCanvas?.(true, true);
-        app.graph?.setDirtyCanvas?.(true, true);
-        setStatus("Sent to Dirty Talk.", "ok");
-      }
-
-      clearBtn.addEventListener("click", () => {
-        uploadedImageData = "";
-        setPrompt("");
-        setStatus("");
-      });
-      uploadCaptionBtn.addEventListener("click", () => captionFileInput.click());
-      captionFileInput.addEventListener("change", () => {
-        const file = captionFileInput.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          uploadedImageData = String(reader.result || "");
-          if (imageUrlWidget) imageUrlWidget.value = "";
+      async function uploadFile(file) {
+        try {
+          setStatus(`Uploading ${file.name}...`);
+          const body = new FormData();
+          body.append("image", file);
+          body.append("overwrite", "true");
+          const resp = await fetch("/upload/image", { method: "POST", body });
+          if (resp.status !== 200) return setStatus(`Upload failed (${resp.status}).`, "err");
+          const data = await resp.json();
+          let path = data.name;
+          if (data.subfolder) path = `${data.subfolder}/${path}`;
+          selectImage(path);
           setStatus(file.name, "ok");
-        };
-        reader.onerror = () => setStatus("Could not load image.", "err");
-        reader.readAsDataURL(file);
+        } catch (e) {
+          setStatus("Upload error.", "err");
+        }
+      }
+      fileInput.addEventListener("change", () => {
+        const f = fileInput.files?.[0];
+        if (f) uploadFile(f);
+        fileInput.value = "";
       });
-      booruBtn.addEventListener("click", doBooru);
-      captionBtn.addEventListener("click", doCaption);
-      sendBtn.addEventListener("click", sendToDirtyTalk);
-      promptBox.addEventListener("input", () => {
-        latestPrompt = promptBox.value;
+      uploadBtn.addEventListener("click", () => fileInput.click());
+
+      // ── Segment toggle + prompt ───────────────────────────────────────────
+      const segLabel = makeSectionLabel("Segmentation");
+      const segmentRow = document.createElement("div");
+      segmentRow.className = "db-image-segment-row";
+      const segToggle = document.createElement("button");
+      segToggle.className = "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
+      const segPrompt = document.createElement("input");
+      segPrompt.type = "text";
+      segPrompt.className = "db-text-input";
+      segPrompt.placeholder = "what to segment (SAM3)";
+      segPrompt.value = String(segPromptWidget?.value || "");
+      segmentRow.append(segToggle, segPrompt);
+
+      function paintSegment() {
+        const on = !!segmentWidget?.value;
+        segToggle.textContent = on ? "Segment: on" : "Segment: off";
+        segToggle.dataset.tone = on ? "random" : "fixed";
+        segPrompt.style.opacity = on ? "1" : "0.5";
+        segPrompt.disabled = !on;
+      }
+      segToggle.addEventListener("click", () => {
+        if (segmentWidget) segmentWidget.value = !segmentWidget.value;
+        paintSegment();
         node.setDirtyCanvas(true, true);
       });
+      segPrompt.addEventListener("input", () => {
+        if (segPromptWidget) segPromptWidget.value = segPrompt.value;
+      });
 
-      leftCol.append(captionFileInput, lmStatus, sourceRow, promptActions, status);
-      rightCol.append(promptBox);
-      split.append(leftCol, divider, rightCol);
-      panel.append(sourceLabel, split);
+      // ── Confidence slider ─────────────────────────────────────────────────
+      const { row: confidenceRow, paint: paintConfidence } = makeSlider(
+        "Conf", 0.05, 0.95, 0.01,
+        () => Number(confidenceWidget?.value ?? 0.5),
+        (v) => { if (confidenceWidget) confidenceWidget.value = v; },
+        (v) => v.toFixed(2),
+      );
+      confidenceRow.classList.add("db-image-confidence-row");
+
+      // ── Assemble panel ────────────────────────────────────────────────────
+      panel.append(fileInput, sourceRow, urlInput, status, segLabel, segmentRow, confidenceRow);
 
       node.addDOMWidget("db_image_tools_panel", "customhtml", panel, {
         serialize: false,
-        height: 118,
-        getMinHeight: () => 118,
+        height: 160,
+        getMinHeight: () => 160,
       });
 
       function applyWidths() {
@@ -269,14 +238,16 @@ app.registerExtension({
 
       const origResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < 430) size[0] = 430;
+        if (size[0] < 300) size[0] = 300;
         origResize?.call(this, size);
         syncPanelH();
       };
 
-      refreshLmStatus();
-      requestAnimationFrame(() => clearDefaultImageWidget(node));
-      requestAnimationFrame(() => requestAnimationFrame(syncPanelH));
+      paintSegment();
+      paintConfidence();
+      requestAnimationFrame(() => { hideStockWidgets(); clearDefaultImageWidget(node); });
+      requestAnimationFrame(() => requestAnimationFrame(() => { hideStockWidgets(); syncPanelH(); }));
+      setTimeout(() => { hideStockWidgets(); node.setDirtyCanvas(true, true); }, 100);
     };
   },
 });

@@ -9,179 +9,12 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { api } from "../../../scripts/api.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, addTitle, bindWidthSync,
   hideWidget, makeSlider, makeFlyoutBtn,
 } from "./db_shared.js";
 
 ensureStylesheet();
-
-const EVENT = "dirtybirds-finalcut-images";
-const ROUTE = "/dirtybirds/finalcut-message";
-const VIEW_KEY = "db.finalcut.lineupView"; // "full" | "small" — remembered picker size
-
-let current = null; // { token, selection:Set, overlay, countdownEl, statusEl }
-
-function viewURL(img) {
-  const p = new URLSearchParams({
-    filename: img.filename || "",
-    subfolder: img.subfolder || "",
-    type: img.type || "temp",
-  });
-  const path = "/view?" + p.toString();
-  return api.apiURL ? api.apiURL(path) : path;
-}
-
-function closeModal() {
-  current?.overlay?.remove();
-  current = null;
-}
-
-async function confirmPick() {
-  if (!current) return;
-  const selection = [...current.selection].sort((a, b) => a - b);
-  const token = current.token;
-  current.statusEl.textContent = "Sending…";
-  try {
-    await api.fetchApi(ROUTE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, selection }),
-    });
-  } catch (err) {
-    console.error("[DirtyBirds] Final Cut reply failed:", err);
-    if (current) current.statusEl.textContent = "Send failed — retry.";
-    return;
-  }
-  closeModal();
-}
-
-function openModal(token, images) {
-  closeModal();
-
-  const overlay = document.createElement("div");
-  overlay.className = "db-flyout-overlay";
-
-  const panel = document.createElement("div");
-  panel.className = "db-lora-flyout";
-  panel.style.left = "50%";
-  panel.style.top = "50%";
-  panel.style.transform = "translate(-50%, -50%)";
-
-  // Header
-  const header = document.createElement("div");
-  header.className = "db-flyout-header";
-  const title = document.createElement("span");
-  title.className = "db-flyout-title";
-  title.textContent = "🎬 Final Cut — pick images to keep";
-  const countdown = document.createElement("span");
-  countdown.className = "db-flyout-title";
-  countdown.style.opacity = "0.6";
-
-  // Small / full-screen view toggle for The Lineup (remembered across runs).
-  if (localStorage.getItem(VIEW_KEY) === "full") panel.classList.add("db-fc-full");
-  const viewBtn = document.createElement("button");
-  viewBtn.className = "db-fc-view-btn";
-  const paintView = () => {
-    viewBtn.textContent = panel.classList.contains("db-fc-full") ? "🗗 Small" : "⛶ Full screen";
-  };
-  viewBtn.addEventListener("click", () => {
-    const nowFull = !panel.classList.contains("db-fc-full");
-    panel.classList.toggle("db-fc-full", nowFull);
-    try { localStorage.setItem(VIEW_KEY, nowFull ? "full" : "small"); } catch (e) { /* ignore */ }
-    paintView();
-  });
-  paintView();
-
-  const right = document.createElement("div");
-  right.style.cssText = "display:flex;align-items:center;gap:10px;";
-  right.append(countdown, viewBtn);
-  header.append(title, right);
-  panel.appendChild(header);
-
-  // Grid of selectable cards
-  const grid = document.createElement("div");
-  grid.className = "db-lp-grid";
-  const selection = new Set();
-
-  images.forEach((img, i) => {
-    const card = document.createElement("div");
-    card.className = "db-lp-card";
-    card.style.cursor = "pointer";
-    const wrap = document.createElement("div");
-    wrap.className = "db-lp-img-wrap";
-    const thumb = document.createElement("img");
-    thumb.className = "db-lp-thumb";
-    const reveal = () => thumb.classList.add("db-lp-thumb-loaded");
-    thumb.addEventListener("load", reveal);
-    thumb.addEventListener("error", () => {
-      // Make a broken/404 preview visible instead of an invisible blank box.
-      thumb.classList.add("db-lp-thumb-loaded");
-      thumb.alt = "preview failed: " + (img.filename || "?");
-      thumb.style.opacity = "1";
-      console.warn("[DirtyBirds] Final Cut preview failed:", thumb.src);
-    });
-    thumb.src = viewURL(img);
-    // Cached images can finish loading before the listener attaches; reveal now.
-    if (thumb.complete && thumb.naturalWidth > 0) reveal();
-    const badge = document.createElement("div");
-    badge.className = "db-lp-cat-badge";
-    badge.textContent = "#" + i;
-    wrap.append(thumb, badge);
-    card.appendChild(wrap);
-
-    card.addEventListener("click", () => {
-      if (selection.has(i)) { selection.delete(i); card.style.borderColor = ""; }
-      else { selection.add(i); card.style.borderColor = "#5aadff"; }
-      updateStatus();
-    });
-    grid.appendChild(card);
-  });
-  panel.appendChild(grid);
-
-  // Footer: status + confirm
-  const footer = document.createElement("div");
-  footer.className = "db-lp-pills";
-  footer.style.justifyContent = "space-between";
-  footer.style.alignItems = "center";
-  const statusEl = document.createElement("span");
-  statusEl.style.cssText = "font-size:11px;color:#888;";
-  const confirmBtn = document.createElement("button");
-  confirmBtn.className = "db-lora-add-open-btn";
-  confirmBtn.style.width = "auto";
-  confirmBtn.style.padding = "6px 16px";
-  confirmBtn.textContent = "Confirm selection";
-  confirmBtn.addEventListener("click", confirmPick);
-  footer.append(statusEl, confirmBtn);
-  panel.appendChild(footer);
-
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
-
-  current = { token, selection, overlay, countdownEl: countdown, statusEl };
-  function updateStatus() {
-    statusEl.textContent = selection.size
-      ? `${selection.size} selected`
-      : "Click images to keep (none = cancel run)";
-  }
-  updateStatus();
-}
-
-api.addEventListener(EVENT, (e) => {
-  const d = e.detail || {};
-  // Initial batch push.
-  if (Array.isArray(d.images)) { openModal(d.token, d.images); return; }
-  // Only act on ticks/timeouts for the modal we're currently showing.
-  if (!current || d.token !== current.token) return;
-  if (d.timeout) { closeModal(); return; }
-  if (typeof d.tick === "number") {
-    const m = Math.floor(d.tick / 60), s = d.tick % 60;
-    current.countdownEl.textContent = `${m}:${String(s).padStart(2, "0")}`;
-  }
-});
-
-console.log("[DirtyBirds] Final Cut picker module loaded");
 
 // ── Themed on-canvas node UI (suite controls) ────────────────────────────────
 const _baseName = (v) => (v || "").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
@@ -247,12 +80,6 @@ app.registerExtension({
         displayFn: _baseName,
       }).row;
 
-      // ── The Lineup ──
-      title("db_fc_lineup", "The Lineup");
-      const toS = seg("On timeout", W.ontimeout,
-        [["send none", "None"], ["send all", "All"], ["send first", "First"], ["send last", "Last"]]);
-      addRow("db_fc_ontimeout", toS, 34);
-
       // ── The Touch-Up ──
       title("db_fc_touchup", "The Touch-Up");
       const rfS = seg("Restore", W.restore_faces, [[false, "Off"], [true, "On"]], () => paint());
@@ -297,7 +124,7 @@ app.registerExtension({
       bindWidthSync(node, els, DB_MIN_W);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         visS.paint(); pctS.paint(); lsS.paint();
-        toS._paint(); rfS._paint(); upS._paint(); rmS._paint();
+        rfS._paint(); upS._paint(); rmS._paint();
         paint();
       }));
     };

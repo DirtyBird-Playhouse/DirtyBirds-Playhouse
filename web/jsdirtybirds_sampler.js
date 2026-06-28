@@ -8,12 +8,252 @@
  */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, nodeInnerW } from "./db_shared.js";
 
 ensureStylesheet();
 
 const NOISE_MODES = ["cpu", "both", "gpu"];
 const NOISE_LABELS = { cpu: "CPU", both: "Both", gpu: "GPU" };
+
+// ── Interactive image picker ────────────────────────────────────────────────
+// After sampling, the Python node blocks and pushes the batch here. DEFAULT:
+// the user selects images inline INSIDE the node (no popup). Optionally they can
+// open a full-screen POPUP (cg-image-filter style) for a big view; both share
+// the same selection and the same Send/Cancel.
+const PICK_EVENT = "dirtybirds-sampler-pick";
+const PICK_ROUTE = "/dirtybirds/sampler-pick";
+
+let _pick = null; // { token, node }
+let _fs = null;   // full-screen popup refs, when open
+
+function _viewURL(img) {
+  const p = new URLSearchParams({
+    filename: img.filename || "",
+    subfolder: img.subfolder || "",
+    type: img.type || "temp",
+  });
+  const path = "/view?" + p.toString();
+  return api.apiURL ? api.apiURL(path) : path;
+}
+
+async function postPick(token, selection) {
+  await api.fetchApi(PICK_ROUTE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, selection }),
+  });
+}
+
+async function finishPick(selection) {
+  if (!_pick) return;
+  const { token, node } = _pick;
+  try {
+    await postPick(token, selection);
+  } catch (err) {
+    console.error("[DirtyBirds] Sampler pick reply failed:", err);
+    node?._dbPickStatus?.("Send failed — retry.");
+    return;
+  }
+  closeFullScreen();
+  node?._dbEndPick?.();
+  _pick = null;
+}
+function sendPick() {
+  if (!_pick?.node) return;
+  const selection = [..._pick.node._dbSel].sort((a, b) => a - b);
+  if (!selection.length) {
+    _pick.node._dbPickStatus?.("Select at least one image, or Cancel.");
+    return;
+  }
+  finishPick(selection);
+}
+function cancelPick() { if (_pick) finishPick([]); }
+
+// ── Full-screen popup (opt-in) ──────────────────────────────────────────────
+function closeFullScreen() {
+  if (_fs?.overlay && document.fullscreenElement === _fs.overlay) {
+    document.exitFullscreen?.().catch?.(() => {});
+  }
+  _fs?.overlay?.remove();
+  if (_fs?.relayout) window.removeEventListener("resize", _fs.relayout);
+  document.removeEventListener("keydown", _fsKeydown);
+  _fs = null;
+}
+function _fsKeydown(e) {
+  if (!_fs || !_pick) return;
+  const sel = _pick.node._dbSel;
+  if (e.key === "Escape") { e.preventDefault(); closeFullScreen(); }
+  else if (e.key === "Enter") { e.preventDefault(); sendPick(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    const all = sel.size < _fs.cards.length;
+    _fs.cards.forEach((c, i) => {
+      if (all) sel.add(i); else sel.delete(i);
+      c.classList.toggle("db-lp-selected", sel.has(i));
+    });
+    _pick.node._dbRepaintInline?.();
+    _fs.updateStatus();
+  }
+}
+function openFullScreen() {
+  if (!_pick?.node) return;
+  closeFullScreen();
+  const node = _pick.node;
+  const images = node._dbImages || [];
+  const sel = node._dbSel;
+  let relayout = () => {};
+
+  const overlay = document.createElement("div");
+  overlay.className = "db-flyout-overlay db-sampler-fs-overlay";
+  const panel = document.createElement("div");
+  panel.className = "db-lora-flyout db-sampler-fs-panel";
+
+  const header = document.createElement("div");
+  header.className = "db-flyout-header";
+  const title = document.createElement("span");
+  title.className = "db-flyout-title";
+  title.textContent = "🎯 Pick images — full screen";
+  const countdown = document.createElement("span");
+  countdown.className = "db-flyout-title";
+  countdown.style.opacity = "0.6";
+  header.append(title, countdown);
+  panel.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "db-lp-grid";
+  const cards = [];
+  const imageEls = [];
+  images.forEach((img, i) => {
+    const card = document.createElement("div");
+    card.className = "db-lp-card";
+    card.style.cursor = "pointer";
+    if (sel.has(i)) card.classList.add("db-lp-selected");
+    const wrap = document.createElement("div");
+    wrap.className = "db-lp-img-wrap";
+    const thumb = document.createElement("img");
+    thumb.className = "db-lp-thumb";
+    const reveal = () => {
+      thumb.classList.add("db-lp-thumb-loaded");
+      relayout();
+    };
+    thumb.addEventListener("load", reveal);
+    thumb.addEventListener("error", () => { reveal(); thumb.style.opacity = "1"; });
+    thumb.src = _viewURL(img);
+    if (thumb.complete && thumb.naturalWidth > 0) reveal();
+    const badge = document.createElement("div");
+    badge.className = "db-lp-cat-badge";
+    badge.textContent = "#" + i;
+    wrap.append(thumb, badge);
+    card.appendChild(wrap);
+    card.addEventListener("click", () => {
+      if (sel.has(i)) { sel.delete(i); card.classList.remove("db-lp-selected"); }
+      else { sel.add(i); card.classList.add("db-lp-selected"); }
+      node._dbRepaintInline?.();
+      updateStatus();
+    });
+    grid.appendChild(card);
+    cards.push(card);
+    imageEls.push(thumb);
+  });
+  panel.appendChild(grid);
+
+  const footer = document.createElement("div");
+  footer.className = "db-lp-pills";
+  footer.style.cssText += "justify-content:space-between;align-items:center;";
+  const statusEl = document.createElement("span");
+  statusEl.style.cssText = "font-size:11px;color:#888;";
+  const btns = document.createElement("div");
+  btns.style.cssText = "display:flex;gap:8px;";
+  const hideBtn = document.createElement("button");
+  hideBtn.className = "db-lora-add-open-btn";
+  hideBtn.style.cssText = "width:auto;padding:6px 14px;";
+  hideBtn.textContent = "🗗 Exit full screen";
+  hideBtn.addEventListener("click", closeFullScreen);
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "db-lora-add-open-btn";
+  cancelBtn.style.cssText = "width:auto;padding:6px 14px;";
+  cancelBtn.textContent = "Cancel run";
+  cancelBtn.addEventListener("click", cancelPick);
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "db-lora-add-open-btn";
+  sendBtn.style.cssText = "width:auto;padding:6px 16px;";
+  sendBtn.textContent = "Send selection";
+  sendBtn.addEventListener("click", sendPick);
+  btns.append(hideBtn, cancelBtn, sendBtn);
+  footer.append(statusEl, btns);
+  panel.appendChild(footer);
+
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  overlay.requestFullscreen?.().catch?.(() => {});
+
+  function imageSize() {
+    const first = images[0] || {};
+    const natural = imageEls.find((img) => img.naturalWidth > 0);
+    return {
+      width: Number(first.width || natural?.naturalWidth || 1),
+      height: Number(first.height || natural?.naturalHeight || 1),
+    };
+  }
+  relayout = () => {
+    const box = grid.getBoundingClientRect();
+    if (!box.width || !box.height || !images.length) return;
+    const { width: imgW, height: imgH } = imageSize();
+    let bestPerRow = 1;
+    let bestScale = 0;
+    for (let perRow = 1; perRow <= images.length; perRow++) {
+      const rows = Math.ceil(images.length / perRow);
+      const scale = Math.min(box.width / (imgW * perRow), box.height / (imgH * rows));
+      if (scale > bestScale) {
+        bestScale = scale;
+        bestPerRow = perRow;
+      }
+    }
+    const rows = Math.ceil(images.length / bestPerRow);
+    grid.style.gridTemplateColumns = `repeat(${bestPerRow}, minmax(0, 1fr))`;
+    grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  };
+
+  function updateStatus() {
+    statusEl.textContent = sel.size
+      ? `${sel.size} selected · Enter to send`
+      : "Click images to keep · Esc exits · Ctrl+A all";
+  }
+  updateStatus();
+  requestAnimationFrame(relayout);
+  window.addEventListener("resize", relayout);
+  document.addEventListener("keydown", _fsKeydown);
+  _fs = { overlay, countdownEl: countdown, statusEl, cards, updateStatus, relayout };
+}
+
+api.addEventListener(PICK_EVENT, (e) => {
+  const d = e.detail || {};
+  if (Array.isArray(d.images)) {
+    const node = d.node_id != null
+      ? (app.graph?.getNodeById?.(Number(d.node_id)) || app.graph?.getNodeById?.(d.node_id))
+      : null;
+    if (!node) {
+      postPick(d.token, Array.from({ length: d.count || d.images.length }, (_, i) => i))
+        .catch((err) => console.error("[DirtyBirds] Sampler pick fallback failed:", err));
+      return;
+    }
+    _pick = { token: d.token, node };
+    node?._dbStartPick?.(d.token, d.images);
+    return;
+  }
+  if (!_pick || d.token !== _pick.token) return;
+  if (d.timeout) { closeFullScreen(); _pick.node?._dbEndPick?.(); _pick = null; return; }
+  if (typeof d.tick === "number") {
+    const m = Math.floor(d.tick / 60), s = d.tick % 60;
+    const txt = `${m}:${String(s).padStart(2, "0")}`;
+    _pick.node?._dbTick?.(txt);
+    if (_fs) _fs.countdownEl.textContent = txt;
+  }
+});
+
+// Expose for the per-node inline controls (defined in onNodeCreated).
+const PICK = { sendPick, cancelPick, openFullScreen, viewURL: _viewURL };
 
 // Compact list flyout (ported from the loader, reusing the global .db-flyout* CSS).
 function showListFlyout(title, names, current, onPick) {
@@ -62,6 +302,17 @@ app.registerExtension({
       onExecuted?.apply(this, arguments);
       const imgs = message?.db_images;
       if (Array.isArray(imgs)) this._dbRenderImages?.(imgs);
+    };
+
+    // Suppress ComfyUI's native node-preview image. We render our own image in
+    // the "Payoff" DOM panel; without this, core also draws the latent-preview
+    // image at the node's bottom, producing a duplicate + reserved dead space.
+    const onDrawBackground = nodeType.prototype.onDrawBackground;
+    nodeType.prototype.onDrawBackground = function () {
+      const saved = this.imgs;
+      this.imgs = null;
+      try { return onDrawBackground?.apply(this, arguments); }
+      finally { this.imgs = saved; }
     };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -134,6 +385,7 @@ app.registerExtension({
       const stepsWidget     = hideWidget("steps");
       const cfgWidget       = hideWidget("cfg");
       const noiseWidget     = hideWidget("noise_mode");
+      const batchModeWidget = hideWidget("batch_mode");
 
       // ── 1. THE METHOD — buttons left | splitter | sliders right ───────────
       addTitle("db_methodlabel", "The Method");
@@ -184,7 +436,33 @@ app.registerExtension({
       // Left column: stacked Sampler + Scheduler buttons (top-aligned).
       const leftCol = document.createElement("div"); leftCol.className = "db-talent-loras";
       leftCol.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:0;";
-      leftCol.append(samplerBtn.row, schedulerBtn.row);
+      const batchBtn = document.createElement("button");
+      batchBtn.className = "db-lib-btn db-lora-add-open-btn";
+      batchBtn.style.cssText = "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
+      let _batchOn = !!batchModeWidget?.value;
+      function paintBatchMode() {
+        batchBtn.textContent = _batchOn ? "Batch: ON" : "Batch: OFF";
+        batchBtn.dataset.tone = _batchOn ? "random" : "fixed";
+      }
+      function syncPickerVisibility() {
+        const hide = _batchOn;
+        const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
+        for (const w of node.widgets || []) {
+          if (!names.includes(w.name)) continue;
+          if (w.element) w.element.style.display = hide ? "none" : "";
+          w.computedHeight = hide ? 0 : undefined;
+        }
+        node.setSize(node.computeSize());
+      }
+      batchBtn.addEventListener("click", () => {
+        _batchOn = !_batchOn;
+        if (batchModeWidget) batchModeWidget.value = _batchOn;
+        paintBatchMode();
+        syncPickerVisibility();
+        node.setDirtyCanvas(true, true);
+      });
+      paintBatchMode();
+      leftCol.append(samplerBtn.row, schedulerBtn.row, batchBtn);
 
       const divider = document.createElement("div"); divider.className = "db-talent-divider";
 
@@ -194,17 +472,19 @@ app.registerExtension({
       rightCol.append(noise.row, steps.row, cfg.row);
 
       cols.append(leftCol, divider, rightCol);
-      const METHOD_H = 78;
+      const METHOD_H = 108;
       cols.style.height = METHOD_H + "px";
       node.addDOMWidget("db_method_cols", "customhtml", cols, {
         serialize: false, height: METHOD_H, getMinHeight: () => METHOD_H,
       });
       widthEls.push(cols);
 
-      // ── 2. THE PAYOFF — image preview ─────────────────────────────────────
+      // ── 2. THE PAYOFF — in-node preview of the picked image(s) ────────────
+      // Selection happens in the popup modal (see openPickModal); this just
+      // shows the result after the run completes.
       addTitle("db_payofflabel", "The Payoff");
       const imgPanel = document.createElement("div");
-      imgPanel.style.cssText = "display:flex;flex-direction:row;gap:6px;box-sizing:border-box;overflow:hidden;align-items:flex-start;";
+      imgPanel.style.cssText = "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;box-sizing:border-box;overflow:visible;align-items:flex-start;";
       const imgEmpty = document.createElement("div");
       imgEmpty.className = "db-model-preview";
       imgEmpty.style.cssText += "display:flex;align-items:center;justify-content:center;color:#3a3a3a;font-style:italic;font-size:11px;";
@@ -215,6 +495,7 @@ app.registerExtension({
         serialize: false, height: 96, getMinHeight: () => Math.max(96, imgPanel.scrollHeight || 96),
       });
       widthEls.push(imgPanel);
+
       function syncImgH() {
         requestAnimationFrame(() => {
           const h = Math.max(96, imgPanel.scrollHeight || 96);
@@ -222,17 +503,100 @@ app.registerExtension({
           node.setDirtyCanvas(true);
         });
       }
+
+      // Inline pick controls — hidden until a run blocks for a selection.
+      node._dbSel = new Set();
+      node._dbImages = [];
+      const pickRow = document.createElement("div");
+      pickRow.style.cssText = "display:none;align-items:center;gap:6px;box-sizing:border-box;";
+      const pSend = document.createElement("button");
+      pSend.className = "db-lib-btn db-lora-add-open-btn";
+      pSend.style.cssText += "width:auto;padding:2px 12px;font-size:10px;flex:0 0 auto;";
+      pSend.textContent = "Send";
+      const pCancel = document.createElement("button");
+      pCancel.className = "db-lib-btn db-lora-add-open-btn";
+      pCancel.style.cssText += "width:auto;padding:2px 10px;font-size:10px;flex:0 0 auto;";
+      pCancel.textContent = "Cancel";
+      const pFull = document.createElement("button");
+      pFull.className = "db-lib-btn db-lora-add-open-btn";
+      pFull.style.cssText += "width:auto;padding:2px 10px;font-size:10px;flex:0 0 auto;";
+      pFull.textContent = "⛶ Full screen";
+      const pStatus = document.createElement("span");
+      pStatus.style.cssText = "font-size:10px;color:#888;flex:1;text-align:center;";
+      const pCount = document.createElement("span");
+      pCount.style.cssText = "font-size:10px;color:#9fb3c0;flex:0 0 auto;";
+      pickRow.append(pSend, pCancel, pFull, pStatus, pCount);
+      node.addDOMWidget("db_payoff_pick", "customhtml", pickRow, {
+        serialize: false, height: 24, getMinHeight: () => 24,
+      });
+      widthEls.push(pickRow);
+      pSend.addEventListener("click", () => PICK.sendPick());
+      pCancel.addEventListener("click", () => PICK.cancelPick());
+      pFull.addEventListener("click", () => PICK.openFullScreen());
+      syncPickerVisibility();
+
+      function inlineStatus() {
+        const n = node._dbSel.size;
+        pStatus.textContent = n ? `${n} selected` : "Click images to keep";
+      }
+      function inlineCard(info, i) {
+        const img = document.createElement("img");
+        img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;cursor:pointer;outline:2px solid transparent;outline-offset:-2px;";
+        img.src = PICK.viewURL(info);
+        img.onload = syncImgH;
+        if (node._dbSel.has(i)) img.style.outline = "2px solid #5acc8a";
+        img.addEventListener("click", () => {
+          const sel = node._dbSel;
+          if (sel.has(i)) { sel.delete(i); img.style.outline = "2px solid transparent"; }
+          else { sel.add(i); img.style.outline = "2px solid #5acc8a"; }
+          inlineStatus();
+        });
+        return img;
+      }
+
+      // Pick start: render the selectable grid INSIDE the node (default mode).
+      node._dbStartPick = (token, images) => {
+        node._dbSel = new Set();
+        node._dbImages = images || [];
+        imgPanel.innerHTML = "";
+        (images || []).forEach((info, i) => imgPanel.appendChild(inlineCard(info, i)));
+        pickRow.style.display = "flex";
+        pCount.textContent = "";
+        inlineStatus();
+        syncImgH();
+      };
+      node._dbEndPick = () => { pickRow.style.display = "none"; };
+      node._dbRepaintInline = () => {
+        [...imgPanel.querySelectorAll("img")].forEach((img, i) => {
+          img.style.outline = node._dbSel.has(i) ? "2px solid #5acc8a" : "2px solid transparent";
+        });
+        inlineStatus();
+      };
+      node._dbTick = (txt) => { pCount.textContent = txt; };
+      node._dbPickStatus = (t) => { pStatus.textContent = t; };
+
+      // Static render of the final / picked image(s) after the run completes.
       node._dbRenderImages = (imgs) => {
+        pickRow.style.display = "none";
         imgPanel.innerHTML = "";
         if (!imgs || !imgs.length) { imgPanel.appendChild(imgEmpty); syncImgH(); return; }
         const rand = Date.now();
-        imgs.forEach(info => {
+        imgs.forEach((info) => {
           const img = document.createElement("img");
-          // Share the row width so multiple passes sit side by side.
-          img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;";
+          img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;cursor:pointer;";
           const q = `filename=${encodeURIComponent(info.filename)}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "temp")}&rand=${rand}`;
           img.src = `/view?${q}`;
           img.onload = syncImgH;
+          img.addEventListener("click", () => {
+            const overlay = document.createElement("div");
+            overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;";
+            const full = document.createElement("img");
+            full.src = img.src;
+            full.style.cssText = "max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;";
+            overlay.appendChild(full);
+            overlay.addEventListener("click", () => overlay.remove());
+            document.body.appendChild(overlay);
+          });
           imgPanel.appendChild(img);
         });
         syncImgH();

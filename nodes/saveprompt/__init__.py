@@ -86,6 +86,17 @@ def _collect_prompt_files(folder):
     ]
 
 
+def _prompt_file_from_name(name):
+    base = os.path.dirname(DEFAULT_PROMPTS_FILE)
+    name = str(name or "").replace("\\", "/").strip().lstrip("/")
+    if not name or "/" in name or ".." in name or not name.lower().endswith(".txt"):
+        raise web.HTTPBadRequest(text="invalid prompt file")
+    path = os.path.abspath(os.path.join(base, name))
+    if os.path.commonpath([path, os.path.abspath(base)]) != os.path.abspath(base):
+        raise web.HTTPForbidden()
+    return path
+
+
 @PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
 async def api_saved_prompts(request):
     """Return saved prompt lines for Dirty Talk's Load Prompt menu.
@@ -95,18 +106,55 @@ async def api_saved_prompts(request):
     """
     folder = os.path.dirname(DEFAULT_PROMPTS_FILE)
     files = _collect_prompt_files(folder)
-    prompts, seen = [], set()
+    prompts, items, seen = [], [], set()
     for path in files:
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-                for line in fh:
+                for idx, line in enumerate(fh, start=1):
                     line = line.strip()
                     if line and line not in seen:
                         seen.add(line)
                         prompts.append(line)
+                    if line:
+                        items.append({
+                            "file": os.path.basename(path),
+                            "line": idx,
+                            "text": line,
+                        })
         except Exception as e:
             logger.warning("[DirtyBirds] Could not read prompt file %s: %s", path, e)
-    return web.json_response({"prompts": prompts})
+    return web.json_response({"prompts": prompts, "items": items})
+
+
+@PromptServer.instance.routes.post("/dirtybirds/delete-saved-prompt")
+async def api_delete_saved_prompt(request):
+    try:
+        data = await request.json()
+    except Exception:
+        raise web.HTTPBadRequest(text="invalid JSON")
+
+    path = _prompt_file_from_name(data.get("file"))
+    line_no = int(data.get("line") or 0)
+    expected = str(data.get("text", "") or "").strip()
+    if line_no < 1:
+        raise web.HTTPBadRequest(text="invalid line")
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            lines = fh.readlines()
+        if line_no > len(lines):
+            raise web.HTTPBadRequest(text="line no longer exists")
+        current = lines[line_no - 1].strip()
+        if expected and current != expected:
+            raise web.HTTPConflict(text="prompt changed; refresh list")
+        del lines[line_no - 1]
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.writelines(lines)
+    except web.HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("[DirtyBirds] Delete saved prompt failed: %s", e)
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    return web.json_response({"ok": True, "file": os.path.basename(path), "line": line_no})
 
 
 @PromptServer.instance.routes.post("/dirtybirds/archive-save-prompt")
@@ -140,11 +188,14 @@ class DirtyBirdsSavePrompt:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "positive": ("STRING", {"multiline": True, "default": ""}),
-                "negative": ("STRING", {"multiline": True, "default": ""}),
                 "filename_prefix": ("STRING", {"default": "DirtyBirds"}),
                 "prompts_file": ("STRING", {"default": DEFAULT_PROMPTS_FILE}),
+            },
+            "optional": {
+                "pipe": ("DIRTYBIRDS_PIPE",),
+                "images": ("IMAGE",),
+                "positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+                "negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
             },
         }
 
@@ -154,10 +205,21 @@ class DirtyBirdsSavePrompt:
     OUTPUT_NODE = True
     CATEGORY = "DirtyBirds"
 
-    def save(self, images, positive="", negative="", filename_prefix="DirtyBirds",
-             prompts_file=DEFAULT_PROMPTS_FILE):
+    def save(self, filename_prefix="DirtyBirds",
+             prompts_file=DEFAULT_PROMPTS_FILE, pipe=None, images=None,
+             positive=None, negative=None):
+        if images is None and pipe is not None:
+            images = pipe.get("images")
+        if images is None:
+            raise ValueError("No images provided -- connect an IMAGE input or a pipe with images.")
         pos_out = positive or ""
         neg_out = negative or ""
+        if pipe:
+            ls = pipe.get("loader_settings") or {}
+            if not pos_out:
+                pos_out = str(ls.get("positive", "") or "")
+            if not neg_out:
+                neg_out = str(ls.get("negative", "") or "")
         full_output_folder, filename, counter, subfolder, filename_prefix = \
             folder_paths.get_save_image_path(
                 filename_prefix, self.output_dir,
