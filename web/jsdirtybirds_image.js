@@ -95,6 +95,8 @@ app.registerExtension({
       const segmentWidget = hideNative(node, "segment");
       const segPromptWidget = hideNative(node, "segment_prompt");
       const confidenceWidget = hideNative(node, "confidence");
+      const resizeWidget = hideNative(node, "resize");
+      const resizeMaxWidget = hideNative(node, "resize_max");
 
       function hideStockWidgets() {
         hideNative(node, "image");
@@ -128,9 +130,68 @@ app.registerExtension({
       urlInput.placeholder = "image URL or local path";
       urlInput.style.cssText += "flex:0 0 auto;height:24px;width:100%;box-sizing:border-box;";
       urlInput.value = String(imageUrlWidget?.value || "");
+
+      // Auto-preview: load whatever the URL/path field points at into node.imgs
+      // so the image shows in the node immediately (also gives Booru/Caption a
+      // live image to work from). Debounced so typing doesn't fire per keystroke.
+      let _urlPreviewTimer = null;
+      function previewFromUrl(raw) {
+        const src = String(raw || "").trim();
+        if (!src) { node.imgs = []; node.imageIndex = null; node.setDirtyCanvas(true, true); return; }
+        const url = /^https?:\/\//i.test(src)
+          ? src
+          : `/view?filename=${encodeURIComponent(src)}&type=input`;
+        setStatus("Loading preview...");
+        const img = new Image();
+        img.onload = () => {
+          node.imgs = [img];
+          node.imageIndex = 0;
+          setStatus(`${img.naturalWidth} × ${img.naturalHeight}`, "ok");
+          node.setDirtyCanvas(true, true);
+        };
+        img.onerror = () => setStatus("Could not load preview from that URL/path.", "err");
+        img.src = url;
+      }
+      function scheduleUrlPreview() {
+        clearTimeout(_urlPreviewTimer);
+        _urlPreviewTimer = setTimeout(() => previewFromUrl(urlInput.value), 450);
+      }
       urlInput.addEventListener("input", () => {
         if (imageUrlWidget) imageUrlWidget.value = urlInput.value;
+        scheduleUrlPreview();
       });
+      // Paste lands the value before 'input' settles — preview a touch sooner.
+      urlInput.addEventListener("paste", () => setTimeout(scheduleUrlPreview, 0));
+      // Show a preview on load if the field already has a URL (restored graph).
+      if (urlInput.value.trim()) previewFromUrl(urlInput.value);
+
+      // Small clear (✕) button overlaid on the right of the URL field.
+      const urlWrap = document.createElement("div");
+      urlWrap.style.cssText = "position:relative;width:100%;box-sizing:border-box;";
+      urlInput.style.paddingRight = "22px";
+      const urlClear = document.createElement("button");
+      urlClear.type = "button";
+      urlClear.textContent = "✕";
+      urlClear.title = "Clear";
+      urlClear.style.cssText =
+        "position:absolute;right:4px;top:50%;transform:translateY(-50%);" +
+        "width:16px;height:16px;border:none;background:none;color:#888;" +
+        "font-size:11px;line-height:1;cursor:pointer;padding:0;display:none;";
+      urlClear.addEventListener("mouseenter", () => { urlClear.style.color = "#5aadff"; });
+      urlClear.addEventListener("mouseleave", () => { urlClear.style.color = "#888"; });
+      function syncUrlClear() { urlClear.style.display = urlInput.value.trim() ? "block" : "none"; }
+      urlClear.addEventListener("click", () => {
+        urlInput.value = "";
+        if (imageUrlWidget) imageUrlWidget.value = "";
+        clearTimeout(_urlPreviewTimer);
+        previewFromUrl("");   // drops node.imgs preview
+        setStatus("");
+        syncUrlClear();
+        urlInput.focus();
+      });
+      urlInput.addEventListener("input", syncUrlClear);
+      urlWrap.append(urlInput, urlClear);
+      syncUrlClear();
 
       const fileInput = document.createElement("input");
       fileInput.type = "file";
@@ -182,16 +243,15 @@ app.registerExtension({
 
       // ── Segment toggle + prompt ───────────────────────────────────────────
       const segLabel = makeSectionLabel("Segmentation");
-      const segmentRow = document.createElement("div");
-      segmentRow.className = "db-image-segment-row";
       const segToggle = document.createElement("button");
       segToggle.className = "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
+      segToggle.style.cssText += "height:26px;min-height:26px;padding:0 8px;width:100%;";
       const segPrompt = document.createElement("input");
       segPrompt.type = "text";
       segPrompt.className = "db-text-input";
-      segPrompt.placeholder = "what to segment (SAM3)";
+      segPrompt.placeholder = "SAM3 cuts out what you describe";
       segPrompt.value = String(segPromptWidget?.value || "");
-      segmentRow.append(segToggle, segPrompt);
+      segPrompt.style.cssText += "width:100%;";
 
       function paintSegment() {
         const on = !!segmentWidget?.value;
@@ -218,13 +278,51 @@ app.registerExtension({
       );
       confidenceRow.classList.add("db-image-confidence-row");
 
+      // ── Resize toggle + max-size slider ───────────────────────────────────
+      const resizeLabel = makeSectionLabel("Resize");
+      const resizeToggle = document.createElement("button");
+      resizeToggle.className = "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
+      resizeToggle.style.cssText += "height:26px;min-height:26px;padding:0 8px;width:100%;";
+      const { row: resizeMaxRow, paint: paintResizeMax } = makeSlider(
+        "Max", 256, 2048, 64,
+        () => Number(resizeMaxWidget?.value ?? 1024),
+        (v) => { if (resizeMaxWidget) resizeMaxWidget.value = Math.round(v); },
+        (v) => String(Math.round(v)),
+      );
+
+      function paintResize() {
+        const on = !!resizeWidget?.value;
+        resizeToggle.textContent = on ? "Resize: on" : "Resize: off";
+        resizeToggle.dataset.tone = on ? "random" : "fixed";
+        resizeMaxRow.style.opacity = on ? "1" : "0.5";
+        resizeMaxRow.style.pointerEvents = on ? "auto" : "none";
+      }
+      resizeToggle.addEventListener("click", () => {
+        if (resizeWidget) resizeWidget.value = !resizeWidget.value;
+        paintResize();
+        node.setDirtyCanvas(true, true);
+      });
+
+      // ── Two-column split: Segmentation | Resize (matches other nodes) ─────
+      const toolsSplit = document.createElement("div");
+      toolsSplit.className = "db-prompt-toybox-split";
+      const segCol = document.createElement("div");
+      segCol.className = "db-prompt-toybox-col";
+      segCol.append(segLabel, segToggle, segPrompt, confidenceRow);
+      const toolsDivider = document.createElement("div");
+      toolsDivider.className = "db-prompt-toybox-divider";
+      const resizeCol = document.createElement("div");
+      resizeCol.className = "db-prompt-toybox-col";
+      resizeCol.append(resizeLabel, resizeToggle, resizeMaxRow);
+      toolsSplit.append(segCol, toolsDivider, resizeCol);
+
       // ── Assemble panel ────────────────────────────────────────────────────
-      panel.append(fileInput, sourceRow, urlInput, status, segLabel, segmentRow, confidenceRow);
+      panel.append(fileInput, sourceRow, urlWrap, status, toolsSplit);
 
       node.addDOMWidget("db_image_tools_panel", "customhtml", panel, {
         serialize: false,
-        height: 160,
-        getMinHeight: () => 160,
+        height: 200,
+        getMinHeight: () => 200,
       });
 
       function applyWidths() {
@@ -245,6 +343,8 @@ app.registerExtension({
 
       paintSegment();
       paintConfidence();
+      paintResize();
+      paintResizeMax();
       requestAnimationFrame(() => { hideStockWidgets(); clearDefaultImageWidget(node); });
       requestAnimationFrame(() => requestAnimationFrame(() => { hideStockWidgets(); syncPanelH(); }));
       setTimeout(() => { hideStockWidgets(); node.setDirtyCanvas(true, true); }, 100);

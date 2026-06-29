@@ -304,11 +304,17 @@ app.registerExtension({
       if (Array.isArray(imgs)) this._dbRenderImages?.(imgs);
     };
 
-    // Suppress ComfyUI's native node-preview image. We render our own image in
-    // the "Payoff" DOM panel; without this, core also draws the latent-preview
-    // image at the node's bottom, producing a duplicate + reserved dead space.
+    // Core paints the LIVE latent preview into this.imgs while sampling — we
+    // want that. But once the run finishes we render results in the Payoff DOM
+    // widget, so core's copy would be a duplicate. Rule:
+    //   • node actively sampling (runningNodeId === this.id, not mid-pick) → SHOW
+    //   • otherwise (idle with final images, or blocked on the picker)      → HIDE
+    // _dbActivePick is set only around the pick handshake, so no per-run reset
+    // is needed (unlike a sticky "we own the panel" flag).
     const onDrawBackground = nodeType.prototype.onDrawBackground;
     nodeType.prototype.onDrawBackground = function () {
+      const sampling = String(app.runningNodeId) === String(this.id) && !this._dbActivePick;
+      if (sampling) return onDrawBackground?.apply(this, arguments);
       const saved = this.imgs;
       this.imgs = null;
       try { return onDrawBackground?.apply(this, arguments); }
@@ -449,6 +455,14 @@ app.registerExtension({
         const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
         for (const w of node.widgets || []) {
           if (!names.includes(w.name)) continue;
+          // The pick controls row is driven by the active pick (_dbStartPick /
+          // _dbEndPick), not by batch mode — never force it visible here. When
+          // batch turns on, hide it; otherwise leave its current state alone.
+          if (w.name === "db_payoff_pick") {
+            if (hide) { if (w.element) w.element.style.display = "none"; w.computedHeight = 0; }
+            else { w.computedHeight = (w.element && w.element.style.display !== "none") ? undefined : 0; }
+            continue;
+          }
           if (w.element) w.element.style.display = hide ? "none" : "";
           w.computedHeight = hide ? 0 : undefined;
         }
@@ -484,7 +498,7 @@ app.registerExtension({
       // shows the result after the run completes.
       addTitle("db_payofflabel", "The Payoff");
       const imgPanel = document.createElement("div");
-      imgPanel.style.cssText = "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;box-sizing:border-box;overflow:visible;align-items:flex-start;";
+      imgPanel.className = "db-pick-grid";
       const imgEmpty = document.createElement("div");
       imgEmpty.className = "db-model-preview";
       imgEmpty.style.cssText += "display:flex;align-items:center;justify-content:center;color:#3a3a3a;font-style:italic;font-size:11px;";
@@ -504,32 +518,59 @@ app.registerExtension({
         });
       }
 
+      function sizeImageCards() {
+        const cards = [...imgPanel.querySelectorAll(".db-pick-card")];
+        imgPanel.style.gridTemplateColumns = cards.length > 1
+          ? "repeat(2, minmax(0, 1fr))"
+          : "minmax(0, 1fr)";
+      }
+      function dimsLabel(info) {
+        const w = Number(info.width), h = Number(info.height);
+        return (Number.isFinite(w) && Number.isFinite(h) && w && h) ? `${w} × ${h}` : "";
+      }
+
       // Inline pick controls — hidden until a run blocks for a selection.
       node._dbSel = new Set();
       node._dbImages = [];
       const pickRow = document.createElement("div");
-      pickRow.style.cssText = "display:none;align-items:center;gap:6px;box-sizing:border-box;";
+      pickRow.className = "db-pick-controls";
+      pickRow.style.display = "none";
+      const pBtns = document.createElement("div");
+      pBtns.className = "db-pick-btns";
       const pSend = document.createElement("button");
       pSend.className = "db-lib-btn db-lora-add-open-btn";
-      pSend.style.cssText += "width:auto;padding:2px 12px;font-size:10px;flex:0 0 auto;";
+      pSend.style.cssText += "width:auto;padding:3px 14px;font-size:10px;flex:0 0 auto;";
       pSend.textContent = "Send";
       const pCancel = document.createElement("button");
       pCancel.className = "db-lib-btn db-lora-add-open-btn";
-      pCancel.style.cssText += "width:auto;padding:2px 10px;font-size:10px;flex:0 0 auto;";
+      pCancel.style.cssText += "width:auto;padding:3px 12px;font-size:10px;flex:0 0 auto;";
       pCancel.textContent = "Cancel";
       const pFull = document.createElement("button");
       pFull.className = "db-lib-btn db-lora-add-open-btn";
-      pFull.style.cssText += "width:auto;padding:2px 10px;font-size:10px;flex:0 0 auto;";
+      pFull.style.cssText += "width:auto;padding:3px 12px;font-size:10px;flex:0 0 auto;";
       pFull.textContent = "⛶ Full screen";
+      pBtns.append(pSend, pCancel, pFull);
+      const pMeta = document.createElement("div");
+      pMeta.className = "db-pick-meta";
       const pStatus = document.createElement("span");
-      pStatus.style.cssText = "font-size:10px;color:#888;flex:1;text-align:center;";
+      pStatus.className = "db-pick-status";
       const pCount = document.createElement("span");
-      pCount.style.cssText = "font-size:10px;color:#9fb3c0;flex:0 0 auto;";
-      pickRow.append(pSend, pCancel, pFull, pStatus, pCount);
-      node.addDOMWidget("db_payoff_pick", "customhtml", pickRow, {
-        serialize: false, height: 24, getMinHeight: () => 24,
+      pCount.className = "db-pick-count";
+      pMeta.append(pStatus, pCount);
+      pickRow.append(pBtns, pMeta);
+      const pickWidget = node.addDOMWidget("db_payoff_pick", "customhtml", pickRow, {
+        serialize: false, height: 46, getMinHeight: () => 46,
       });
       widthEls.push(pickRow);
+      // Show/hide the pick controls row as a unit: toggle DOM display AND the
+      // widget's reserved height so it doesn't leave dead space (collapsed) or
+      // render with zero clickable height (expanded). syncPickerVisibility set
+      // computedHeight=0 while idle, so _dbStartPick must restore it.
+      function setPickRowShown(shown) {
+        pickRow.style.display = shown ? "flex" : "none";
+        if (pickWidget) pickWidget.computedHeight = shown ? undefined : 0;
+        node.setSize(node.computeSize());
+      }
       pSend.addEventListener("click", () => PICK.sendPick());
       pCancel.addEventListener("click", () => PICK.cancelPick());
       pFull.addEventListener("click", () => PICK.openFullScreen());
@@ -537,38 +578,58 @@ app.registerExtension({
 
       function inlineStatus() {
         const n = node._dbSel.size;
-        pStatus.textContent = n ? `${n} selected` : "Click images to keep";
+        pStatus.textContent = n ? `${n} selected · click to keep` : "Click images to keep";
       }
       function inlineCard(info, i) {
+        const card = document.createElement("div");
+        card.className = "db-pick-card" + (node._dbSel.has(i) ? " db-pick-sel" : "");
         const img = document.createElement("img");
-        img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;cursor:pointer;outline:2px solid transparent;outline-offset:-2px;";
-        img.src = PICK.viewURL(info);
+        // Build /view URL directly (same construction as _dbRenderImages, which
+        // renders reliably) rather than routing through api.apiURL.
+        const q = `filename=${encodeURIComponent(info.filename || "")}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "temp")}`;
+        img.src = `/view?${q}`;
         img.onload = syncImgH;
-        if (node._dbSel.has(i)) img.style.outline = "2px solid #5acc8a";
-        img.addEventListener("click", () => {
+        img.onerror = () => { console.error("[DirtyBirds] picker image failed:", img.src, info); };
+        const badge = document.createElement("span");
+        badge.className = "db-pick-badge";
+        badge.textContent = "#" + i;
+        const check = document.createElement("span");
+        check.className = "db-pick-check";
+        check.textContent = "✓";
+        card.append(img, badge, check);
+        const dims = dimsLabel(info);
+        if (dims) {
+          const d = document.createElement("span");
+          d.className = "db-pick-dims";
+          d.textContent = dims;
+          card.appendChild(d);
+        }
+        card.addEventListener("click", () => {
           const sel = node._dbSel;
-          if (sel.has(i)) { sel.delete(i); img.style.outline = "2px solid transparent"; }
-          else { sel.add(i); img.style.outline = "2px solid #5acc8a"; }
+          if (sel.has(i)) { sel.delete(i); card.classList.remove("db-pick-sel"); }
+          else { sel.add(i); card.classList.add("db-pick-sel"); }
           inlineStatus();
         });
-        return img;
+        return card;
       }
 
       // Pick start: render the selectable grid INSIDE the node (default mode).
       node._dbStartPick = (token, images) => {
+        node._dbActivePick = true; // blocked on the picker — hide core's leftover preview
         node._dbSel = new Set();
         node._dbImages = images || [];
         imgPanel.innerHTML = "";
         (images || []).forEach((info, i) => imgPanel.appendChild(inlineCard(info, i)));
-        pickRow.style.display = "flex";
+        sizeImageCards();
+        setPickRowShown(true);
         pCount.textContent = "";
         inlineStatus();
         syncImgH();
       };
-      node._dbEndPick = () => { pickRow.style.display = "none"; };
+      node._dbEndPick = () => { node._dbActivePick = false; setPickRowShown(false); };
       node._dbRepaintInline = () => {
-        [...imgPanel.querySelectorAll("img")].forEach((img, i) => {
-          img.style.outline = node._dbSel.has(i) ? "2px solid #5acc8a" : "2px solid transparent";
+        [...imgPanel.querySelectorAll(".db-pick-card")].forEach((card, i) => {
+          card.classList.toggle("db-pick-sel", node._dbSel.has(i));
         });
         inlineStatus();
       };
@@ -577,17 +638,30 @@ app.registerExtension({
 
       // Static render of the final / picked image(s) after the run completes.
       node._dbRenderImages = (imgs) => {
-        pickRow.style.display = "none";
+        // Run is finished here (onExecuted) so the node is no longer the running
+        // node — core's preview is already suppressed by onDrawBackground. No
+        // flag needed; just make sure any active-pick state is cleared.
+        node._dbActivePick = false;
+        setPickRowShown(false);
         imgPanel.innerHTML = "";
         if (!imgs || !imgs.length) { imgPanel.appendChild(imgEmpty); syncImgH(); return; }
         const rand = Date.now();
         imgs.forEach((info) => {
+          const card = document.createElement("div");
+          card.className = "db-pick-card";
           const img = document.createElement("img");
-          img.style.cssText = "flex:1;min-width:0;width:0;border-radius:8px;border:1px solid #34343a;display:block;cursor:pointer;";
           const q = `filename=${encodeURIComponent(info.filename)}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "temp")}&rand=${rand}`;
           img.src = `/view?${q}`;
           img.onload = syncImgH;
-          img.addEventListener("click", () => {
+          card.appendChild(img);
+          const dims = dimsLabel(info);
+          if (dims) {
+            const d = document.createElement("span");
+            d.className = "db-pick-dims";
+            d.textContent = dims;
+            card.appendChild(d);
+          }
+          card.addEventListener("click", () => {
             const overlay = document.createElement("div");
             overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;";
             const full = document.createElement("img");
@@ -597,8 +671,9 @@ app.registerExtension({
             overlay.addEventListener("click", () => overlay.remove());
             document.body.appendChild(overlay);
           });
-          imgPanel.appendChild(img);
+          imgPanel.appendChild(card);
         });
+        sizeImageCards();
         syncImgH();
       };
 

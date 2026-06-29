@@ -17,9 +17,12 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PROMPTS_FILE = (
-    r"C:\Users\mpick\My_AI_Tools\Comfyui\ComfyUI\custom_nodes"
-    r"\DirtyBirds-Playhouse\user_files\prompts\my_prompts.txt"
+# Repo-root user_files/prompts/My_Prompts.txt, derived from this file's location
+# (nodes/saveprompt/) so the path is portable across installs instead of a
+# machine-specific absolute path. Resolves to the same file in the live install.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DEFAULT_PROMPTS_FILE = os.path.join(
+    _REPO_ROOT, "user_files", "prompts", "My_Prompts.txt"
 )
 
 

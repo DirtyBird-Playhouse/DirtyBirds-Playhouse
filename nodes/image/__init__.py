@@ -46,6 +46,22 @@ def _open_source(image, image_url):
     return Image.open(folder_paths.get_annotated_filepath(image))
 
 
+def _resize_to_max(img, max_side):
+    """Scale so the longest side == max_side, aspect preserved, dims snapped to
+    a multiple of 8 (latent-friendly). No-op if it already matches."""
+    max_side = max(8, int(max_side))
+    w, h = img.size
+    longest = max(w, h)
+    if longest <= 0:
+        return img
+    scale = float(max_side) / float(longest)
+    nw = max(8, int(round(w * scale / 8.0)) * 8)
+    nh = max(8, int(round(h * scale / 8.0)) * 8)
+    if (nw, nh) == (w, h):
+        return img
+    return img.resize((nw, nh), Image.LANCZOS)
+
+
 def _to_tensors(img):
     """Replicate ComfyUI's native LoadImage conversion: IMAGE [1,H,W,3] + MASK."""
     output_images, output_masks = [], []
@@ -119,16 +135,24 @@ class DirtyBirdsLoadImage:
                     "placeholder": "describe what to segment (native SAM3)",
                 }),
                 "confidence": ("FLOAT", {"default": 0.5, "min": 0.05, "max": 0.95, "step": 0.01}),
+                # Auto-resize the loaded image so its longest side == resize_max
+                # (aspect preserved, snapped to a multiple of 8). Applied before
+                # segmentation, so all outputs reflect the resized image.
+                "resize": ("BOOLEAN", {"default": False}),
+                "resize_max": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "MASK", "IMAGE", "INT", "INT")
-    RETURN_NAMES = ("IMAGE", "MASK", "SEGMENTED", "width", "height")
+    RETURN_NAMES = ("image", "mask", "segmented", "width", "height")
     FUNCTION = "load"
     CATEGORY = "DirtyBirds"
 
-    def load(self, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
+    def load(self, image=None, image_url="", segment=False, segment_prompt="",
+             confidence=0.5, resize=False, resize_max=1024):
         img = _open_source(image, image_url)
+        if resize:
+            img = _resize_to_max(img, int(resize_max))
         out_image, out_mask, w, h = _to_tensors(img)
         segmented = out_image
         if segment and (segment_prompt or "").strip():
@@ -138,8 +162,9 @@ class DirtyBirdsLoadImage:
         return (out_image, out_mask, segmented, w, h)
 
     @classmethod
-    def IS_CHANGED(cls, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
-        seg_key = f"|{bool(segment)}|{segment_prompt}|{confidence}"
+    def IS_CHANGED(cls, image=None, image_url="", segment=False, segment_prompt="",
+                   confidence=0.5, resize=False, resize_max=1024):
+        seg_key = f"|{bool(segment)}|{segment_prompt}|{confidence}|{bool(resize)}|{int(resize_max)}"
         src = (image_url or "").strip()
         if src:
             if src.startswith(("http://", "https://")):
@@ -157,7 +182,8 @@ class DirtyBirdsLoadImage:
             return (src or image) + seg_key
 
     @classmethod
-    def VALIDATE_INPUTS(cls, image=None, image_url="", segment=False, segment_prompt="", confidence=0.5):
+    def VALIDATE_INPUTS(cls, image=None, image_url="", segment=False, segment_prompt="",
+                        confidence=0.5, resize=False, resize_max=1024):
         # When `image_url` supplies the source the picker is irrelevant, so an
         # empty/absent `image` is fine. ComfyUI omits `image` from the call when
         # the widget has no value, hence the default above.

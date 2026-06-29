@@ -324,6 +324,20 @@ app.registerExtension({
       hideBackingWidget(posWidget);
       hideBackingWidget(negWidget);
 
+      // Display-only slot labels for the optional concat inputs; the underlying
+      // input names (concat_positive/negative) stay intact so links don't break.
+      // Set both `label` and `localized_name` (newer ComfyUI reads the latter),
+      // and re-apply on the next frame since optional slots may populate late.
+      function applyInputLabels() {
+        const map = { concat_positive: "add +", concat_negative: "add -" };
+        (node.inputs || []).forEach((slot) => {
+          if (map[slot.name]) { slot.label = map[slot.name]; slot.localized_name = map[slot.name]; }
+        });
+        node.setDirtyCanvas(true, true);
+      }
+      applyInputLabels();
+      requestAnimationFrame(applyInputLabels);
+
       // Track which prompt box was last focused so inserts land in the right one.
       node._dbLastPromptWidget = posWidget;
       node._dbLastPromptTextarea = null;
@@ -430,9 +444,7 @@ app.registerExtension({
       }
 
       function openWildcardMenu(event) {
-        const seedLabel = rerollWidget?.value ? "Seed: 🎲 Random" : "Seed: 📌 Fixed";
         const items = [
-          { content: seedLabel, callback: () => { setSeedMode(!rerollWidget?.value); } },
           { content: REFRESH, callback: () => loadWildcards() },
           null,
           ...toItems(buildTree(node._dbWildcardKeys)),
@@ -799,9 +811,42 @@ app.registerExtension({
         syncPanelH();
       };
 
-      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxGrid, previewLabel, previewSplit);
-      node._dbRenderPromptMarkdown(posWidget?.value || "", negWidget?.value || "", true);
+      // ── Seed mode (Fixed / Random) — visible toggle under The Prompt ──────
+      // Reuses the global .db-seg control. Random = reroll_each_run on (fresh
+      // roll every queue); Fixed = reproducible seed shown to the right.
+      const seedRow = document.createElement("div");
+      seedRow.className = "db-prompt-seed-row";
+      seedRow.style.cssText += "display:flex;align-items:center;gap:8px;";
+      const seedLbl = document.createElement("span");
+      seedLbl.className = "db-slider-label";
+      seedLbl.style.fontSize = "9px";
+      seedLbl.textContent = "Seed";
+      const seedSeg = document.createElement("div");
+      seedSeg.className = "db-seg";
+      seedSeg.style.cssText = "flex:0 0 auto;height:18px;";
+      const seedFixed = document.createElement("div");
+      seedFixed.className = "db-seg-opt"; seedFixed.textContent = "📌 Fixed";
+      seedFixed.style.cssText = "padding:0 8px;font-size:9px;";
+      const seedRandom = document.createElement("div");
+      seedRandom.className = "db-seg-opt"; seedRandom.textContent = "🎲 Random";
+      seedRandom.style.cssText = "padding:0 8px;font-size:9px;";
+      seedSeg.append(seedFixed, seedRandom);
+      const seedVal = document.createElement("span");
+      seedVal.className = "db-sel-val";
+      seedVal.style.cssText = "flex:1;text-align:right;width:auto;color:#555;font-size:9px;";
+      seedRow.append(seedLbl, seedSeg, seedVal);
+      seedFixed.addEventListener("click", () => setSeedMode(false));
+      seedRandom.addEventListener("click", () => setSeedMode(true));
+      paintSeedMode = () => {
+        const isRandom = !!rerollWidget?.value;
+        seedRandom.classList.toggle("db-seg-active", isRandom);
+        seedFixed.classList.toggle("db-seg-active", !isRandom);
+        seedVal.textContent = isRandom ? "re-rolls each run" : String(seedWidget?.value ?? "");
+      };
 
+      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxGrid, previewLabel, previewSplit, seedRow);
+      node._dbRenderPromptMarkdown(posWidget?.value || "", negWidget?.value || "", true);
+      paintSeedMode();
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
         serialize: false,
         height: DB_PANEL_MIN_H,

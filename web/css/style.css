@@ -1918,3 +1918,65 @@
 .db-autocomplete-item:hover {
   background-color: #4a4a52;
 }
+
+/* ── Sampler · The Payoff picker grid ─────────────────────────────────────── */
+.db-pick-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  box-sizing: border-box;
+  align-items: start;
+  overflow: visible;
+}
+.db-pick-card {
+  position: relative;
+  min-width: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #34343a;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  cursor: pointer;
+  transition: outline-color 0.12s ease;
+}
+.db-pick-card.db-pick-sel { outline-color: #5acc8a; }
+.db-pick-card img { display: block; width: 100%; height: auto; }
+.db-pick-badge {
+  position: absolute;
+  top: 5px; left: 5px;
+  font-size: 9px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #d6e6f2;
+  pointer-events: none;
+}
+.db-pick-check {
+  position: absolute;
+  top: 5px; right: 5px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  background: #5acc8a; color: #06210f;
+  opacity: 0; transform: scale(0.6);
+  transition: all 0.12s ease;
+  pointer-events: none;
+}
+.db-pick-card.db-pick-sel .db-pick-check { opacity: 1; transform: scale(1); }
+.db-pick-dims {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  font-size: 9px; text-align: center;
+  padding: 2px 0;
+  color: #b9c6d2;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.7), transparent);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Pick controls: buttons row + status/count row (status never truncates) */
+.db-pick-controls { display: flex; flex-direction: column; gap: 7px; box-sizing: border-box; }
+.db-pick-btns { display: flex; align-items: center; gap: 6px; }
+.db-pick-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.db-pick-status { flex: 1; text-align: left; font-size: 10px; color: #888; min-width: 0; }
+.db-pick-count { flex: 0 0 auto; font-size: 10px; color: #9fb3c0; font-variant-numeric: tabular-nums; }
