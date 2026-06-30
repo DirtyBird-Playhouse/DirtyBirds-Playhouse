@@ -10,7 +10,14 @@ Mirror the development repo into the installed copy so changes take effect in Co
 
 ## Paths
 - Dev repo (source): `C:\Users\mpick\My_AI_Tools\DirtyBirds-Playhouse`
-- Live install (dest): `C:\Users\mpick\ComfyUI-Installs\ComfyUI\ComfyUI\custom_nodes\DirtyBirds-Playhouse`
+- Live install (dest): `C:\Users\mpick\My_AI_Tools\Comfyui\ComfyUI\custom_nodes\DirtyBirds-Playhouse`
+
+## Shared model configuration
+- ComfyUI model aliases are configured in
+  `C:\Users\mpick\My_AI_Tools\Comfyui\ComfyUI\extra_model_paths.yaml`.
+- DirtyBirds face-restoration models live in
+  `C:\Users\mpick\My_AI_Tools\models\face_restore` and the YAML mapping must be
+  `facerestore_models: face_restore`.
 
 ## Steps
 1. Confirm the install path exists. If not, stop and tell the user.
@@ -18,7 +25,7 @@ Mirror the development repo into the installed copy so changes take effect in Co
    junk. Use robocopy:
    ```powershell
    $src="C:\Users\mpick\My_AI_Tools\DirtyBirds-Playhouse"
-   $dst="C:\Users\mpick\ComfyUI-Installs\ComfyUI\ComfyUI\custom_nodes\DirtyBirds-Playhouse"
+   $dst="C:\Users\mpick\My_AI_Tools\Comfyui\ComfyUI\custom_nodes\DirtyBirds-Playhouse"
    robocopy $src $dst *.py *.json *.html /XF lora_meta_cache.json
    robocopy "$src\web" "$dst\web" /E
    ```

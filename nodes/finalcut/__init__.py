@@ -23,16 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 # ── Register the suite's face-restore model folder ───────────────────────────
-# ComfyUI doesn't know about My_AI_Tools\models\facerestore_models by default,
+# ComfyUI doesn't know about My_AI_Tools\models\face_restore by default,
 # so the FACE MODEL picker shows "(none installed)". Register it (absolute, plus
 # a path derived relative to this file in case the suite is relocated) so
 # get_filename_list("facerestore_models") returns the installed .pth models.
 def _register_facerestore_folders():
     candidates = [
-        r"C:\Users\mpick\My_AI_Tools\models\facerestore_models",
+        r"C:\Users\mpick\My_AI_Tools\models\face_restore",
         os.path.normpath(os.path.join(
             os.path.dirname(__file__), "..", "..", "..", "models",
-            "facerestore_models")),
+            "face_restore")),
     ]
     seen = set()
     for path in candidates:
@@ -58,7 +58,13 @@ _HELPER_CACHE = {}     # det_model -> FaceRestoreHelper
 
 def _restore_model_list():
     try:
-        return folder_paths.get_filename_list("facerestore_models")
+        models = folder_paths.get_filename_list("facerestore_models")
+        # The extracted ReActor restoration path supports PTH CodeFormer and
+        # Spandrel-compatible GFPGAN/RestoreFormer models.
+        return [
+            model for model in models
+            if model.lower().endswith(".pth")
+        ]
     except Exception:
         return []
 
@@ -73,19 +79,39 @@ def _default_restore_model():
 
 def _load_restorer(model_name):
     if model_name not in _RESTORER_CACHE:
-        import spandrel
         path = folder_paths.get_full_path("facerestore_models", model_name)
         if not path:
             raise RuntimeError(f"face-restore model not found: {model_name}")
-        sd = comfy.utils.load_torch_file(path, safe_load=True)
-        try:
-            desc = spandrel.ModelLoader().load_from_state_dict(sd).eval()
-        except Exception as e:
-            raise RuntimeError(
-                f"'{model_name}' isn't a spandrel-loadable face model — use a "
-                f"GFPGAN/RestoreFormer .pth (not .ckpt/.onnx/codeformer). {e}"
-            ) from e
-        _RESTORER_CACHE[model_name] = desc
+        if "codeformer" in model_name.lower():
+            from .codeformer_arch import CodeFormer
+            model = CodeFormer(
+                dim_embd=512, codebook_size=1024, n_head=8, n_layers=9,
+                connect_list=["32", "64", "128", "256"],
+            )
+            checkpoint = comfy.utils.load_torch_file(path, safe_load=True)
+            # ComfyUI's loader may already unwrap params_ema. Accept both the
+            # original CodeFormer package and normalized/raw state dictionaries.
+            state_dict = checkpoint
+            for key in ("params_ema", "params-ema", "params", "state_dict"):
+                if isinstance(state_dict, dict) and key in state_dict:
+                    state_dict = state_dict[key]
+                    break
+            if not isinstance(state_dict, dict) or "position_emb" not in state_dict:
+                raise RuntimeError(
+                    f"'{model_name}' does not contain recognizable CodeFormer weights"
+                )
+            model.load_state_dict(state_dict)
+            _RESTORER_CACHE[model_name] = ("codeformer", model.eval())
+        else:
+            import spandrel
+            sd = comfy.utils.load_torch_file(path, safe_load=True)
+            try:
+                model = spandrel.ModelLoader().load_from_state_dict(sd).eval()
+            except Exception as e:
+                raise RuntimeError(
+                    f"'{model_name}' isn't a supported face-restoration model: {e}"
+                ) from e
+            _RESTORER_CACHE[model_name] = ("spandrel", model)
     return _RESTORER_CACHE[model_name]
 
 
@@ -104,7 +130,7 @@ def _get_helper(det_model, device):
 def _restore_faces(images, model_name, det_model, visibility):
     """Restore faces in an IMAGE batch [B,H,W,3] RGB 0..1. Returns same shape."""
     device = model_management.get_torch_device()
-    desc = _load_restorer(model_name)
+    restorer_kind, desc = _load_restorer(model_name)
     desc.to(device)
     helper = _get_helper(det_model, device)
 
@@ -124,7 +150,13 @@ def _restore_faces(images, model_name, det_model, visibility):
             cf = (cropped[:, :, ::-1].astype(np.float32) / 255.0)  # RGB 0..1
             t = torch.from_numpy(np.ascontiguousarray(cf.transpose(2, 0, 1)))[None].to(device)
             with torch.no_grad():
-                res = desc(t)  # spandrel: [0,1] RGB
+                if restorer_kind == "codeformer":
+                    # ReActor's default fidelity weight is 0.5. CodeFormer
+                    # consumes and returns normalized RGB in the [-1, 1] range.
+                    res = desc(t.mul(2.0).sub(1.0), w=0.5)[0]
+                    res = res.add(1.0).div(2.0)
+                else:
+                    res = desc(t)  # Spandrel: [0,1] RGB
             res_img = (res[0].permute(1, 2, 0).clamp(0, 1).cpu().numpy() * 255).round().astype(np.uint8)
             helper.add_restored_face(np.ascontiguousarray(res_img[:, :, ::-1]))  # back to BGR
 
@@ -270,7 +302,10 @@ class DirtyBirdsFinalCut:
 
         # Stage 2: face restore. Treat this as optional finishing: missing
         # facexlib/spandrel/model support should not discard a completed batch.
-        if restore_faces and visibility > 0 and restore_model and restore_model != "(none installed)":
+        valid_restore_models = _restore_model_list()
+        if restore_model not in valid_restore_models:
+            restore_model = _default_restore_model()
+        if restore_faces and visibility > 0 and restore_model:
             try:
                 picked = _restore_faces(picked, restore_model, facedetection, visibility)
             except InterruptProcessingException:
