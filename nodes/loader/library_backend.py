@@ -106,6 +106,40 @@ def _read_lora_manager_metadata(lora_path):
         return {}
 
 
+def resolve_lora_filename(name):
+    """Map a possibly-bare LoRA name to its canonical filename-list entry.
+
+    LoRA Manager's "send to node" emits `<lora:NAME:strength>` where NAME is the
+    bare model name — no subfolder prefix and no extension (e.g.
+    "Ethereal_Realism_for_Illustrious-7762"). ComfyUI's folder_paths.get_full_path
+    only resolves the exact list entry ("Test\\Ethereal_...-7762.safetensors"), so
+    a bare name fails to resolve for both preview/trigger-word lookups and the
+    actual LoRA load. Resolve it here; returns the input unchanged if no match.
+    """
+    if not name:
+        return name
+    try:
+        files = folder_paths.get_filename_list("loras")
+    except Exception:
+        return name
+    if name in files:
+        return name
+    norm = name.replace("\\", "/").lower()
+    norm_noext = os.path.splitext(norm)[0]
+    base_noext = os.path.basename(norm_noext)
+    # 1) Same relative path, ignoring extension.
+    for f in files:
+        fn = f.replace("\\", "/").lower()
+        if os.path.splitext(fn)[0] == norm_noext:
+            return f
+    # 2) Unique basename match (handles the bare-name case from LoRA Manager).
+    matches = [f for f in files
+               if os.path.splitext(os.path.basename(f.replace("\\", "/")))[0].lower() == base_noext]
+    if len(matches) == 1:
+        return matches[0]
+    return name
+
+
 def _is_image(path):
     return bool(path) and os.path.splitext(path)[1].lower() in _IMAGE_EXTS
 
@@ -177,6 +211,10 @@ def get_lora_meta(lora_filename, allow_remote=True):
     Results are cached in lora_meta_cache.json.
     """
     global _meta_cache
+
+    # Normalize bare LoRA-Manager names (no subfolder / extension) to the
+    # canonical filename so the sidecar + get_full_path lookups resolve.
+    lora_filename = resolve_lora_filename(lora_filename)
 
     cached = _meta_cache.get(lora_filename)
     if (cached and cached.get("resolved") and cached.get("v") == CACHE_VERSION
@@ -475,7 +513,8 @@ async def api_get_loras_meta_bulk(request):
 @PromptServer.instance.routes.get("/dirtybirds/lora-preview")
 async def api_lora_preview(request):
     name = request.rel_url.query.get("name", "").strip()
-    return _lm_preview_redirect("loras", name)
+    # Resolve bare LoRA-Manager names (no subfolder/extension) to the real file.
+    return _lm_preview_redirect("loras", resolve_lora_filename(name))
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +554,14 @@ def _lm_preview_redirect(folder_type, name):
     preview_path = _find_model_sibling_preview(folder_type, name)
     if not preview_path or not os.path.exists(preview_path):
         return web.Response(status=404)
-    encoded = urllib.parse.quote(os.path.abspath(preview_path), safe="")
-    return web.HTTPFound(f"/api/lm/previews?path={encoded}")
+    # Stream the file directly (images + videos, with range support) instead of
+    # 302-redirecting the browser <img>/<video> to LoRA Manager's
+    # /api/lm/previews. The redirect added a fragile second hop and a hard
+    # dependency on LM serving the asset; serving the bytes here keeps previews
+    # self-contained and reliable.
+    return web.FileResponse(os.path.abspath(preview_path), headers={
+        "Cache-Control": "public, max-age=86400",
+    })
 
 
 @PromptServer.instance.routes.get("/dirtybirds/model-preview")

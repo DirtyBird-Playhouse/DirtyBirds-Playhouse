@@ -362,7 +362,7 @@ function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
       const hint = document.createElement("div"); hint.className="db-sel-empty"; hint.textContent="No LoRAs selected"; container.appendChild(hint); return;
     }
     entries.forEach((entry, idx) => {
-      const row = document.createElement("div"); row.className = "db-sel-row db-weight-row" + (entry.active?"":" db-inactive");
+      const row = document.createElement("div"); row.className = "db-sel-row db-weight-row db-row-stacked" + (entry.active?"":" db-inactive");
       const preview = document.createElement("div"); preview.className="db-model-preview db-sel-large-preview"; preview.style.display = "none";
       loadMediaUrl(preview, `/dirtybirds/lora-preview?name=${encodeURIComponent(entry.name)}`,
         () => { preview.style.display = ""; onChange(); },
@@ -370,9 +370,7 @@ function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
         "cover");
       const toggle = document.createElement("button"); toggle.className="db-sel-toggle"; toggle.textContent=entry.active?"●":"○"; toggle.title=entry.active?"Disable":"Enable";
       toggle.addEventListener("click", () => { entry.active=!entry.active; onChange(); refresh(); });
-      const controls = document.createElement("div"); controls.className = "db-weight-controls";
       const nameEl = document.createElement("span"); nameEl.className="db-sel-name"; nameEl.textContent=loraDisplayName(entry.name); nameEl.title=entry.name;
-      const sliderRow = document.createElement("div"); sliderRow.className = "db-weight-slider-row";
       const valEl  = document.createElement("span"); valEl.className="db-sel-val"; valEl.textContent=entry.strength.toFixed(2);
       const slider = document.createElement("input"); slider.type="range"; slider.className="db-sel-slider"; slider.min="0"; slider.max="2"; slider.step="0.05"; slider.value=String(entry.strength);
       slider.addEventListener("input", () => { entry.strength=entry.clip_strength=parseFloat(slider.value); valEl.textContent=entry.strength.toFixed(2); onChange(); });
@@ -385,9 +383,11 @@ function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
         onLoraRemoved?.(removedName);
         node.setDirtyCanvas(true);
       });
-      sliderRow.append(slider, valEl);
-      controls.append(nameEl, sliderRow);
-      row.append(preview, toggle, controls, rmBtn); container.appendChild(row);
+      const head = document.createElement("div"); head.className = "db-row-head";
+      head.append(preview, nameEl);
+      const ctrl = document.createElement("div"); ctrl.className = "db-row-ctrl";
+      ctrl.append(toggle, slider, valEl, rmBtn);
+      row.append(head, ctrl); container.appendChild(row);
     });
   }
   refresh();
@@ -1113,7 +1113,7 @@ app.registerExtension({
           }
 
           // Populated state: mirror buildLoraPanel's row (controls; preview below).
-          row.className = "db-sel-row db-weight-row " + slotClass + (current.active ? "" : " db-inactive");
+          row.className = "db-sel-row db-weight-row db-row-stacked " + slotClass + (current.active ? "" : " db-inactive");
 
           const toggle = document.createElement("button");
           toggle.className = "db-sel-toggle";
@@ -1131,11 +1131,6 @@ app.registerExtension({
           nameEl.className = "db-sel-name";
           nameEl.textContent = current.name;
           nameEl.title = current.name;
-
-          const controls = document.createElement("div");
-          controls.className = "db-weight-controls";
-          const sliderRow = document.createElement("div");
-          sliderRow.className = "db-weight-slider-row";
 
           const slider = document.createElement("input");
           slider.type = "range";
@@ -1168,10 +1163,24 @@ app.registerExtension({
             syncEmbedH();
           });
 
-          sliderRow.append(slider, valEl);
-          controls.append(nameEl, sliderRow);
-          row.append(toggle, controls, rmBtn);
-          refreshEmbedPreview();
+          // Small inline preview thumb at the row start (mirrors buildLoraPanel),
+          // hidden until the embedding has a sibling preview image/video.
+          const thumb = document.createElement("div");
+          thumb.className = "db-model-preview db-sel-large-preview";
+          thumb.style.display = "none";
+          if (current.name) {
+            loadMediaUrl(thumb, `/dirtybirds/embedding-preview?name=${encodeURIComponent(current.name)}`,
+              () => { thumb.style.display = ""; syncEmbedH(); },
+              () => { thumb.style.display = "none"; thumb.innerHTML = ""; }, "cover");
+          }
+
+          const head = document.createElement("div");
+          head.className = "db-row-head";
+          head.append(thumb, nameEl);
+          const ctrl = document.createElement("div");
+          ctrl.className = "db-row-ctrl";
+          ctrl.append(toggle, slider, valEl, rmBtn);
+          row.append(head, ctrl);
         }
 
         // Open embedding selection menu (LoRA-Manager-style card grid w/ previews)
@@ -1236,7 +1245,7 @@ app.registerExtension({
       posColEl.className = "db-talent-loras";
       const posColHeader = document.createElement("div");
       posColHeader.className = "db-talent-col-header db-emb-head-pos";
-      posColHeader.textContent = "Positive";
+      posColHeader.innerHTML = 'Positive <span class="db-col-hint">embedding</span>';
       posColEl.append(posColHeader, posEmbedRow);
 
       // Vertical divider
@@ -1248,7 +1257,7 @@ app.registerExtension({
       negColEl.className = "db-talent-triggerwords";
       const negColHeader = document.createElement("div");
       negColHeader.className = "db-talent-col-header db-emb-head-neg";
-      negColHeader.textContent = "Negative";
+      negColHeader.innerHTML = 'Negative <span class="db-col-hint">embedding</span>';
       negColEl.append(negColHeader, negEmbedRow);
 
       embedColsEl.append(posColEl, embedDividerEl, negColEl);
@@ -1463,6 +1472,14 @@ app.registerExtension({
             }
           } catch (e) { console.warn("[DirtyBirds] Could not restore trigger words:", e); }
         }
+
+        // Re-fetch trigger words for any restored LoRA that has none yet. Saved
+        // graphs from before the LoRA's metadata resolved (or saved with an empty
+        // trigger_words_data) otherwise show "No trigger words" forever, even
+        // though the meta is available locally now. addTWForLora dedupes, so
+        // LoRAs that already restored words are left untouched.
+        const lorasWithTW = new Set(twEntries.map(e => e.lora));
+        loraEntries.forEach(e => { if (!lorasWithTW.has(e.name)) addTWForLora(e.name); });
       });
 
       // ── Prune stale outputs from older workflows ─────────────────────────

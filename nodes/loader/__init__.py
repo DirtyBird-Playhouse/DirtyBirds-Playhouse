@@ -9,7 +9,7 @@ from comfy.sd import load_checkpoint_guess_config, load_lora_for_models, VAE
 import comfy.utils
 
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
-from .library_backend import get_lora_meta  # noqa: F401
+from .library_backend import get_lora_meta, resolve_lora_filename  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +244,9 @@ class DirtyBirdsLoader:
             name = entry.get("name", "").strip()
             if not name:
                 continue
+            # LoRA Manager sends bare names (no subfolder/extension); resolve
+            # to the canonical filename so get_full_path finds the file.
+            name = resolve_lora_filename(name)
             lora_path = folder_paths.get_full_path("loras", name)
             if not lora_path or not os.path.exists(lora_path):
                 logger.warning("[DirtyBirds] LoRA not found: %s", name)
@@ -427,4 +430,4 @@ class DirtyBirdsLoader:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS        = {"DirtyBirdsLoader": DirtyBirdsLoader}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoader": "🍑 DirtyBirds Foreplay — The Setup"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoader": "🍑 DirtyBirds Foreplay"}
