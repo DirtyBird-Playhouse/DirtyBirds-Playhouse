@@ -848,7 +848,11 @@ app.registerExtension({
             const wh = dimData[k] || [];
             return Number(wh[0]) === w && Number(wh[1]) === h;
           });
-          resLabel.textContent = key ? `${key} (${w}×${h})` : `${w}×${h}`;
+          const numericKey = key?.replace(/\s/g, "").replace("×", "x");
+          const dimensions = `${w}x${h}`;
+          resLabel.textContent = key
+            ? (numericKey === dimensions ? key : `${key} (${w}×${h})`)
+            : `${w}×${h}`;
         }
       }
       // Flyout (same styled panel as the checkpoint picker); Random is an option.
@@ -965,42 +969,53 @@ app.registerExtension({
       });
       batchRow.append(batchLabel, batchSlider, batchVal);
 
-      // ── Seed (flyout button) + Denoise (slider) — both ride the pipe to the
-      //    DirtyBirds sampler. The seed value is hidden; the flyout toggles
-      //    Fixed vs. Random (re-rolled every run by Python).
+      // ── Seed (inline mode buttons) + Denoise (slider) — both ride the pipe
+      //    to the DirtyBirds sampler. Random is re-rolled every run by Python.
       const seedWidget     = hideWidget("seed");
       const seedModeWidget = hideWidget("seed_mode");
       const denoiseWidget  = hideWidget("denoise");
       // ComfyUI may auto-add a control_after_generate widget for an INT named
-      // "seed"; hide it — seed mode is driven by the flyout below.
+      // "seed"; hide it — seed mode is driven by the inline buttons below.
       hideWidget("control_after_generate");
 
-      // Seed flyout button (same style as checkpoint / resolution).
       const seedRow = document.createElement("div");
-      seedRow.className = "db-sel-row"; seedRow.style.cursor = "pointer";
-      const seedTag       = document.createElement("span"); seedTag.className = "db-model-tag"; seedTag.textContent = "SEED";
-      const seedModeLabel = document.createElement("span"); seedModeLabel.className = "db-sel-name"; seedModeLabel.style.flex = "1";
-      const seedCaret     = document.createElement("span"); seedCaret.className = "db-model-caret"; seedCaret.textContent = "▾";
-      seedRow.append(seedTag, seedModeLabel, seedCaret);
+      seedRow.className = "db-seed-mode-row";
+      const seedTag = document.createElement("span");
+      seedTag.className = "db-model-tag";
+      seedTag.textContent = "SEED";
+      const seedButtons = document.createElement("div");
+      seedButtons.className = "db-seed-mode-buttons";
+      const fixedBtn = document.createElement("button");
+      fixedBtn.type = "button";
+      fixedBtn.className = "db-seed-mode-btn";
+      fixedBtn.textContent = "📌 Fixed";
+      const randomBtn = document.createElement("button");
+      randomBtn.type = "button";
+      randomBtn.className = "db-seed-mode-btn";
+      randomBtn.textContent = "🎲 Random";
+      const seedHint = document.createElement("span");
+      seedHint.className = "db-seed-mode-hint";
+      seedHint.textContent = "re-rolls each run";
+      seedButtons.append(fixedBtn, randomBtn);
+      seedRow.append(seedTag, seedButtons, seedHint);
 
       function refreshSeedRow() {
         const mode = (seedModeWidget?.value === "random") ? "random" : "fixed";
-        seedModeLabel.textContent = mode === "random" ? "🎲 Random" : "Fixed";
+        fixedBtn.classList.toggle("db-active", mode === "fixed");
+        randomBtn.classList.toggle("db-active", mode === "random");
+        seedHint.style.visibility = mode === "random" ? "visible" : "hidden";
       }
-      seedRow.addEventListener("click", () => {
-        showOptionsFlyout("Seed", [
-          { value: "fixed",  label: "Fixed",  glyph: "📌" },
-          { value: "random", label: "Random", glyph: "🎲" },
-        ], seedModeWidget?.value || "fixed", (mode) => {
-          if (seedModeWidget) seedModeWidget.value = mode;
-          // A fixed seed needs a concrete value; roll one if still unset.
-          if (mode === "fixed" && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-            seedWidget.value = Math.floor(Math.random() * 9007199254740991);
-          }
-          refreshSeedRow();
-          node.setDirtyCanvas(true);
-        });
-      });
+      function setSeedMode(mode) {
+        if (seedModeWidget) seedModeWidget.value = mode;
+        // A fixed seed needs a concrete value; roll one if still unset.
+        if (mode === "fixed" && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
+          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
+        }
+        refreshSeedRow();
+        node.setDirtyCanvas(true);
+      }
+      fixedBtn.addEventListener("click", () => setSeedMode("fixed"));
+      randomBtn.addEventListener("click", () => setSeedMode("random"));
       // A seed widget left empty fails Python's INT conversion at run time.
       // Ensure it always holds a concrete value, regardless of mode.
       if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
@@ -1027,8 +1042,9 @@ app.registerExtension({
       setDenoise(typeof denoiseWidget?.value === "number" ? denoiseWidget.value : 1.0);
       denoiseRow.append(denoiseLabel, denoiseSlider, denoiseVal);
 
-      // Batch / Seed / Denoise sit in the right column, stacked under Resolution.
-      rightCol.append(batchRow, seedRow, denoiseRow);
+      // Seed is the compact final control at the bottom of The Main
+      // Attraction's right column.
+      rightCol.append(batchRow, denoiseRow, seedRow);
       syncTopRowH();
 
       // Denoise default per workflow: 1.0 for Text2Image, 0.7 for Image2Image.
@@ -1129,7 +1145,11 @@ app.registerExtension({
 
           const nameEl = document.createElement("span");
           nameEl.className = "db-sel-name";
-          nameEl.textContent = current.name;
+          // Display only the asset basename; retain the full path/extension in
+          // the title and serialized value. If this layout regresses again,
+          // rebuild Cast/Talent rather than adding another sizing workaround.
+          nameEl.textContent = (current.name || "")
+            .replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
           nameEl.title = current.name;
 
           const slider = document.createElement("input");
@@ -1235,7 +1255,7 @@ app.registerExtension({
       // Two-column container mirroring "The Talent" — Positive | divider | Negative
       const embedColsEl = document.createElement("div");
       embedColsEl.className = "db-talent-columns";
-      embedColsEl.style.cssText = "box-sizing:border-box;overflow:hidden;";
+      embedColsEl.style.cssText = "box-sizing:border-box;overflow:visible;width:100%;max-width:100%;";
 
       const posEmbedRow = buildEmbedSlot("positive", posEmbedWidget);
       const negEmbedRow = buildEmbedSlot("negative", negEmbedWidget);
@@ -1271,6 +1291,10 @@ app.registerExtension({
         requestAnimationFrame(() => {
           const h = Math.max(60, embedColsEl.scrollHeight || 60);
           if (embedColsWidget) embedColsWidget.computedHeight = h;
+          const needed = typeof node.computeSize === "function" ? node.computeSize() : null;
+          if (needed && typeof node.setSize === "function" && (node.size?.[1] || 0) < needed[1]) {
+            node.setSize([node.size[0], needed[1]]);
+          }
           node.setDirtyCanvas(true);
         });
       }
@@ -1302,7 +1326,7 @@ app.registerExtension({
       // Two-column container
       const talentColsEl = document.createElement("div");
       talentColsEl.className = "db-talent-columns";
-      talentColsEl.style.cssText = "box-sizing:border-box;overflow:hidden;";
+      talentColsEl.style.cssText = "box-sizing:border-box;overflow:visible;width:100%;max-width:100%;";
 
       // Left: LoRA list
       const loraColEl = document.createElement("div");
@@ -1364,6 +1388,10 @@ app.registerExtension({
         requestAnimationFrame(() => {
           const h = Math.max(60, talentColsEl.scrollHeight || 60);
           if (talentColsWidget) talentColsWidget.computedHeight = h;
+          const needed = typeof node.computeSize === "function" ? node.computeSize() : null;
+          if (needed && typeof node.setSize === "function" && (node.size?.[1] || 0) < needed[1]) {
+            node.setSize([node.size[0], needed[1]]);
+          }
           node.setDirtyCanvas(true);
         });
       }
