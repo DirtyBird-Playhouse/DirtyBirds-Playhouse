@@ -1,13 +1,15 @@
 """
 DirtyBirds Playhouse — 🎬 Final Cut.
 
-A "restore → upscale" finishing node: it face-restores and model-upscales every
-incoming image. (Image picking now lives in the Sampler node.)
+A "restore → sharpen" finishing node: it face-restores and GLSL-sharpens every
+incoming image, and emits a before/after preview. (Image picking now lives in
+the Sampler node.)
 """
 
 import os
 import logging
 
+import cv2
 import numpy as np
 import torch
 
@@ -127,6 +129,79 @@ def _get_helper(det_model, device):
     return helper
 
 
+# Parse-map class -> mask value. Ported verbatim from ReActor / facexlib: keeps
+# facial skin + features (255) and drops hair/background/ears (0), so the paste
+# is confined to the actual face shape rather than the square crop.
+_MASK_COLORMAP = [0, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+                  255, 255, 255, 255, 0, 255, 0, 0, 0]
+
+
+def _paste_faces_feathered(helper, bgr):
+    """Paste restored faces back onto `bgr`.
+
+    Ported from comfyui-reactor-node's
+    r_facelib/utils/face_restoration_helper.py::paste_faces_to_input_image
+    (upscale_factor=1, no upsampler, no draw_box). The essential difference from
+    stock facexlib is that ReActor combines a square feather mask with the
+    face-parsing mask, taking the TIGHTER of the two per pixel. The parse mask
+    clips the blend to actual skin, so the square crop's background corners are
+    never composited in — which is what removes the visible paste-back box.
+    """
+    from facexlib.utils import img2tensor
+    from torchvision.transforms.functional import normalize
+
+    h, w = bgr.shape[:2]
+    face_size = helper.face_size  # (512, 512)
+    upsample_img = bgr.astype(np.float32)
+
+    for restored_face, inverse_affine in zip(helper.restored_faces, helper.inverse_affine_matrices):
+        inv_restored = cv2.warpAffine(restored_face, inverse_affine, (w, h)).astype(np.float32)
+
+        # Square mask feather (fusion edge scaled to face area) — identical to ReActor.
+        mask = np.ones(face_size, dtype=np.float32)
+        inv_mask = cv2.warpAffine(mask, inverse_affine, (w, h))
+        inv_mask_erosion = cv2.erode(inv_mask, np.ones((2, 2), np.uint8))
+        pasted_face = inv_mask_erosion[:, :, None] * inv_restored
+        total_face_area = np.sum(inv_mask_erosion)
+        w_edge = int(total_face_area ** 0.5) // 20
+        erosion_radius = w_edge * 2
+        inv_mask_center = cv2.erode(inv_mask_erosion, np.ones((erosion_radius, erosion_radius), np.uint8))
+        blur_size = w_edge * 2
+        inv_soft_mask = cv2.GaussianBlur(inv_mask_center, (blur_size + 1, blur_size + 1), 0)[:, :, None]
+
+        # Face-parsing mask, combined with the square feather via the tighter value.
+        if helper.use_parse:
+            face_input = cv2.resize(restored_face, (512, 512), interpolation=cv2.INTER_LINEAR)
+            face_input = img2tensor(face_input.astype("float32") / 255., bgr2rgb=True, float32=True)
+            normalize(face_input, (0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True)
+            face_input = torch.unsqueeze(face_input, 0).to(helper.device)
+            with torch.no_grad():
+                out = helper.face_parse(face_input)[0]
+            out = out.argmax(dim=1).squeeze().cpu().numpy()
+
+            parse_mask = np.zeros(out.shape)
+            for idx, color in enumerate(_MASK_COLORMAP):
+                parse_mask[out == idx] = color
+            parse_mask = cv2.GaussianBlur(parse_mask, (101, 101), 11)
+            parse_mask = cv2.GaussianBlur(parse_mask, (101, 101), 11)
+            thres = 10
+            parse_mask[:thres, :] = 0
+            parse_mask[-thres:, :] = 0
+            parse_mask[:, :thres] = 0
+            parse_mask[:, -thres:] = 0
+            parse_mask = parse_mask / 255.
+
+            parse_mask = cv2.resize(parse_mask, face_size)
+            parse_mask = cv2.warpAffine(parse_mask, inverse_affine, (w, h), flags=3)
+            inv_soft_parse_mask = parse_mask[:, :, None]
+            fuse_mask = (inv_soft_parse_mask < inv_soft_mask).astype("int")
+            inv_soft_mask = inv_soft_parse_mask * fuse_mask + inv_soft_mask * (1 - fuse_mask)
+
+        upsample_img = inv_soft_mask * pasted_face + (1 - inv_soft_mask) * upsample_img
+
+    return upsample_img.clip(0, 255).astype(np.uint8)
+
+
 def _restore_faces(images, model_name, det_model, visibility):
     """Restore faces in an IMAGE batch [B,H,W,3] RGB 0..1. Returns same shape."""
     device = model_management.get_torch_device()
@@ -161,7 +236,7 @@ def _restore_faces(images, model_name, det_model, visibility):
             helper.add_restored_face(np.ascontiguousarray(res_img[:, :, ::-1]))  # back to BGR
 
         helper.get_inverse_affine(None)
-        restored_bgr = helper.paste_faces_to_input_image()
+        restored_bgr = _paste_faces_feathered(helper, bgr)
         restored = restored_bgr[:, :, ::-1].astype(np.float32) / 255.0  # RGB 0..1
 
         if restored.shape != orig.shape:  # safety; paste should preserve size
@@ -172,92 +247,58 @@ def _restore_faces(images, model_name, det_model, visibility):
     return torch.stack(out)
 
 
-# ── Stage 3: model upscale (spandrel) + optional resize-to-target ────────────
-RESCALE_MODES = ["model only", "by percent", "to longer side"]
-
-_UPSCALER_CACHE = {}  # model_name -> spandrel descriptor
-
-
-def _upscale_model_list():
-    try:
-        return folder_paths.get_filename_list("upscale_models")
-    except Exception:
-        return []
-
-
-def _load_upscaler(model_name):
-    if model_name not in _UPSCALER_CACHE:
-        import spandrel
-        path = folder_paths.get_full_path("upscale_models", model_name)
-        if not path:
-            raise RuntimeError(f"upscale model not found: {model_name}")
-        sd = comfy.utils.load_torch_file(path, safe_load=True)
-        if "module.layers.0.residual_group.blocks.0.norm1.weight" in sd:
-            sd = comfy.utils.state_dict_prefix_replace(sd, {"module.": ""})
-        desc = spandrel.ModelLoader().load_from_state_dict(sd).eval()
-        if not isinstance(desc, spandrel.ImageModelDescriptor):
-            raise RuntimeError(f"'{model_name}' is not a single-image upscale model")
-        _UPSCALER_CACHE[model_name] = desc
-    return _UPSCALER_CACHE[model_name]
+# ── Stage 3: GLSL sharpen (reuses comfy-core's shader engine) ────────────────
+# A 4-neighbour unsharp mask. u_image0 is the source; u_float0 is the amount
+# (0..0.5 from the UI). The * 5.0 gain spreads that range from subtle to strong.
+_SHARPEN_SHADER = """#version 300 es
+precision highp float;
+uniform sampler2D u_image0;
+uniform vec2 u_resolution;
+uniform float u_float0;
+in vec2 v_texCoord;
+layout(location = 0) out vec4 fragColor0;
+void main() {
+    vec2 px = 1.0 / u_resolution;
+    vec4 c = texture(u_image0, v_texCoord);
+    vec4 n = texture(u_image0, v_texCoord + vec2(0.0, px.y));
+    vec4 s = texture(u_image0, v_texCoord - vec2(0.0, px.y));
+    vec4 e = texture(u_image0, v_texCoord + vec2(px.x, 0.0));
+    vec4 w = texture(u_image0, v_texCoord - vec2(px.x, 0.0));
+    vec3 sharp = c.rgb + (u_float0 * 5.0) * (4.0 * c.rgb - n.rgb - s.rgb - e.rgb - w.rgb);
+    fragColor0 = vec4(clamp(sharp, 0.0, 1.0), c.a);
+}
+"""
 
 
-def _upscale_images(images, model_name, rescale_mode, percent, longer_side):
-    """Model-upscale an IMAGE batch, then optionally resize to a target size."""
-    device = model_management.get_torch_device()
-    desc = _load_upscaler(model_name)
-    desc.to(device)
+def _sharpen_images(images, amount):
+    """GLSL-sharpen an IMAGE batch [B,H,W,3] in-place size (no resize)."""
+    # Import lazily: comfy_extras.nodes_glsl runs an OpenGL availability check at
+    # import time and raises when glfw/PyOpenGL are missing. Keeping it here lets
+    # the caller treat a missing-OpenGL environment as a skipped finishing pass.
+    from comfy_extras.nodes_glsl import _render_shader_batch
 
-    in_img = images.movedim(-1, -3).to(device)  # BCHW
-    tile, overlap = 512, 32
-    out_device = model_management.intermediate_device()
-    s = None
-    try:
-        oom = True
-        while oom:
-            try:
-                steps = in_img.shape[0] * comfy.utils.get_tiled_scale_steps(
-                    in_img.shape[3], in_img.shape[2], tile_x=tile, tile_y=tile, overlap=overlap)
-                pbar = comfy.utils.ProgressBar(steps)
-                s = comfy.utils.tiled_scale(
-                    in_img, lambda a: desc(a.float()), tile_x=tile, tile_y=tile,
-                    overlap=overlap, upscale_amount=desc.scale, pbar=pbar, output_device=out_device)
-                oom = False
-            except Exception as e:
-                model_management.raise_non_oom(e)
-                tile //= 2
-                if tile < 128:
-                    raise
-    finally:
-        desc.to("cpu")
+    arr = images.detach().cpu().numpy().astype(np.float32)  # [B,H,W,3]
+    b, h, w = arr.shape[0], arr.shape[1], arr.shape[2]
+    image_batches = [[arr[i]] for i in range(b)]  # one input image (u_image0) per batch
 
-    if s is None:  # unreachable (loop assigns or raises); guards the type checker
-        raise RuntimeError("upscale produced no output")
-    s = torch.clamp(s.movedim(-3, -1), min=0, max=1.0)  # BHWC, on out_device
+    outputs = _render_shader_batch(
+        _SHARPEN_SHADER, w, h, image_batches, [float(amount)], [])
 
-    oh, ow = int(images.shape[1]), int(images.shape[2])
-    if rescale_mode == "by percent":
-        th, tw = max(1, round(oh * percent / 100.0)), max(1, round(ow * percent / 100.0))
-    elif rescale_mode == "to longer side":
-        if oh >= ow:
-            th, tw = int(longer_side), max(1, round(ow * longer_side / oh))
-        else:
-            tw, th = int(longer_side), max(1, round(oh * longer_side / ow))
-    else:  # model only — keep the model's native upscale
-        return s
-
-    t = comfy.utils.common_upscale(s.movedim(-1, 1), tw, th, "bicubic", "disabled")
-    return t.movedim(1, -1)
+    frames = []
+    for batch_out in outputs:
+        rgb = batch_out[0][:, :, :3]  # drop alpha from fragColor0 (H,W,4)
+        frames.append(torch.from_numpy(np.ascontiguousarray(rgb)).float())
+    return torch.stack(frames)
 
 
 class DirtyBirdsFinalCut:
-    """🎬 Final Cut — face-restore and upscale every incoming image."""
+    """🎬 Final Cut — face-restore and GLSL-sharpen every incoming image."""
 
     @classmethod
     def INPUT_TYPES(cls):
         restore_models = _restore_model_list()
         default_model = _default_restore_model()
         model_opt = (restore_models, {"default": default_model}) if restore_models else (["(none installed)"],)
-        up_models = _upscale_model_list()
         return {
             "required": {
                 # Picking moved to the Sampler. These two are kept (hidden in the
@@ -268,16 +309,17 @@ class DirtyBirdsFinalCut:
                 "restore_faces": ("BOOLEAN", {"default": True}),
                 "restore_model": model_opt,
                 "facedetection": (FACEDETECTION,),
-                "visibility": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "upscale": ("BOOLEAN", {"default": True}),
-                "upscale_model": (up_models, {"default": up_models[0]}) if up_models else (["(none installed)"],),
-                "rescale_mode": (RESCALE_MODES,),
-                "rescale_percent": ("INT", {"default": 200, "min": 10, "max": 400, "step": 5}),
-                "longer_side": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
+                "visibility": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "sharpen": ("BOOLEAN", {"default": True}),
+                "sharpen_amount": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 0.5, "step": 0.05}),
             },
             "optional": {
                 "pipe": ("DIRTYBIRDS_PIPE",),
                 "images": ("IMAGE",),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
             },
         }
 
@@ -288,9 +330,8 @@ class DirtyBirdsFinalCut:
 
     def run(self, timeout=600, ontimeout="send none",
             restore_faces=True, restore_model=None, facedetection="retinaface_resnet50",
-            visibility=1.0, upscale=True, upscale_model=None,
-            rescale_mode="model only", rescale_percent=200, longer_side=2048,
-            pipe=None, images=None):
+            visibility=1.0, sharpen=True, sharpen_amount=0.25,
+            pipe=None, images=None, prompt=None, extra_pnginfo=None):
         if images is None and pipe is not None:
             images = pipe.get("images")
         if images is None:
@@ -298,6 +339,7 @@ class DirtyBirdsFinalCut:
         batch = images.shape[0]
         # Process every incoming image (picking now lives in the Sampler).
         selection = list(range(batch))
+        before = images  # keep the pre-finishing frames for the compare preview
         picked = images
 
         # Stage 2: face restore. Treat this as optional finishing: missing
@@ -317,19 +359,34 @@ class DirtyBirdsFinalCut:
                     exc_info=True,
                 )
 
-        # Stage 3: model upscale (+ optional resize-to-target).
-        if upscale and upscale_model and upscale_model != "(none installed)":
+        # Stage 3: GLSL sharpen. Optional finishing: a missing OpenGL backend or
+        # shader failure should not discard a completed batch.
+        if sharpen and sharpen_amount > 0:
             try:
-                picked = _upscale_images(picked, upscale_model, rescale_mode,
-                                         rescale_percent, longer_side)
+                picked = _sharpen_images(picked, sharpen_amount)
             except InterruptProcessingException:
                 raise
             except Exception as e:
-                logger.exception("[DirtyBirds] Final Cut upscale failed")
-                raise RuntimeError(f"Final Cut upscale failed: {e}") from e
+                logger.warning(
+                    "[DirtyBirds] Final Cut sharpen skipped: %s", e, exc_info=True)
 
-        return (pipe, picked, ",".join(str(i) for i in selection))
+        # Before/after compare preview (saved to temp, surfaced by the web UI).
+        ui = {"db_before": [], "db_after": []}
+        try:
+            from nodes import PreviewImage
+            saver = PreviewImage()
+            ui["db_before"] = saver.save_images(
+                before, "dirtybirds.compare.", prompt, extra_pnginfo)["ui"]["images"]
+            ui["db_after"] = saver.save_images(
+                picked, "dirtybirds.compare.", prompt, extra_pnginfo)["ui"]["images"]
+        except Exception as e:
+            logger.warning("[DirtyBirds] Final Cut compare preview skipped: %s", e)
+
+        return {
+            "ui": ui,
+            "result": (pipe, picked, ",".join(str(i) for i in selection)),
+        }
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsFinalCut": DirtyBirdsFinalCut}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFinalCut": "🎬 Final Cut — Restore, Upscale"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFinalCut": "🎬 Final Cut — Restore, Sharpen"}

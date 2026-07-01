@@ -92,6 +92,9 @@ function insertAtCursor(textarea, widget, token) {
 let autocompleteState = {
   dropdown: null,
   timeout: null,
+  requestId: 0,
+  selectedIndex: -1,
+  selectItem: null,
   currentNode: null,
 };
 
@@ -140,6 +143,45 @@ function hideAutocomplete() {
     autocompleteState.dropdown.style.display = "none";
     autocompleteState.dropdown.innerHTML = "";
   }
+  autocompleteState.selectedIndex = -1;
+  autocompleteState.selectItem = null;
+}
+
+function positionAutocomplete(textarea) {
+  const rect = textarea.getBoundingClientRect();
+  const lines = textarea.value.slice(0, textarea.selectionStart).split("\n");
+  const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
+  autocompleteState.dropdown.style.left = (rect.left + 10) + "px";
+  autocompleteState.dropdown.style.top = Math.min(window.innerHeight - 220, rect.top + lines.length * lineHeight) + "px";
+  autocompleteState.dropdown.style.display = "block";
+}
+
+function showTagAutocomplete(textarea, matches, start) {
+  if (!matches.length) return hideAutocomplete();
+  if (!autocompleteState.dropdown) {
+    autocompleteState.dropdown = createAutocompleteDropdown();
+    document.body.appendChild(autocompleteState.dropdown);
+  }
+  autocompleteState.dropdown.innerHTML = "";
+  autocompleteState.selectedIndex = -1;
+  const select = (name) => {
+    const cursor = textarea.selectionStart;
+    const insertion = `${name}, `;
+    textarea.value = textarea.value.slice(0, start) + insertion + textarea.value.slice(cursor);
+    textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    hideAutocomplete();
+  };
+  autocompleteState.selectItem = (index) => select(matches[index].tag_name);
+  matches.slice(0, 20).forEach(match => {
+    const item = createAutocompleteItem(match.tag_name, () => select(match.tag_name));
+    const categoryColors = { 0: "#009be6", 1: "#ff8a8b", 3: "#c797ff", 4: "#35c64a", 5: "#ead084", 7: "#009be6", 8: "#ff8a8b", 10: "#c797ff", 11: "#35c64a", 12: "#8bd5ca", 14: "#ead084" };
+    item.style.color = categoryColors[match.category] || "#bbb";
+    const count = Number(match.post_count || 0).toLocaleString();
+    item.innerHTML = `<span>${match.tag_name}</span><span style="float:right;opacity:.55;margin-left:18px">${count}</span>`;
+    autocompleteState.dropdown.appendChild(item);
+  });
+  positionAutocomplete(textarea);
 }
 
 function showAutocompleteDropdown(textarea, matches, prefix, partial) {
@@ -207,6 +249,7 @@ function seededIndex(seed, length) {
 
 function handleAutocompleteInput(event, textarea, node) {
   clearTimeout(autocompleteState.timeout);
+  const requestId = ++autocompleteState.requestId;
 
   const text = textarea.value;
   const cursorPos = textarea.selectionStart;
@@ -216,7 +259,17 @@ function handleAutocompleteInput(event, textarea, node) {
   const embedMatch = beforeCursor.match(/(\[emb:|<embed:)([^:>]*)$/);
 
   if (!loraMatch && !embedMatch) {
-    hideAutocomplete();
+    const fragmentMatch = beforeCursor.match(/(?:^|[,\n])\s*([^,<>{}\[\]]+)$/);
+    const partial = fragmentMatch?.[1]?.trim() || "";
+    if (partial.length < 2) return hideAutocomplete();
+    const start = cursorPos - partial.length;
+    autocompleteState.timeout = setTimeout(async () => {
+      const data = await fetchJSON(
+        `/dirtybirds/tag-autocomplete?query=${encodeURIComponent(partial)}&limit=40`
+      );
+      if (requestId !== autocompleteState.requestId || textarea.selectionStart !== cursorPos) return;
+      showTagAutocomplete(textarea, data?.tags || [], start);
+    }, 60);
     return;
   }
 
@@ -236,6 +289,24 @@ function handleAutocompleteInput(event, textarea, node) {
 
 function handleAutocompleteKeydown(event, textarea) {
   if (!autocompleteState.dropdown || autocompleteState.dropdown.style.display === "none") return;
+
+  const items = [...autocompleteState.dropdown.children];
+  if ((event.key === "ArrowDown" || event.key === "ArrowUp") && items.length) {
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    autocompleteState.selectedIndex = (autocompleteState.selectedIndex + delta + items.length) % items.length;
+    items.forEach((item, index) => {
+      item.style.backgroundColor = index === autocompleteState.selectedIndex ? "#4a4a52" : "transparent";
+    });
+    items[autocompleteState.selectedIndex].scrollIntoView({ block: "nearest" });
+    return;
+  }
+
+  if ((event.key === "Enter" || event.key === "Tab") && autocompleteState.selectedIndex >= 0 && autocompleteState.selectItem) {
+    event.preventDefault();
+    autocompleteState.selectItem(autocompleteState.selectedIndex);
+    return;
+  }
 
   if (event.key === "Escape") {
     hideAutocomplete();
@@ -316,9 +387,12 @@ app.registerExtension({
         if (!widget) return;
         widget.computeSize = () => [0, 0];
         widget.serializeValue = () => widget.value;
+        // Keep the real STRING widget serializable. ComfyUI's setHidden(true)
+        // can mark converted widgets as non-serializing, which made custom
+        // textarea edits disappear after a browser refresh.
+        widget.serialize = true;
         if (widget.element?.style) widget.element.style.display = "none";
-        if (typeof widget.setHidden === "function") widget.setHidden(true);
-        else if ("hidden" in widget) widget.hidden = true;
+        if ("hidden" in widget) widget.hidden = false;
       }
 
       hideBackingWidget(posWidget);
@@ -688,6 +762,15 @@ app.registerExtension({
       const posTA = makePromptTextarea(posWidget, "positive");
       const negTA = makePromptTextarea(negWidget, "negative");
       const promptEditors = [posTA, negTA];
+
+      // onNodeCreated runs before ComfyUI restores saved widget values onto a
+      // reloaded graph, so the textarea snapshot above can be empty/stale.
+      // Re-sync once restore has happened.
+      requestAnimationFrame(() => {
+        if (posWidget && posTA.value !== posWidget.value) posTA.value = posWidget.value || "";
+        if (negWidget && negTA.value !== negWidget.value) negTA.value = negWidget.value || "";
+        node._dbRenderPromptMarkdown?.(posWidget?.value || "", negWidget?.value || "");
+      });
       node._dbPositiveTextarea = posTA;
       node._dbNegativeTextarea = negTA;
       node._dbLastPromptTextarea = posTA;
