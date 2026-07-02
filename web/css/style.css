@@ -805,20 +805,6 @@
   flex: 0 0 auto;
 }
 
-/* Legacy full-screen class used by the older Final Cut picker modal. */
-.db-lora-flyout.db-fc-full {
-  width: 96vw;
-  max-width: 96vw;
-  height: 94vh;
-  max-height: 94vh;
-}
-.db-lora-flyout.db-fc-full .db-lp-grid {
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-}
-.db-lora-flyout.db-fc-full .db-lp-img-wrap {
-  height: 300px;
-}
-
 /* Preview image area — fixed height (no padding-top collapse) */
 .db-lp-img-wrap {
   position: relative;

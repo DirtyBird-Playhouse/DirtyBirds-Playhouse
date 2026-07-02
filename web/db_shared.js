@@ -21,6 +21,41 @@ export function ensureStylesheet() {
     link.href = HREF;
     document.head.appendChild(link);
   }
+  if (!document.documentElement.dataset.dbSliderEdit) {
+    document.documentElement.dataset.dbSliderEdit = "1";
+    document.addEventListener("dblclick", (event) => {
+      const readout = event.target.closest?.(".db-sel-val");
+      if (!readout || readout.dataset.dbEditing === "1") return;
+      const row = readout.parentElement;
+      const slider = row?.querySelector?.('input[type="range"]');
+      if (!slider) return;
+      event.stopPropagation();
+      readout.dataset.dbEditing = "1";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = slider.min; input.max = slider.max; input.step = slider.step || "any";
+      input.value = slider.value;
+      input.style.cssText = "width:58px;background:#111;color:#ddd;border:1px solid #5aadff;border-radius:3px;font-size:10px;text-align:right;";
+      readout.replaceWith(input); input.focus(); input.select();
+      let cancelled = false;
+      const finish = () => {
+        if (!cancelled) {
+          const parsed = Number(input.value);
+          if (Number.isFinite(parsed)) {
+            slider.value = String(Math.max(Number(slider.min), Math.min(Number(slider.max), parsed)));
+            slider.dispatchEvent(new Event("input", { bubbles: true }));
+            slider.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        }
+        input.replaceWith(readout); delete readout.dataset.dbEditing;
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") input.blur();
+        if (e.key === "Escape") { cancelled = true; input.blur(); }
+      });
+      input.addEventListener("blur", finish, { once: true });
+    });
+  }
 }
 
 // ── Fetch JSON with logging ────────────────────────────────────────────────────

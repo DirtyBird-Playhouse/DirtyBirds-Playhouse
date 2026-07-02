@@ -1,0 +1,9 @@
+segmentation-models-pytorch
+ultralytics>=8.3.162
+opencv-python-headless
+numpy
+scikit-image
+kornia
+timm
+Pillow
+huggingface_hub

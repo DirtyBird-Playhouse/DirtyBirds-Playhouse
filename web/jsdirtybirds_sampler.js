@@ -302,24 +302,13 @@ app.registerExtension({
       onExecuted?.apply(this, arguments);
       const imgs = message?.db_images;
       if (Array.isArray(imgs)) this._dbRenderImages?.(imgs);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!this._dbActivePick) this.setSize(this.computeSize());
+      }));
     };
 
-    // Core paints the LIVE latent preview into this.imgs while sampling — we
-    // want that. But once the run finishes we render results in the Payoff DOM
-    // widget, so core's copy would be a duplicate. Rule:
-    //   • node actively sampling (runningNodeId === this.id, not mid-pick) → SHOW
-    //   • otherwise (idle with final images, or blocked on the picker)      → HIDE
-    // _dbActivePick is set only around the pick handshake, so no per-run reset
-    // is needed (unlike a sticky "we own the panel" flag).
-    const onDrawBackground = nodeType.prototype.onDrawBackground;
-    nodeType.prototype.onDrawBackground = function () {
-      const sampling = String(app.runningNodeId) === String(this.id) && !this._dbActivePick;
-      if (sampling) return onDrawBackground?.apply(this, arguments);
-      const saved = this.imgs;
-      this.imgs = null;
-      try { return onDrawBackground?.apply(this, arguments); }
-      finally { this.imgs = saved; }
-    };
+    // Keep ComfyUI's native preview visible during sampling and after the run.
+    // Image Select is a separate conditional DOM section beneath it.
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -451,7 +440,7 @@ app.registerExtension({
         batchBtn.dataset.tone = _batchOn ? "random" : "fixed";
       }
       function syncPickerVisibility() {
-        const hide = _batchOn;
+        const showSelect = !_batchOn && !!node._dbActivePick;
         const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
         for (const w of node.widgets || []) {
           if (!names.includes(w.name)) continue;
@@ -459,12 +448,12 @@ app.registerExtension({
           // _dbEndPick), not by batch mode — never force it visible here. When
           // batch turns on, hide it; otherwise leave its current state alone.
           if (w.name === "db_payoff_pick") {
-            if (hide) { if (w.element) w.element.style.display = "none"; w.computedHeight = 0; }
+            if (!showSelect) { if (w.element) w.element.style.display = "none"; w.computedHeight = 0; }
             else { w.computedHeight = (w.element && w.element.style.display !== "none") ? undefined : 0; }
             continue;
           }
-          if (w.element) w.element.style.display = hide ? "none" : "";
-          w.computedHeight = hide ? 0 : undefined;
+          if (w.element) w.element.style.display = showSelect ? "" : "none";
+          w.computedHeight = showSelect ? undefined : 0;
         }
         node.setSize(node.computeSize());
       }
@@ -509,6 +498,26 @@ app.registerExtension({
         serialize: false, height: 96, getMinHeight: () => Math.max(96, imgPanel.scrollHeight || 96),
       });
       widthEls.push(imgPanel);
+
+      // The image-select area exists only while the sampler is waiting for a
+      // selection. In every other state (including captioning), reserve no
+      // layout height beneath ComfyUI's live preview.
+      function setImageSelectShown(shown) {
+        for (const w of node.widgets || []) {
+          if (w.name !== "db_payofflabel" && w.name !== "db_payoff_imgs") continue;
+          if (w.element) w.element.style.display = shown ? "" : "none";
+          w.computedHeight = shown ? undefined : 0;
+          if (!w._dbOpenComputeSize) w._dbOpenComputeSize = w.computeSize;
+          if (!w._dbOpenMinHeight) w._dbOpenMinHeight = w.getMinHeight;
+          w.computeSize = shown ? w._dbOpenComputeSize : (() => [0, -4]);
+          w.getMinHeight = shown ? w._dbOpenMinHeight : (() => -4);
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          node.setSize(node.computeSize());
+          node.setDirtyCanvas(true, true);
+        }));
+      }
+      setImageSelectShown(false);
 
       function syncImgH() {
         requestAnimationFrame(() => {
@@ -568,12 +577,19 @@ app.registerExtension({
       // computedHeight=0 while idle, so _dbStartPick must restore it.
       function setPickRowShown(shown) {
         pickRow.style.display = shown ? "flex" : "none";
-        if (pickWidget) pickWidget.computedHeight = shown ? undefined : 0;
+        if (pickWidget) {
+          if (!pickWidget._dbOpenComputeSize) pickWidget._dbOpenComputeSize = pickWidget.computeSize;
+          if (!pickWidget._dbOpenMinHeight) pickWidget._dbOpenMinHeight = pickWidget.getMinHeight;
+          pickWidget.computedHeight = shown ? undefined : 0;
+          pickWidget.computeSize = shown ? pickWidget._dbOpenComputeSize : (() => [0, -4]);
+          pickWidget.getMinHeight = shown ? pickWidget._dbOpenMinHeight : (() => -4);
+        }
         node.setSize(node.computeSize());
       }
       pSend.addEventListener("click", () => PICK.sendPick());
       pCancel.addEventListener("click", () => PICK.cancelPick());
       pFull.addEventListener("click", () => PICK.openFullScreen());
+      setPickRowShown(false);
       syncPickerVisibility();
 
       function inlineStatus() {
@@ -621,12 +637,13 @@ app.registerExtension({
         imgPanel.innerHTML = "";
         (images || []).forEach((info, i) => imgPanel.appendChild(inlineCard(info, i)));
         sizeImageCards();
+        setImageSelectShown(true);
         setPickRowShown(true);
         pCount.textContent = "";
         inlineStatus();
         syncImgH();
       };
-      node._dbEndPick = () => { node._dbActivePick = false; setPickRowShown(false); };
+      node._dbEndPick = () => { node._dbActivePick = false; setPickRowShown(false); setImageSelectShown(false); };
       node._dbRepaintInline = () => {
         [...imgPanel.querySelectorAll(".db-pick-card")].forEach((card, i) => {
           card.classList.toggle("db-pick-sel", node._dbSel.has(i));
@@ -643,6 +660,7 @@ app.registerExtension({
         // flag needed; just make sure any active-pick state is cleared.
         node._dbActivePick = false;
         setPickRowShown(false);
+        setImageSelectShown(false);
         imgPanel.innerHTML = "";
         if (!imgs || !imgs.length) { imgPanel.appendChild(imgEmpty); syncImgH(); return; }
         const rand = Date.now();
@@ -695,6 +713,12 @@ app.registerExtension({
         applyWidths();
         samplerBtn.refresh(); schedulerBtn.refresh();
         noise.paint(); steps.paint(); cfg.paint();
+        // Workflows persist the node's previous expanded preview height. Once
+        // the empty UI has been rebuilt, collapse back to its natural widget
+        // height; image/picker rendering will grow it again when needed.
+        if (!node._dbImages?.length && !node._dbActivePick) {
+          node.setSize(node.computeSize());
+        }
       }));
     };
   },

@@ -13,6 +13,7 @@ from .utils.wildcard_engine import load_wildcard_dict, process
 # Booru tag fetcher: a widget of this (Dirty Talk) node. Imported for the
 # side-effect of registering its /dirtybirds/booru-search route.
 from . import booru  # noqa: F401
+from . import tag_autocomplete  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

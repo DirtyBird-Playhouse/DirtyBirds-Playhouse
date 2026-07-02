@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # After sampling, the node pushes the batch to the browser and BLOCKS until the
 # user multi-selects images inline in the node and confirms. Only picked images
 # (and their matching latents) flow onward. Adapted from the mechanism that used
-# to live in Final Cut: a websocket event + a POST route filling a shared state.
+# uses a websocket event + a POST route filling a shared state.
 EVENT = "dirtybirds-sampler-pick"
 ROUTE = "/dirtybirds/sampler-pick"
 

@@ -1,5 +1,0 @@
-# DirtyBirds Playhouse dependencies.
-# facexlib: face detect/align engine (FaceRestoreHelper) for the Final Cut node's
-# face-restore stage. Restore models (GFPGAN/RestoreFormer) load via spandrel,
-# which ComfyUI already ships.
-facexlib

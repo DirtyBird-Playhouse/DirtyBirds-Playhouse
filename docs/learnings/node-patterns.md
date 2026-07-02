@@ -46,4 +46,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {"DB_SomeNode": "DirtyBirds Some Node"}
 ## Data flow
 
 Prompt -> Loader (encodes) -> Sampler pipe. The Pipe module bundles/routes;
-FinalCut handles output/compositing.
+Fixer optionally performs face correction.

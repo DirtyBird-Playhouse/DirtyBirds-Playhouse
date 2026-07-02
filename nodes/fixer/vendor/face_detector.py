@@ -1,0 +1,180 @@
+import torch
+import numpy as np
+import cv2
+import comfy.model_management as model_management
+from .utils import check_for_interruption
+from .model_manager import ForbiddenVisionModelManager
+from PIL import Image
+import os
+import time
+from datetime import datetime
+
+class ForbiddenVisionFaceDetector:
+    
+    def __init__(self):
+        self.model_manager = ForbiddenVisionModelManager.get_instance()
+        self.debug_dir = None
+        self.debug_session_id = None
+        self.debug_log_path = None
+        self.full_image_for_processing = None
+
+
+    def _create_fallback_mask(self, image_tensor, bbox=None):
+        """Create a simple fallback mask when detection fails"""
+        try:
+            h, w = image_tensor.shape[1], image_tensor.shape[2]
+            
+            if bbox:
+                x1, y1, x2, y2 = bbox
+                mask = np.zeros((h, w), dtype=np.uint8)
+                center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                axes = ((x2 - x1) // 2, (y2 - y1) // 2)
+                cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
+                return mask.astype(np.float32)
+            else:
+                mask = np.zeros((h, w), dtype=np.uint8)
+                center = (w // 2, h // 2)
+                axes = (w // 4, h // 3)
+                cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
+                return mask.astype(np.float32)
+                
+        except Exception as e:
+            self._debug_log(f"Error creating fallback mask: {e}", "ERROR")
+            return np.zeros((512, 512), dtype=np.float32)
+        
+    def _debug_log(self, message, level="INFO"):
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        log_entry = f"[{timestamp}] [{level}] {message}\n"
+        
+        try:
+            # Only write if log path is set (optional debug feature)
+            if self.debug_log_path:
+                with open(self.debug_log_path, 'a') as f:
+                    f.write(log_entry)
+        except:
+            pass
+        
+        if level in ["ERROR", "CRITICAL"]:
+            print(f"[ForbiddenVision] DEBUG {level}: {message}")
+
+
+
+
+    def detect_faces(self, image_tensor, enable_segmentation=True, detection_confidence=0.6, face_selection=0):
+        try:
+            
+            check_for_interruption()
+            
+            image_uint8 = (image_tensor.squeeze(0).cpu().numpy() * 255).astype(np.uint8)
+            self.full_image_for_processing = image_uint8
+            original_h, original_w = image_uint8.shape[:2]
+            
+            
+            detection_model = self.model_manager.load_face_detection_model()
+            if not detection_model:
+                self._debug_log("No face detection model available", "ERROR")
+                return []
+            
+            yolo_image, yolo_scale, yolo_offset = self.model_manager.resize_image_for_yolo(image_uint8)
+            
+            try:
+                yolo_pil = Image.fromarray(yolo_image, mode='RGB')
+                device_str = "0" if model_management.get_torch_device().type == "cuda" else "cpu"
+                results = detection_model.predict(yolo_pil, conf=detection_confidence, verbose=False, device=device_str)
+            except Exception as detection_error:
+                self._debug_log(f"YOLO detection failed: {detection_error}", "ERROR")
+                return []
+            
+            face_masks = []
+            if results and results[0].boxes is not None:
+                boxes = results[0].boxes.xyxy.cpu().numpy()
+                confidences = results[0].boxes.conf.cpu().numpy()
+                
+                
+                for i, (box, conf) in enumerate(zip(boxes, confidences)):
+                    original_bbox = self.model_manager.scale_bbox_back(box, yolo_scale, yolo_offset)
+                    x1, y1, x2, y2 = original_bbox
+                    
+                    
+                    crop_x1, crop_y1, crop_x2, crop_y2, scale_factor = self.model_manager.calculate_face_crop_region(
+                        original_bbox, original_w, original_h
+                    )
+                    crop_coords = (crop_x1, crop_y1, crop_x2, crop_y2)
+                    
+                    
+                    face_crop = self.model_manager.extract_crop_with_padding(image_uint8, crop_coords)
+                    
+                    mask = None
+                    if enable_segmentation:
+                        try:
+                            crop_mask = self.model_manager.segment_face(face_crop)
+                            if crop_mask is not None:
+                                mask = self._map_crop_mask_to_original(crop_mask, crop_coords, original_w, original_h)
+                        except Exception as seg_error:
+                            self._debug_log(f"Face {i}: segmentation failed: {seg_error}", "ERROR")
+
+                    if mask is None:
+                        mask = self.model_manager.create_oval_mask(original_bbox, original_h, original_w).astype(np.float32)
+                        self._debug_log(f"Face {i}: using oval mask fallback")
+                    
+                    face_masks.append(mask)
+            
+            
+            if not face_masks:
+                self._debug_log("No faces detected — passing through unchanged", "INFO")
+                return []
+            
+            if face_selection == 0:
+                result_masks = face_masks
+            elif face_masks and face_selection <= len(face_masks):
+                result_masks = [face_masks[face_selection - 1]]
+            elif face_masks:
+                result_masks = [face_masks[0]]
+            else:
+                result_masks = []
+            
+            return result_masks
+            
+        except Exception as e:
+            self._debug_log(f"Critical error in face detection: {e}", "ERROR")
+            return []
+
+    def _map_crop_mask_to_original(self, crop_mask, crop_coords, original_w, original_h):
+        """Map crop mask back to original image coordinates using robust intersection logic"""
+        crop_x1, crop_y1, crop_x2, crop_y2 = crop_coords
+        crop_w = crop_x2 - crop_x1
+        crop_h = crop_y2 - crop_y1
+        
+        # Resize mask to the conceptual crop size (which might extend off-screen)
+        if crop_mask.shape != (crop_h, crop_w):
+            resized_mask = cv2.resize(crop_mask.astype(np.uint8), (crop_w, crop_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            resized_mask = crop_mask
+        
+        full_mask = np.zeros((original_h, original_w), dtype=np.uint8)
+        
+        # Calculate intersection between the crop rectangle and the image rectangle
+        # Destination indices (clamped to image bounds)
+        dst_x1 = max(0, crop_x1)
+        dst_y1 = max(0, crop_y1)
+        dst_x2 = min(original_w, crop_x2)
+        dst_y2 = min(original_h, crop_y2)
+        
+        # Check if there is a valid intersection
+        if dst_x2 > dst_x1 and dst_y2 > dst_y1:
+            # Source indices (relative to the crop mask)
+            # If crop_x1 is negative (padding on left), src_x1 becomes positive (-crop_x1)
+            # If crop_x1 is positive (inside image), src_x1 is 0 + offset
+            src_x1 = dst_x1 - crop_x1
+            src_y1 = dst_y1 - crop_y1
+            src_x2 = dst_x2 - crop_x1
+            src_y2 = dst_y2 - crop_y1
+            
+            # Perform the copy
+            try:
+                full_mask[dst_y1:dst_y2, dst_x1:dst_x2] = resized_mask[src_y1:src_y2, src_x1:src_x2]
+            except Exception as e:
+                print(f"[ForbiddenVision] Debug: Mask mapping error. Dst: {dst_y2-dst_y1}x{dst_x2-dst_x1}, Src: {src_y2-src_y1}x{src_x2-src_x1}")
+                raise e
+        
+        return full_mask.astype(np.float32)
