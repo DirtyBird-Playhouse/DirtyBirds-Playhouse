@@ -23,8 +23,9 @@ import folder_paths
 
 logger = logging.getLogger(__name__)
 
-# This node's own directory (…/custom_nodes/DirtyBirds-Playhouse).
-_NODE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Node pack root (…/custom_nodes/DirtyBirds-Playhouse). This file lives two
+# levels down (nodes/folders/), hence the double dirname up.
+_NODE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # …/custom_nodes
 _CUSTOM_NODES_DIR = os.path.dirname(_NODE_DIR)
 

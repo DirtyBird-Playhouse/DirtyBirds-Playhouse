@@ -1,5 +1,5 @@
 /**
- * DirtyBirds Playhouse — Prompt Muse node UI.
+ * DirtyBirds Playhouse — Prompt Enhance node UI.
  *
  * Text-only LM Studio prompt writer. Model and endpoint are owned by LM Studio;
  * this node shows status and lets the user pick a system prompt file from
@@ -7,7 +7,10 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, fetchJSON, nodeInnerW } from "./db_shared.js";
+import {
+  DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, fetchJSON, nodeInnerW,
+  hideWidget as hideWidgetShared, makeCollapsibleSectionLabel,
+} from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -42,7 +45,9 @@ function showPromptFlyout(title, prompts, current, onPick) {
   if (!prompts || !prompts.length) {
     const empty = document.createElement("div");
     empty.style.cssText = "padding:14px;color:#888;font-size:12px;";
-    empty.textContent = "No prompt files found in user-files/LM Studio";
+    empty.textContent = title === "Prompt Source"
+      ? "No Prompt Builder nodes found"
+      : "No prompt files found in user-files/LM Studio";
     list.appendChild(empty);
   }
 
@@ -83,6 +88,13 @@ app.registerExtension({
       this._dbMusePaintResponse?.();
     };
 
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = onConfigure?.apply(this, arguments);
+      requestAnimationFrame(() => this._dbMuseRestorePreferences?.());
+      return result;
+    };
+
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
@@ -112,18 +124,7 @@ app.registerExtension({
         }
       }
 
-      function hideWidget(name) {
-        const w = node.widgets?.find((widget) => widget.name === name);
-        if (!w) return undefined;
-        w.computeSize = () => [0, 0];
-        w.serializeValue = () => w.value;
-        w.options = { ...(w.options || {}), hidden: true };
-        if (w.element?.style) w.element.style.display = "none";
-        if (w.inputEl?.style) w.inputEl.style.display = "none";
-        if (typeof w.setHidden === "function") w.setHidden(true);
-        else if ("hidden" in w) w.hidden = true;
-        return w;
-      }
+      const hideWidget = (name) => hideWidgetShared(node, name);
 
       const enabledWidget = hideWidget("enabled");
       const instructionWidget = hideWidget("instruction");
@@ -140,7 +141,7 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-muse-panel";
 
-      const titleEl = makeSectionLabel("The Writer");
+      const titleEl = makeSectionLabel("Prompt Enhance");
       const titleRow = document.createElement("div");
       titleRow.className = "db-muse-title-row";
       const power = document.createElement("button");
@@ -182,7 +183,12 @@ app.registerExtension({
       const tempRow = makeSliderRow("TEMP", temperatureWidget, 0, 2, 0.05, (v) => Number(v).toFixed(2));
       const tokenRow = makeStepperRow("TOKENS", maxTokensWidget, 16, 8192, 16);
 
-      const requestLabel = makeSectionLabel("The Request");
+      const requestLabel = makeSectionLabel("Enhancement Instructions");
+      const sourceStatus = document.createElement("div");
+      sourceStatus.className = "db-muse-source-status";
+      sourceStatus.style.cursor = "pointer";
+      const sourcePreview = document.createElement("div");
+      sourcePreview.className = "db-muse-source-preview";
       const instructionArea = document.createElement("textarea");
       instructionArea.className = "db-script-textarea db-muse-textarea";
       instructionArea.placeholder = "prompt writing request";
@@ -193,16 +199,69 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       });
 
-      const responseLabel = makeSectionLabel("LM Response");
       const responseBox = document.createElement("textarea");
       responseBox.className = "db-script-textarea db-muse-response";
       responseBox.placeholder = "run the node to see the LM response";
-      responseBox.readOnly = true;
       responseBox.spellcheck = false;
+      responseBox.style.display = "none";
+      const responseSection = makeCollapsibleSectionLabel("LM Response", {
+        expanded: false,
+        onChange: (expanded) => {
+          responseBox.style.display = expanded ? "block" : "none";
+          requestAnimationFrame(() => {
+            node.setSize(node.computeSize());
+            node.setDirtyCanvas(true, true);
+          });
+        },
+      });
 
       const sendBtn = document.createElement("button");
       sendBtn.className = "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
-      sendBtn.textContent = "Send to Dirty Talk";
+      sendBtn.textContent = "Apply to Prompt Builder";
+      const generateBtn = document.createElement("button");
+      generateBtn.className = "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
+      generateBtn.textContent = "Enhance Prompt";
+
+      node.properties = node.properties || {};
+      if (!node.properties.db_muse_apply_mode) node.properties.db_muse_apply_mode = "preview";
+      const modeRow = document.createElement("div");
+      modeRow.className = "db-muse-mode-row";
+      const modeButtons = [
+        ["preview", "Preview Only"],
+        ["replace", "Replace"],
+        ["append", "Append"],
+      ].map(([value, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "db-lib-btn db-muse-mode-btn";
+        button.textContent = label;
+        button.addEventListener("click", () => {
+          node.properties.db_muse_apply_mode = value;
+          paintApplyMode();
+          node.setDirtyCanvas(true, true);
+        });
+        modeRow.append(button);
+        return [value, button];
+      });
+
+      const advancedContent = document.createElement("div");
+      advancedContent.className = "db-muse-advanced";
+      advancedContent.style.display = "none";
+      advancedContent.textContent = "Legacy text_in wiring is enabled while this section is open.";
+      const advancedSection = makeCollapsibleSectionLabel("Advanced Input", {
+        expanded: false,
+        onChange: (expanded) => {
+          advancedContent.style.display = expanded ? "block" : "none";
+          setLegacyInputVisible(expanded);
+          requestAnimationFrame(() => {
+            node.setSize(node.computeSize());
+            node.setDirtyCanvas(true, true);
+          });
+        },
+      });
+      const actionRow = document.createElement("div");
+      actionRow.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:7px;width:100%;";
+      actionRow.append(generateBtn, sendBtn);
 
       function isEnabled() {
         return enabledWidget?.value !== false;
@@ -214,19 +273,43 @@ app.registerExtension({
         power.classList.toggle("is-on", on);
         power.setAttribute("aria-pressed", on ? "true" : "false");
         powerText.textContent = on ? "On" : "Off";
-        lmStatus.textContent = on ? (node._dbMuseLmStatus || "LM Studio: checking") : "Prompt Muse: off";
+        lmStatus.textContent = on ? (node._dbMuseLmStatus || "LM Studio: checking") : "Prompt Enhance: off";
         lmStatus.dataset.tone = on ? (node._dbMuseLmTone || "") : "off";
         promptRow.classList.toggle("db-disabled", !on);
         tempRow.classList.toggle("db-disabled", !on);
         tokenRow.classList.toggle("db-disabled", !on);
         instructionArea.disabled = !on;
-        sendBtn.disabled = !on || !(node._dbMusePositive || node._dbMuseNegative);
+        generateBtn.disabled = !on || !!node._dbMuseGenerating;
+        sendBtn.disabled = !on || node.properties.db_muse_apply_mode === "preview" ||
+          !(node._dbMusePositive || node._dbMuseNegative);
         syncPanelH();
+      }
+
+      function paintApplyMode() {
+        const mode = node.properties.db_muse_apply_mode || "preview";
+        for (const [value, button] of modeButtons) {
+          button.classList.toggle("db-active", value === mode);
+          button.setAttribute("aria-pressed", value === mode ? "true" : "false");
+        }
+        sendBtn.textContent = mode === "append"
+          ? "Append to Prompt Builder"
+          : "Apply to Prompt Builder";
+        paintPower();
+      }
+
+      function setLegacyInputVisible(visible) {
+        const input = node.inputs?.find((slot) => slot.name === "text_in");
+        if (!input) return;
+        // ComfyUI versions that honor hidden suppress the slot; the blank label
+        // keeps older versions unobtrusive without removing workflow data.
+        input.hidden = !visible && input.link == null;
+        input.label = visible || input.link != null ? "text_in (legacy)" : "";
+        node.setDirtyCanvas(true, true);
       }
 
       power.addEventListener("click", () => {
         if (enabledWidget) enabledWidget.value = !isEnabled();
-        node._dbMuseRunStatus = isEnabled() ? "" : "Prompt Muse: off";
+        node._dbMuseRunStatus = isEnabled() ? "" : "Prompt Enhance: off";
         paintPower();
         node.setDirtyCanvas(true, true);
       });
@@ -241,28 +324,160 @@ app.registerExtension({
         }
       }
 
-      function findDirtyTalkNode() {
+      function promptBuildersByDistance() {
         const nodes = app.graph?._nodes || [];
-        return nodes.find((n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt");
+        return nodes
+          .filter((n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt")
+          .sort((a, b) => {
+            const distance = (candidate) => {
+              const dx = Number(candidate.pos?.[0] || 0) - Number(node.pos?.[0] || 0);
+              const dy = Number(candidate.pos?.[1] || 0) - Number(node.pos?.[1] || 0);
+              return (dx * dx) + (dy * dy);
+            };
+            return distance(a) - distance(b);
+          });
+      }
+
+      function findDirtyTalkNode() {
+        const builders = promptBuildersByDistance();
+        const selectedId = Number(node.properties.db_muse_source_node_id);
+        return builders.find((builder) => Number(builder.id) === selectedId) || builders[0];
+      }
+
+      function promptBuilderText(target = findDirtyTalkNode()) {
+        const widget = target?.widgets?.find((w) => w.name === "positive");
+        return String(target?._dbPositiveTextarea?.value ?? widget?.value ?? "").trim();
+      }
+
+      function paintPromptSource() {
+        const builders = promptBuildersByDistance();
+        const target = findDirtyTalkNode();
+        if (!target) {
+          sourceStatus.textContent = "Source · No Prompt Builder found";
+          sourceStatus.dataset.tone = "err";
+          sourceStatus.title = "Add a Prompt Builder node to enable automatic prompt input.";
+          sourcePreview.textContent = "Add a Prompt Builder to supply the source prompt.";
+          sourcePreview.dataset.empty = "true";
+          return;
+        }
+        node.properties.db_muse_source_node_id = target.id;
+        const text = promptBuilderText(target);
+        const hasText = !!text;
+        const name = target.title || `Prompt Builder #${target.id}`;
+        sourceStatus.textContent = `Source · ${name}${hasText ? "" : " (empty)"}`;
+        sourceStatus.dataset.tone = hasText ? "ok" : "";
+        sourceStatus.title = builders.length > 1
+          ? "Click to choose a different Prompt Builder."
+          : "Positive prompt is read automatically when Generate Prompt is clicked.";
+        sourcePreview.textContent = text || "This Prompt Builder has no positive prompt yet.";
+        sourcePreview.dataset.empty = hasText ? "false" : "true";
+      }
+
+      sourceStatus.addEventListener("click", () => {
+        const builders = promptBuildersByDistance();
+        if (builders.length < 2) return;
+        showPromptFlyout(
+          "Prompt Source",
+          builders.map((builder) => ({
+            name: builder.title || `Prompt Builder #${builder.id}`,
+            file: String(builder.id),
+          })),
+          String(node.properties.db_muse_source_node_id || ""),
+          (choice) => {
+            node.properties.db_muse_source_node_id = Number(choice.file);
+            paintPromptSource();
+            node.setDirtyCanvas(true, true);
+          },
+        );
+      });
+      window.addEventListener("dirtybirds:prompt-source-changed", (event) => {
+        if (Number(event.detail?.nodeId) === Number(findDirtyTalkNode()?.id)) {
+          paintPromptSource();
+        }
+      });
+
+      function appendPrompt(current, addition) {
+        const left = String(current || "").trim().replace(/,\s*$/, "");
+        const right = String(addition || "").trim().replace(/^\s*,/, "");
+        return left && right ? `${left}, ${right}` : left || right;
       }
 
       function sendToDirtyTalk() {
         const target = findDirtyTalkNode();
         if (!target) {
-          responseBox.value = "No Dirty Talk node found.";
+          responseBox.value = "No Prompt Builder node found.";
           syncPanelH();
           return;
         }
-        setWidgetText(target, "positive", node._dbMusePositive || "");
-        setWidgetText(target, "negative", node._dbMuseNegative || "");
+        const mode = node.properties.db_muse_apply_mode || "preview";
+        if (mode === "preview") return;
+        const currentPositive = promptBuilderText(target);
+        const currentNegative = String(
+          target?._dbNegativeTextarea?.value ??
+          target.widgets?.find((widget) => widget.name === "negative")?.value ?? ""
+        ).trim();
+        const positive = mode === "append"
+          ? appendPrompt(currentPositive, node._dbMusePositive)
+          : node._dbMusePositive;
+        const negative = mode === "append"
+          ? appendPrompt(currentNegative, node._dbMuseNegative)
+          : (node._dbMuseNegative || currentNegative);
+        setWidgetText(target, "positive", positive || "");
+        setWidgetText(target, "negative", negative || "");
+        paintPromptSource();
         target.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
       }
 
       sendBtn.addEventListener("click", sendToDirtyTalk);
 
+      generateBtn.addEventListener("click", async () => {
+        if (!isEnabled() || node._dbMuseGenerating) return;
+        node._dbMuseGenerating = true;
+          node._dbMuseRunStatus = "Prompt Enhance: generating";
+        responseBox.value = "Generating prompt…";
+        paintPower();
+        try {
+          const sourceText = promptBuilderText();
+          paintPromptSource();
+          const response = await fetch("/dirtybirds/muse-generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              enabled: true,
+              instruction: instructionWidget?.value || instructionArea.value || "",
+              temperature: Number(temperatureWidget?.value ?? 0.7),
+              max_tokens: Number(maxTokensWidget?.value ?? 1024),
+              prompt_file: promptFileWidget?.value || "",
+              text_in: sourceText,
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+          node._dbMusePositive = data?.positive || "";
+          node._dbMuseNegative = data?.negative || "";
+          node._dbMuseRunStatus = data?.status || "Prompt Enhance: on";
+        } catch (error) {
+          node._dbMusePositive = "";
+          node._dbMuseNegative = "";
+          node._dbMuseRunStatus = `Prompt Enhance error: ${error?.message || error}`;
+        } finally {
+          node._dbMuseGenerating = false;
+          node._dbMusePaintResponse();
+          node.setDirtyCanvas(true, true);
+        }
+      });
+
       node._dbMusePositive = node._dbMusePositive || "";
       node._dbMuseNegative = node._dbMuseNegative || "";
+      responseBox.addEventListener("input", () => {
+        const text = responseBox.value || "";
+        const positiveMatch = text.match(/(?:^|\n)POSITIVE:\s*([\s\S]*?)(?=\n\s*NEGATIVE:|$)/i);
+        const negativeMatch = text.match(/(?:^|\n)NEGATIVE:\s*([\s\S]*)$/i);
+        node._dbMusePositive = (positiveMatch ? positiveMatch[1] : text).trim();
+        node._dbMuseNegative = (negativeMatch?.[1] || "").trim();
+        paintPower();
+      });
       node._dbMusePaintResponse = function () {
         const pos = node._dbMusePositive || "";
         const neg = node._dbMuseNegative || "";
@@ -327,12 +542,17 @@ app.registerExtension({
       leftCol.append(promptRow, lmStatus);
       rightCol.append(tempRow, tokenRow);
       split.append(leftCol, divider, rightCol);
-      panel.append(titleRow, split, requestLabel, instructionArea, responseLabel, responseBox, sendBtn);
+      panel.append(titleRow, split, sourceStatus, sourcePreview, requestLabel,
+        instructionArea, modeRow, responseSection.label, responseBox, actionRow,
+        advancedSection.label, advancedContent);
 
       const panelWidget = node.addDOMWidget("db_muse_panel", "customhtml", panel, {
         serialize: false,
-        height: 260,
-        getMinHeight: () => Math.max(240, panel.scrollHeight || 240),
+        getMinHeight: () => {
+          const responseH = responseSection.isExpanded() ? 90 : 0;
+          const advancedH = advancedSection.isExpanded() ? 28 : 0;
+          return 292 + responseH + advancedH;
+        },
       });
 
       function makeSliderRow(label, widget, min, max, step, fmt) {
@@ -393,13 +613,7 @@ app.registerExtension({
 
       function syncPanelH() {
         applyWidths();
-        requestAnimationFrame(() => {
-          const h = Math.max(240, panel.scrollHeight || 240);
-          try { panelWidget.height = h; } catch (_) {}
-          panelWidget.computedHeight = h;
-          node.size[1] = Math.max(310, h + 78);
-          node.setDirtyCanvas(true, true);
-        });
+        node.setDirtyCanvas(true, true);
       }
 
       const origResize = node.onResize;
@@ -408,12 +622,23 @@ app.registerExtension({
         origResize?.call(this, size);
         syncPanelH();
       };
+      node.resizable = true;
+      node.min_height = 340;
+      node._dbMuseRestorePreferences = () => {
+        if (!node.properties.db_muse_apply_mode) node.properties.db_muse_apply_mode = "preview";
+        paintPromptSource();
+        paintApplyMode();
+        setLegacyInputVisible(false);
+      };
 
       loadPromptOptions();
       refreshLmStatus();
+      paintPromptSource();
+      setLegacyInputVisible(false);
+      paintApplyMode();
       paintPower();
       node._dbMusePaintResponse();
-      requestAnimationFrame(() => requestAnimationFrame(syncPanelH));
+      requestAnimationFrame(syncPanelH);
     };
   },
 });

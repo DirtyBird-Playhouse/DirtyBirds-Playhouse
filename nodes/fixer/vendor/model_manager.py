@@ -1,27 +1,21 @@
 import os
+import importlib.util
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import cv2
 import folder_paths
-import kornia
 import comfy.model_management as model_management
 from .utils import check_for_interruption
 from huggingface_hub import hf_hub_download
 from ultralytics import YOLO
 
 from .neural_train import (
-    rgb_to_yuv_bt601,
-    yuv_to_rgb_bt601,
     BilateralGridEditor,
 )
 
-try:
-    import timm
-    TIMM_AVAILABLE = True
-except ImportError:
-    TIMM_AVAILABLE = False
+TIMM_AVAILABLE = importlib.util.find_spec("timm") is not None
+if not TIMM_AVAILABLE:
     print("Warning: timm not installed. Neural corrector will be unavailable.")
 
 
@@ -173,11 +167,7 @@ class ForbiddenVisionModelManager:
 
     def _check_onnx_available(self):
         """Check if onnxruntime is available for ONNX model loading."""
-        try:
-            import onnxruntime
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("onnxruntime") is not None
 
     def load_face_detection_model(self):
         model_name_pt   = 'ForbiddenVision_face_detect_v1.pt'
@@ -681,4 +671,3 @@ def _forward_with_strength(
     out = torch.lerp(base, set_lum(base, L_final), t) if t > 0 else base
     out = shadow_crush_restore(out, orig, opacity=0.10)
     return out.clamp(0.0, 1.0).float(), aux
-

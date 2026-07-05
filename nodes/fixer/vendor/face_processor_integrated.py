@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-import random 
 import nodes
 import folder_paths
 import comfy.model_management as model_management
@@ -667,9 +666,6 @@ class ForbiddenVisionFaceProcessorIntegrated:
                 
                 if face_selection != 0:
                     print(f"[Face Processor] Wildcard syntax detected — face_selection ({face_selection}) is overridden. Processing all faces with per-face prompts.")
-            else:
-                sorted_indices = list(range(len(face_masks)))
-            
             # --- Extract base prompt texts for per-face re-encoding ---
             def extract_original_text(conditioning):
                 try:

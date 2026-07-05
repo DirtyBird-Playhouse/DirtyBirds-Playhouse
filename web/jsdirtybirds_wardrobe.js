@@ -1,11 +1,11 @@
 /**
- * DirtyBirds Playhouse — Pillow Talk node UI.
+ * DirtyBirds Playhouse — The Wardrobe node UI (formerly "Pillow Talk").
  *
  * Themed to match the suite. Add LoRAs via a flyout (from /dirtybirds/loras);
  * each LoRA's trigger words (from /dirtybirds/lora-meta) become toggleable,
  * editable chips. Active chip text is serialized into the hidden
  * `trigger_words_data` widget and pushed into the Dirty Talk positive prompt
- * via the "Send to Dirty Talk" button.
+ * via the "Send to Prompt Builder" button.
  */
 
 import { app } from "../../../scripts/app.js";
@@ -38,7 +38,7 @@ app.registerExtension({
 
       const widthEls = [];
 
-      // Header already reads "Pillow Talk" — no redundant in-node title.
+      // Header already reads "The Wardrobe" — no redundant in-node title.
 
       // ── Add-LoRA button ──────────────────────────────────────────────────────
       const addBtn = document.createElement("button");
@@ -185,7 +185,7 @@ app.registerExtension({
       // ── Send active trigger words to Dirty Talk positive prompt ────────────
       const sendBtn = document.createElement("button");
       sendBtn.className = "db-lib-btn db-lora-add-open-btn";
-      sendBtn.textContent = "Send to Dirty Talk";
+      sendBtn.textContent = "Send to Prompt Builder";
       sendBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
       const sendWrap = document.createElement("div");
       sendWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -202,7 +202,7 @@ app.registerExtension({
       function appendToDirtyTalk(text) {
         const target = findDirtyTalkNode();
         if (!target) {
-          status.textContent = "Add a Dirty Talk node first.";
+          status.textContent = "Add a Prompt Builder node first.";
           return;
         }
         const posWidget = target.widgets?.find(w => w.name === "positive");
@@ -218,7 +218,7 @@ app.registerExtension({
         }
         target.setDirtyCanvas?.(true, true);
         app.graph?.setDirtyCanvas?.(true, true);
-        status.textContent = "Sent active trigger words to Dirty Talk.";
+        status.textContent = "Sent active trigger words to Prompt Builder.";
       }
 
       sendBtn.addEventListener("click", () => {

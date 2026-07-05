@@ -5,6 +5,7 @@ final prompt in markdown, and exposes routes for explicit prompt saving.
 """
 
 import os
+import json
 import logging
 
 import numpy as np
@@ -200,6 +201,10 @@ class DirtyBirdsSavePrompt:
                 "positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
                 "negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
             },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
     RETURN_TYPES = ()
@@ -210,7 +215,7 @@ class DirtyBirdsSavePrompt:
 
     def save(self, filename_prefix="DirtyBirds",
              prompts_file=DEFAULT_PROMPTS_FILE, pipe=None, images=None,
-             positive=None, negative=None):
+             positive=None, negative=None, prompt=None, extra_pnginfo=None):
         if images is None and pipe is not None:
             images = pipe.get("images")
         if images is None:
@@ -234,6 +239,12 @@ class DirtyBirdsSavePrompt:
             img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
             metadata = PngInfo()
+            # Embed the executed graph + workflow (like stock SaveImage) so the
+            # PNG can be dragged back onto the ComfyUI canvas to restore it.
+            if prompt is not None:
+                metadata.add_text("prompt", json.dumps(prompt))
+            for key, value in (extra_pnginfo or {}).items():
+                metadata.add_text(key, json.dumps(value))
             if pos_out:
                 metadata.add_text("prompt_positive", pos_out)
             if neg_out:
@@ -250,4 +261,4 @@ class DirtyBirdsSavePrompt:
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsSavePrompt": DirtyBirdsSavePrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "Save — The Archive"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "💾 The Archive · Save Image & Prompt"}

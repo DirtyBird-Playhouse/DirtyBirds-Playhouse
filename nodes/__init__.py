@@ -42,6 +42,10 @@ from .fixer import (
     NODE_CLASS_MAPPINGS as _FIXER_CLASSES,
     NODE_DISPLAY_NAME_MAPPINGS as _FIXER_NAMES,
 )
+from .inpaint import (
+    NODE_CLASS_MAPPINGS as _INPAINT_CLASSES,
+    NODE_DISPLAY_NAME_MAPPINGS as _INPAINT_NAMES,
+)
 
 # Imported for side effects: route registration
 from . import folders  # noqa: F401
@@ -57,6 +61,7 @@ NODE_CLASS_MAPPINGS = {
     **_WARDROBE_CLASSES,
     **_SAVEPROMPT_CLASSES,
     **_FIXER_CLASSES,
+    **_INPAINT_CLASSES,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -69,6 +74,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **_WARDROBE_NAMES,
     **_SAVEPROMPT_NAMES,
     **_FIXER_NAMES,
+    **_INPAINT_NAMES,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

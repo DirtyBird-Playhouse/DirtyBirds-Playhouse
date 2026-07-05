@@ -157,6 +157,6 @@ NODE_CLASS_MAPPINGS = {
     "DirtyBirdsPipeIn":  DirtyBirdsPipeIn,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DirtyBirdsPipeOut": "📤 Pipe Out — Undress",
-    "DirtyBirdsPipeIn":  "📥 Pipe In — Dress",
+    "DirtyBirdsPipeOut": "📤 Undress · Pipe Out",
+    "DirtyBirdsPipeIn":  "📥 Dress · Pipe In",
 }

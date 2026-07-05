@@ -1,12 +1,9 @@
-import torch
 import numpy as np
 import cv2
 import comfy.model_management as model_management
 from .utils import check_for_interruption
 from .model_manager import ForbiddenVisionModelManager
 from PIL import Image
-import os
-import time
 from datetime import datetime
 
 class ForbiddenVisionFaceDetector:

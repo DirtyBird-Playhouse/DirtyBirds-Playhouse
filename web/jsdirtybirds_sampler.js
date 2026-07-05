@@ -4,12 +4,16 @@
  * Styled to match the Loader: titled sections, flyout pickers, sliders.
  *   • The Method — Sampler | Scheduler (two columns w/ splitter), noise slider
  *     (CPU / CPU+GPU / GPU), steps, cfg.
- *   • The Payoff — full-width in-node preview of the generated image(s).
+ *   • The Audition — full-width in-node preview of the generated image(s).
+ *   • Output — image-picking and cycler text-overlay behavior.
  */
 
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, nodeInnerW } from "./db_shared.js";
+import {
+  DB_COLOR, DB_BGCOLOR, ensureStylesheet, hideWidget as hideWidgetShared,
+  makeSectionLabel, nodeInnerW,
+} from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -17,10 +21,9 @@ const NOISE_MODES = ["cpu", "both", "gpu"];
 const NOISE_LABELS = { cpu: "CPU", both: "Both", gpu: "GPU" };
 
 // ── Interactive image picker ────────────────────────────────────────────────
-// After sampling, the Python node blocks and pushes the batch here. DEFAULT:
-// the user selects images inline INSIDE the node (no popup). Optionally they can
-// open a full-screen POPUP (cg-image-filter style) for a big view; both share
-// the same selection and the same Send/Cancel.
+// After sampling, the Python node blocks and pushes the batch into a modal
+// picker. Keeping selection outside the node avoids mixing ComfyUI's canvas
+// preview widget with absolutely positioned DOM widgets.
 const PICK_EVENT = "dirtybirds-sampler-pick";
 const PICK_ROUTE = "/dirtybirds/sampler-pick";
 
@@ -70,7 +73,7 @@ function sendPick() {
 }
 function cancelPick() { if (_pick) finishPick([]); }
 
-// ── Full-screen popup (opt-in) ──────────────────────────────────────────────
+// ── Image picker popup ──────────────────────────────────────────────────────
 function closeFullScreen() {
   if (_fs?.overlay && document.fullscreenElement === _fs.overlay) {
     document.exitFullscreen?.().catch?.(() => {});
@@ -83,7 +86,7 @@ function closeFullScreen() {
 function _fsKeydown(e) {
   if (!_fs || !_pick) return;
   const sel = _pick.node._dbSel;
-  if (e.key === "Escape") { e.preventDefault(); closeFullScreen(); }
+  if (e.key === "Escape") { e.preventDefault(); cancelPick(); }
   else if (e.key === "Enter") { e.preventDefault(); sendPick(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
     e.preventDefault();
@@ -96,7 +99,7 @@ function _fsKeydown(e) {
     _fs.updateStatus();
   }
 }
-function openFullScreen() {
+function openPickerPopup() {
   if (!_pick?.node) return;
   closeFullScreen();
   const node = _pick.node;
@@ -105,15 +108,15 @@ function openFullScreen() {
   let relayout = () => {};
 
   const overlay = document.createElement("div");
-  overlay.className = "db-flyout-overlay db-sampler-fs-overlay";
+  overlay.className = "db-flyout-overlay db-sampler-picker-overlay";
   const panel = document.createElement("div");
-  panel.className = "db-lora-flyout db-sampler-fs-panel";
+  panel.className = "db-lora-flyout db-sampler-picker-panel";
 
   const header = document.createElement("div");
   header.className = "db-flyout-header";
   const title = document.createElement("span");
   title.className = "db-flyout-title";
-  title.textContent = "🎯 Pick images — full screen";
+  title.textContent = "🎯 Pick images";
   const countdown = document.createElement("span");
   countdown.className = "db-flyout-title";
   countdown.style.opacity = "0.6";
@@ -165,11 +168,6 @@ function openFullScreen() {
   statusEl.style.cssText = "font-size:11px;color:#888;";
   const btns = document.createElement("div");
   btns.style.cssText = "display:flex;gap:8px;";
-  const hideBtn = document.createElement("button");
-  hideBtn.className = "db-lora-add-open-btn";
-  hideBtn.style.cssText = "width:auto;padding:6px 14px;";
-  hideBtn.textContent = "🗗 Exit full screen";
-  hideBtn.addEventListener("click", closeFullScreen);
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "db-lora-add-open-btn";
   cancelBtn.style.cssText = "width:auto;padding:6px 14px;";
@@ -180,13 +178,12 @@ function openFullScreen() {
   sendBtn.style.cssText = "width:auto;padding:6px 16px;";
   sendBtn.textContent = "Send selection";
   sendBtn.addEventListener("click", sendPick);
-  btns.append(hideBtn, cancelBtn, sendBtn);
+  btns.append(cancelBtn, sendBtn);
   footer.append(statusEl, btns);
   panel.appendChild(footer);
 
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
-  overlay.requestFullscreen?.().catch?.(() => {});
 
   function imageSize() {
     const first = images[0] || {};
@@ -218,7 +215,7 @@ function openFullScreen() {
   function updateStatus() {
     statusEl.textContent = sel.size
       ? `${sel.size} selected · Enter to send`
-      : "Click images to keep · Esc exits · Ctrl+A all";
+      : "Click images to keep · Esc cancels · Ctrl+A all";
   }
   updateStatus();
   requestAnimationFrame(relayout);
@@ -253,7 +250,7 @@ api.addEventListener(PICK_EVENT, (e) => {
 });
 
 // Expose for the per-node inline controls (defined in onNodeCreated).
-const PICK = { sendPick, cancelPick, openFullScreen, viewURL: _viewURL };
+const PICK = { sendPick, cancelPick, openPickerPopup, viewURL: _viewURL };
 
 // Compact list flyout (ported from the loader, reusing the global .db-flyout* CSS).
 function showListFlyout(title, names, current, onPick) {
@@ -302,9 +299,9 @@ app.registerExtension({
       onExecuted?.apply(this, arguments);
       const imgs = message?.db_images;
       if (Array.isArray(imgs)) this._dbRenderImages?.(imgs);
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (!this._dbActivePick) this.setSize(this.computeSize());
-      }));
+      // Do not recompute the node here. Core has just reserved the correct
+      // height for its native preview; shrinking to DOM-widget height makes
+      // that preview render through the bottom of the node.
     };
 
     // Keep ComfyUI's native preview visible during sampling and after the run.
@@ -331,19 +328,18 @@ app.registerExtension({
 
       // ── helpers ───────────────────────────────────────────────────────────
       function hideWidget(name) {
-        const w = node.widgets?.find(w => w.name === name);
-        if (!w) return undefined;
-        w.computeSize    = () => [0, 0];
-        w.serializeValue = () => w.value;
-        if (typeof w.setHidden === "function") w.setHidden(true);
-        else if ("hidden" in w) w.hidden = true;
-        return w;
+        return hideWidgetShared(node, name);
       }
       const widthEls = [];
+      // The title needs its full line box; hidden native widgets—not headings—
+      // must cancel LiteGraph's four-pixel widget-row spacing.
+      const TITLE_H = 26;
       function addTitle(name, text) {
         const el = makeSectionLabel(text);
         el.style.cssText += "box-sizing:border-box;overflow:hidden;padding:0;margin:0;";
-        node.addDOMWidget(name, "customhtml", el, { serialize: false, height: 26, getMinHeight: () => 26 });
+        node.addDOMWidget(name, "customhtml", el, {
+          serialize: false, height: TITLE_H, getMinHeight: () => TITLE_H,
+        });
         widthEls.push(el);
       }
       function makeFlyoutBtn(tag, getLabel, getValues, getCurrent, onPick) {
@@ -381,6 +377,7 @@ app.registerExtension({
       const cfgWidget       = hideWidget("cfg");
       const noiseWidget     = hideWidget("noise_mode");
       const batchModeWidget = hideWidget("batch_mode");
+      const overlayWidget   = hideWidget("overlay_enabled");
 
       // ── 1. THE METHOD — buttons left | splitter | sliders right ───────────
       addTitle("db_methodlabel", "The Method");
@@ -426,9 +423,13 @@ app.registerExtension({
 
       const cols = document.createElement("div");
       cols.className = "db-talent-columns";
-      cols.style.cssText = "box-sizing:border-box;overflow:hidden;align-items:flex-start;";
+      // A fixed three-track grid keeps the Method panel genuinely two-column.
+      // Flex allowed the slider column's intrinsic content to steal width from
+      // the sampler column at narrower saved node sizes.
+      cols.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) 1px minmax(0,1fr);box-sizing:border-box;overflow:hidden;align-items:stretch;";
 
-      // Left column: stacked Sampler + Scheduler buttons (top-aligned).
+      // Left column: sampler controls only. Output behavior lives in its own
+      // bottom section so it is not mistaken for part of the sampling method.
       const leftCol = document.createElement("div"); leftCol.className = "db-talent-loras";
       leftCol.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:0;";
       const batchBtn = document.createElement("button");
@@ -436,9 +437,23 @@ app.registerExtension({
       batchBtn.style.cssText = "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
       let _batchOn = !!batchModeWidget?.value;
       function paintBatchMode() {
-        batchBtn.textContent = _batchOn ? "Batch: ON" : "Batch: OFF";
-        batchBtn.dataset.tone = _batchOn ? "random" : "fixed";
+        batchBtn.textContent = _batchOn ? "Pick Image: OFF" : "Pick Image: ON";
+        batchBtn.dataset.tone = _batchOn ? "fixed" : "random";
       }
+      const overlayBtn = document.createElement("button");
+      overlayBtn.className = "db-lib-btn db-lora-add-open-btn";
+      overlayBtn.style.cssText = "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
+      function paintOverlay() {
+        const enabled = !!overlayWidget?.value;
+        overlayBtn.textContent = enabled ? "Text Overlay: ON" : "Text Overlay: OFF";
+        overlayBtn.dataset.tone = enabled ? "random" : "fixed";
+      }
+      overlayBtn.addEventListener("click", () => {
+        if (overlayWidget) overlayWidget.value = !overlayWidget.value;
+        paintOverlay();
+        node.setDirtyCanvas(true, true);
+      });
+      paintOverlay();
       function syncPickerVisibility() {
         const showSelect = !_batchOn && !!node._dbActivePick;
         const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
@@ -465,9 +480,10 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       });
       paintBatchMode();
-      leftCol.append(samplerBtn.row, schedulerBtn.row, batchBtn);
+      leftCol.append(samplerBtn.row, schedulerBtn.row);
 
       const divider = document.createElement("div"); divider.className = "db-talent-divider";
+      divider.style.cssText = "width:1px;margin:0;align-self:stretch;";
 
       // Right column: stacked Noise / Steps / CFG sliders.
       const rightCol = document.createElement("div"); rightCol.className = "db-talent-triggerwords";
@@ -475,17 +491,17 @@ app.registerExtension({
       rightCol.append(noise.row, steps.row, cfg.row);
 
       cols.append(leftCol, divider, rightCol);
-      const METHOD_H = 108;
+      const METHOD_H = 84;
       cols.style.height = METHOD_H + "px";
       node.addDOMWidget("db_method_cols", "customhtml", cols, {
         serialize: false, height: METHOD_H, getMinHeight: () => METHOD_H,
       });
       widthEls.push(cols);
 
-      // ── 2. THE PAYOFF — in-node preview of the picked image(s) ────────────
+      // ── 2. THE AUDITION — in-node preview of the picked image(s) ──────────
       // Selection happens in the popup modal (see openPickModal); this just
       // shows the result after the run completes.
-      addTitle("db_payofflabel", "The Payoff");
+      addTitle("db_payofflabel", "The Audition");
       const imgPanel = document.createElement("div");
       imgPanel.className = "db-pick-grid";
       const imgEmpty = document.createElement("div");
@@ -518,6 +534,18 @@ app.registerExtension({
         }));
       }
       setImageSelectShown(false);
+
+      // ── 3. OUTPUT — post-generation behavior ─────────────────────────────
+      // These settings affect what happens after sampling, so keep them
+      // together at the bottom instead of mixing them into The Method.
+      addTitle("db_outputlabel", "Output");
+      const outputControls = document.createElement("div");
+      outputControls.className = "db-sampler-output-controls";
+      outputControls.append(batchBtn, overlayBtn);
+      node.addDOMWidget("db_output_controls", "customhtml", outputControls, {
+        serialize: false, height: 30, getMinHeight: () => 30,
+      });
+      widthEls.push(outputControls);
 
       function syncImgH() {
         requestAnimationFrame(() => {
@@ -588,7 +616,7 @@ app.registerExtension({
       }
       pSend.addEventListener("click", () => PICK.sendPick());
       pCancel.addEventListener("click", () => PICK.cancelPick());
-      pFull.addEventListener("click", () => PICK.openFullScreen());
+      pFull.addEventListener("click", () => PICK.openPickerPopup());
       setPickRowShown(false);
       syncPickerVisibility();
 
@@ -629,19 +657,17 @@ app.registerExtension({
         return card;
       }
 
-      // Pick start: render the selectable grid INSIDE the node (default mode).
+      // Pick start: keep the node compact and open the image picker as a
+      // standalone modal, avoiding canvas/DOM widget layout conflicts.
       node._dbStartPick = (token, images) => {
-        node._dbActivePick = true; // blocked on the picker — hide core's leftover preview
+        node._dbActivePick = true;
         node._dbSel = new Set();
         node._dbImages = images || [];
-        imgPanel.innerHTML = "";
-        (images || []).forEach((info, i) => imgPanel.appendChild(inlineCard(info, i)));
-        sizeImageCards();
-        setImageSelectShown(true);
-        setPickRowShown(true);
+        setImageSelectShown(false);
+        setPickRowShown(false);
         pCount.textContent = "";
         inlineStatus();
-        syncImgH();
+        PICK.openPickerPopup();
       };
       node._dbEndPick = () => { node._dbActivePick = false; setPickRowShown(false); setImageSelectShown(false); };
       node._dbRepaintInline = () => {
@@ -716,7 +742,7 @@ app.registerExtension({
         // Workflows persist the node's previous expanded preview height. Once
         // the empty UI has been rebuilt, collapse back to its natural widget
         // height; image/picker rendering will grow it again when needed.
-        if (!node._dbImages?.length && !node._dbActivePick) {
+        if (!node._dbImages?.length && !node.imgs?.length && !node._dbActivePick) {
           node.setSize(node.computeSize());
         }
       }));

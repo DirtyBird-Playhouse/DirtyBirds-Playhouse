@@ -1,5 +1,5 @@
 """
-DirtyBirds Playhouse — Prompt Writer node.
+DirtyBirds Playhouse — Prompt Enhance node.
 
 Calls the local LM Studio OpenAI-compatible server to expand/write prompt text.
 Captioning lives in the Booru/Image URL tools, so this node is text-only.
@@ -8,6 +8,7 @@ Captioning lives in the Booru/Image URL tools, so this node is text-only.
 import os
 import re
 import json
+import asyncio
 import logging
 import urllib.request
 import urllib.error
@@ -25,7 +26,30 @@ DEFAULT_SYSTEM = (
 )
 
 NODE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-USER_FILES_DIR = os.path.join(NODE_ROOT, "user-files")
+
+
+def _resolve_user_files_dir():
+    """Resolve the pack's user-files directory or text-file pointer."""
+    marker = os.path.join(NODE_ROOT, "user-files")
+    if os.path.isdir(marker):
+        return marker
+    if os.path.isfile(marker):
+        try:
+            with open(marker, "r", encoding="utf-8", errors="ignore") as f:
+                target = f.read().strip().strip('"')
+            if target:
+                target = os.path.expandvars(os.path.expanduser(target))
+                if not os.path.isabs(target):
+                    target = os.path.join(NODE_ROOT, target)
+                return os.path.abspath(target)
+        except OSError as e:
+            logger.warning("[DirtyBirds] user-files pointer read failed: %s", e)
+    # Compatibility with older installs that used an underscore directory.
+    legacy = os.path.join(NODE_ROOT, "user_files")
+    return legacy if os.path.isdir(legacy) else marker
+
+
+USER_FILES_DIR = _resolve_user_files_dir()
 LM_STUDIO_DIR = os.path.join(USER_FILES_DIR, "LM Studio")
 
 
@@ -165,7 +189,7 @@ def _clean_completion(content):
 
 
 class DirtyBirdsMuse:
-    """LM Studio prompt writer. Displays response in the node UI."""
+    """LM Studio prompt enhancer. Displays response in the node UI."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -202,7 +226,7 @@ class DirtyBirdsMuse:
         if not enabled:
             source = (text_in or instruction or "").strip()
             return {"ui": {"db_muse_response": [source, ""],
-                           "db_muse_status": ["Prompt Muse: off"]},
+                           "db_muse_status": ["Prompt Enhance: off"]},
                     "result": ()}
 
         endpoint = DEFAULT_ENDPOINT
@@ -212,7 +236,7 @@ class DirtyBirdsMuse:
             logger.warning("[DirtyBirds] Muse model resolve failed (%s): %s", endpoint, e)
             msg = f"[Muse error: {e} — is LM Studio running at {endpoint}?]"
             return {"ui": {"db_muse_response": [msg, ""],
-                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
+                           "db_muse_status": ["Prompt Enhance: error"]}, "result": ()}
 
         system, resolved_file = _load_system_prompt(prompt_file)
         user_text = instruction or ""
@@ -236,7 +260,7 @@ class DirtyBirdsMuse:
             logger.warning("[DirtyBirds] Muse request failed (%s): %s", endpoint, e)
             msg = f"[Muse error: {e} — is LM Studio's server running at {endpoint}?]"
             return {"ui": {"db_muse_response": [msg, ""],
-                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
+                           "db_muse_status": ["Prompt Enhance: error"]}, "result": ()}
 
         text = _clean_completion(resp["content"])
         if not text:
@@ -251,12 +275,12 @@ class DirtyBirdsMuse:
                        f"{max_tokens} tokens thinking before answering. Raise max_tokens "
                        f"(~2000+) or pick a non-reasoning model for prompt writing.]")
                 return {"ui": {"db_muse_response": [msg, ""],
-                               "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
+                               "db_muse_status": ["Prompt Enhance: error"]}, "result": ()}
             logger.warning("[DirtyBirds] Muse: empty completion (finish=%s).",
                            resp["finish_reason"])
             msg = "[Muse error: model returned empty text.]"
             return {"ui": {"db_muse_response": [msg, ""],
-                           "db_muse_status": ["Prompt Muse: error"]}, "result": ()}
+                           "db_muse_status": ["Prompt Enhance: error"]}, "result": ()}
 
         raw_pos, raw_neg = _split_pos_neg(text)
         pos_out = raw_pos
@@ -265,12 +289,39 @@ class DirtyBirdsMuse:
         logger.info("[DirtyBirds] Muse (%s) -> pos=%r neg=%r",
                     resolved_file or "default", pos_out[:120], neg_out[:80])
         return {"ui": {"db_muse_response": [pos_out, neg_out],
-                       "db_muse_status": ["Prompt Muse: on"]}, "result": ()}
+                       "db_muse_status": ["Prompt Enhance: on"]}, "result": ()}
 
 
 # ---------------------------------------------------------------------------
 # Model-list proxy (server-side, avoids browser CORS to LM Studio)
 # ---------------------------------------------------------------------------
+@PromptServer.instance.routes.post("/dirtybirds/muse-generate")
+async def api_muse_generate(request):
+    """Run Muse directly without queueing the surrounding ComfyUI graph."""
+    try:
+        data = await request.json()
+        result = await asyncio.to_thread(
+            DirtyBirdsMuse().generate,
+            enabled=bool(data.get("enabled", True)),
+            instruction=str(data.get("instruction", "")),
+            temperature=float(data.get("temperature", 0.7)),
+            max_tokens=int(data.get("max_tokens", 1024)),
+            prompt_file=str(data.get("prompt_file", "")),
+            text_in=str(data.get("text_in", "")),
+        )
+        ui = result.get("ui", {})
+        response = ui.get("db_muse_response", ["", ""])
+        status = ui.get("db_muse_status", ["Prompt Enhance: error"])
+        return web.json_response({
+            "positive": response[0] if response else "",
+            "negative": response[1] if len(response) > 1 else "",
+            "status": status[0] if status else "Prompt Enhance: error",
+        })
+    except Exception as e:
+        logger.warning("[DirtyBirds] direct Muse generation failed: %s", e)
+        return web.json_response({"positive": "", "negative": "", "status": "Prompt Enhance: error", "error": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.get("/dirtybirds/lm-models")
 async def api_lm_models(request):
     endpoint = (request.rel_url.query.get("endpoint") or DEFAULT_ENDPOINT).strip()
@@ -311,4 +362,4 @@ async def api_muse_presets(request):
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsMuse": DirtyBirdsMuse}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsMuse": "✍️ Prompt Muse — The Writer"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsMuse": "✍️ Prompt Enhance"}

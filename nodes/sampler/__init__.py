@@ -20,6 +20,7 @@ import comfy.utils
 import latent_preview
 from server import PromptServer
 from nodes import PreviewImage
+from .text_overlay import add_text_overlay, should_bypass_picker
 from comfy.model_management import (
     InterruptProcessingException,
     throw_exception_if_processing_interrupted,
@@ -151,6 +152,7 @@ class DirtyBirdsSampler:
                 #   both = run both and batch the results
                 "noise_mode":     (["cpu", "both", "gpu"], {"default": "both"}),
                 "batch_mode":     ("BOOLEAN", {"default": False}),
+                "overlay_enabled": ("BOOLEAN", {"default": False}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -167,7 +169,7 @@ class DirtyBirdsSampler:
         return float("nan")
 
     def sample(self, pipe, sampler_name, scheduler, steps, cfg, noise_mode="both",
-               batch_mode=False, unique_id=None):
+               batch_mode=False, overlay_enabled=False, unique_id=None):
         model = pipe["model"]
         positive = pipe["positive"]
         negative = pipe["negative"]
@@ -224,6 +226,15 @@ class DirtyBirdsSampler:
         image = torch.cat(image_parts, dim=0)
         batch = image.shape[0]
 
+        cycler_text = str(
+            pipe.get("db_cycler_text")
+            or pipe.get("loader_settings", {}).get("db_cycler_text")
+            or ""
+        ).strip()
+        overlay_active = bool(overlay_enabled and cycler_text)
+        if overlay_active:
+            image = add_text_overlay(image, cycler_text)
+
         # Save preview(s) so the browser has real URLs to render the picker grid.
         ui = PreviewImage().save_images(image)
         previews = ui["ui"]["images"]
@@ -231,7 +242,7 @@ class DirtyBirdsSampler:
             preview["width"] = int(image.shape[2])
             preview["height"] = int(image.shape[1])
 
-        if batch_mode:
+        if should_bypass_picker(batch_mode, overlay_enabled, cycler_text):
             # Batch mode: skip the interactive picker, pass everything through.
             latent_out["samples"] = samples
             pipe = dict(pipe)
@@ -277,5 +288,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DirtyBirdsSampler": "🎯 Sample — The Payoff",
+    "DirtyBirdsSampler": "🎬 The Audition · Sampler & Picker",
 }

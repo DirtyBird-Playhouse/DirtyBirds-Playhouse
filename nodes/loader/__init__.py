@@ -10,6 +10,7 @@ import comfy.utils
 
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
 from .library_backend import get_lora_meta, resolve_lora_filename  # noqa: F401
+from .dimension_store import load_dimensions, normalize_runtime_dimensions, save_dimensions as persist_dimensions
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,15 @@ _CHECKPOINT_CACHE = {}
 _VAE_CACHE = {}
 
 BAKED_VAE = "Baked VAE"
+_DEFAULT_DIMENSIONS_PATH = os.path.join(os.path.dirname(__file__), "dimensions.json")
+
+
+def _user_dimensions_path():
+    return os.path.join(folder_paths.get_user_directory(), "DirtyBirds-Playhouse", "dimensions.json")
+
+
+def _load_dimensions():
+    return load_dimensions(_DEFAULT_DIMENSIONS_PATH, _user_dimensions_path())
 
 
 # ---------------------------------------------------------------------------
@@ -67,55 +77,21 @@ async def get_embeddings(request):
 
 @PromptServer.instance.routes.get("/dirtybirds/dimensions")
 async def get_dimensions(request):
-    json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
-    try:
-        with open(json_path, "r") as f:
-            data = json.load(f)
-        return web.json_response(data)
-    except FileNotFoundError:
-        logger.error("[DirtyBirds] dimensions.json not found at %s", json_path)
-        return web.json_response({"error": "dimensions.json missing"}, status=404)
-    except Exception as e:
-        logger.error("[DirtyBirds] Failed to read dimensions.json: %s", e)
-        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(_load_dimensions())
 
 
 @PromptServer.instance.routes.post("/dirtybirds/dimensions")
 async def save_dimensions(request):
-    json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
     try:
         data = await request.json()
     except Exception:
         raise web.HTTPBadRequest(text="invalid JSON")
-
-    if not isinstance(data, dict):
-        raise web.HTTPBadRequest(text="dimensions must be an object")
-
-    cleaned = {}
-    for label, value in data.items():
-        label = str(label or "").strip()
-        if not label or len(label) > 64:
-            raise web.HTTPBadRequest(text="invalid resolution label")
-        if not isinstance(value, (list, tuple)) or len(value) != 2:
-            raise web.HTTPBadRequest(text=f"invalid resolution value for {label}")
-        try:
-            width = int(value[0])
-            height = int(value[1])
-        except (TypeError, ValueError):
-            raise web.HTTPBadRequest(text=f"invalid resolution value for {label}")
-        if width < 64 or height < 64 or width > 8192 or height > 8192:
-            raise web.HTTPBadRequest(text=f"resolution out of range for {label}")
-        cleaned[label] = [width, height]
-
-    if not cleaned:
-        raise web.HTTPBadRequest(text="at least one resolution is required")
-
     try:
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(cleaned, f, indent=2)
-            f.write("\n")
-    except Exception as e:
-        logger.error("[DirtyBirds] Failed to save dimensions.json: %s", e)
+        cleaned = persist_dimensions(data, _user_dimensions_path())
+    except ValueError as error:
+        raise web.HTTPBadRequest(text=str(error)) from error
+    except OSError as e:
+        logger.error("[DirtyBirds] Failed to save user dimensions: %s", e)
         return web.json_response({"error": str(e)}, status=500)
     return web.json_response(cleaned)
 
@@ -148,13 +124,7 @@ class DirtyBirdsLoader:
     def INPUT_TYPES(cls):
         ckpt_list = folder_paths.get_filename_list("checkpoints")
 
-        json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
-        try:
-            with open(json_path, "r") as f:
-                dims_data = json.load(f)
-        except Exception as e:
-            logger.error("[DirtyBirds] Could not load dimensions.json: %s", e)
-            dims_data = {"1024x1024": [1024, 1024]}
+        dims_data = _load_dimensions()
         dim_options = list(dims_data.keys())
 
         return {
@@ -163,7 +133,7 @@ class DirtyBirdsLoader:
                 "workflow":    (["Text2Image", "Image2Image"], {"default": "Text2Image"}),
                 # Checkpoint dropdown
                 "ckpt_name":   (ckpt_list,),
-                # Raw prompt strings — fed from the Prompt node ("The Script")
+                # Raw prompt strings — fed from Prompt Builder ("User Prompt")
                 # as input sockets (forceInput); the loader appends trigger words
                 # + embedding tokens, then encodes with the checkpoint's CLIP.
                 "positive":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
@@ -210,6 +180,10 @@ class DirtyBirdsLoader:
                 dimension="__random__", loras_data="[]", trigger_words_data="[]", batch_size=1,
                 seed=0, denoise=1.0, seed_mode="fixed",
                 image=None, lora_stack=None, pos_embedding="", neg_embedding=""):
+        # Prompt Builder's public output stays a normal STRING. The current
+        # cycler line rides on its in-process string subclass, so the loader
+        # needs no separate cycler socket.
+        cycler_text = getattr(positive, "db_cycler_text", "")
 
         # ── Checkpoint ──────────────────────────────────────────────────────
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
@@ -333,12 +307,7 @@ class DirtyBirdsLoader:
         negative_cond = [[neg_cond, {"pooled_output": neg_pooled}]]
 
         # ── Latent ──────────────────────────────────────────────────────────
-        json_path = os.path.join(os.path.dirname(__file__), "dimensions.json")
-        try:
-            with open(json_path, "r") as f:
-                dims_data = json.load(f)
-        except Exception:
-            dims_data = {"1024x1024": [1024, 1024]}
+        dims_data = _load_dimensions()
 
         if workflow == "Text2Image":
             if dimension == "__random__":
@@ -354,7 +323,7 @@ class DirtyBirdsLoader:
                     wh = [int(parts[0]), int(parts[1])]
                 except (ValueError, IndexError):
                     wh = [1024, 1024]
-            width, height = wh
+            width, height = normalize_runtime_dimensions(*wh)
             latent_tensor = torch.zeros([batch_size, 4, height // 8, width // 8], device=device, dtype=dtype)
             latent = {"samples": latent_tensor}
         else:
@@ -398,6 +367,7 @@ class DirtyBirdsLoader:
             "images":   None,
             "seed":     int(seed),
             "denoise":  float(denoise),
+            "db_cycler_text": str(cycler_text or ""),
             # Loader settings – read by pre-sampling / sampler nodes
             "loader_settings": {
                 "ckpt_name":          ckpt_name,
@@ -413,6 +383,7 @@ class DirtyBirdsLoader:
                 "db_neg_embedding":   neg_embedding,
                 "db_workflow":        workflow,
                 "db_dimension":       dimension,
+                "db_cycler_text":     str(cycler_text or ""),
             },
         }
 
@@ -421,7 +392,8 @@ class DirtyBirdsLoader:
         # Sole output: db_pipe carries model/clip/vae, conditioning, samples,
         # plus seed + denoise for the DirtyBirds sampler.
         return {"ui": {"db_prompts": [positive, negative],
-                       "db_lora_stack": ext_lora_names},
+                       "db_lora_stack": ext_lora_names,
+                       "db_seed_used": [seed]},
                 "result": (pipe,)}
 
 
@@ -430,4 +402,4 @@ class DirtyBirdsLoader:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS        = {"DirtyBirdsLoader": DirtyBirdsLoader}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoader": "🍑 DirtyBirds Foreplay"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoader": "⚙️ Generation Setup"}

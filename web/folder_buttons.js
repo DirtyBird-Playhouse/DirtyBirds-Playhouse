@@ -20,8 +20,6 @@ import { api } from "../../../scripts/api.js";
 import { ensureStylesheet } from "./db_shared.js";
 
 // Visible at import time so you can confirm in DevTools whether this file loaded.
-console.log("[DirtyBirds] FolderLauncher module loaded");
-
 const FOLDERS = [
   { key: "models",       label: "Models",               icon: "🗂" },
   { key: "custom_nodes", label: "Custom Nodes",         icon: "🧩" },

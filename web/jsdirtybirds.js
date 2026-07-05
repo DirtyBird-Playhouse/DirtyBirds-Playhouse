@@ -1,1543 +1,876 @@
 /**
- * DirtyBirds Playhouse – Loader Node UI
+ * DirtyBirds Playhouse — Generation Setup
  *
- * Sections (top → bottom):
- *   1. Workflow toggle        (Text2Image / Image2Image)
- *   2. The Main Attraction    (checkpoint / vae styled flyout buttons)
- *   [native positive / negative STRING widgets]
- *   3. Size Matters           (SDXL resolution pills)
- *   4. The Talent             (LoRA Selected | Lora Trigger Words — two columns)
- *   5. Dirty Talk             (read-only preview of positive / negative prompts)
+ * One ComfyUI DOM widget owns the entire interface.  All visible controls are
+ * ordinary children of that widget, so there are no competing canvas layouts,
+ * reparented widgets, scroll-height feedback loops, or incremental resize math.
  */
 
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import {
-  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel,
+  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW,
+  hideWidget as hideWidgetShared, makeSectionLabel, makeCollapsibleSectionLabel,
 } from "./db_shared.js";
 
 ensureStylesheet();
 
-// ── Aspect-ratio SVG visual ───────────────────────────────────────────────────
-function makeAspectSVG(w, h) {
-  const BOX = 18;
-  let rw, rh;
-  if (w >= h) { rw = BOX; rh = Math.max(2, Math.round((h / w) * BOX)); }
-  else         { rh = BOX; rw = Math.max(2, Math.round((w / h) * BOX)); }
-  const svg  = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("width",  BOX);
-  svg.setAttribute("height", BOX);
-  svg.setAttribute("viewBox", `0 0 ${BOX} ${BOX}`);
-  svg.style.cssText = "display:block;margin:0 auto 3px;flex-shrink:0;";
+function makeAspectSVG(width, height) {
+  const box = 18;
+  const rw = width >= height ? box : Math.max(2, Math.round((width / height) * box));
+  const rh = width >= height ? Math.max(2, Math.round((height / width) * box)) : box;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", box); svg.setAttribute("height", box); svg.setAttribute("viewBox", `0 0 ${box} ${box}`);
   const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  rect.setAttribute("x",      Math.floor((BOX - rw) / 2));
-  rect.setAttribute("y",      Math.floor((BOX - rh) / 2));
-  rect.setAttribute("width",  rw);
-  rect.setAttribute("height", rh);
-  rect.setAttribute("rx", "1");
-  rect.setAttribute("fill", "currentColor");
-  svg.appendChild(rect);
+  rect.setAttribute("x", Math.floor((box - rw) / 2)); rect.setAttribute("y", Math.floor((box - rh) / 2));
+  rect.setAttribute("width", rw); rect.setAttribute("height", rh); rect.setAttribute("rx", "1"); rect.setAttribute("fill", "currentColor");
+  svg.append(rect);
   return svg;
 }
 
-// ── Preview cache  (race-condition safe) ──────────────────────────────────────
-const _previewCache = new Map();
-const _pendingImgs  = new Map();
-
-function loadPreviewInto(img, name) {
-  const url   = `/dirtybirds/lora-preview?name=${encodeURIComponent(name)}`;
-  const state = _previewCache.get(name);
-  if (state === "none") return;
-  if (state === "ok")   { img.src = url; img.classList.add("db-lp-thumb-loaded"); return; }
-  if (state === "loading") { _pendingImgs.get(name)?.push(img); return; }
-  _previewCache.set(name, "loading");
-  _pendingImgs.set(name, [img]);
-  const test   = new Image();
-  test.onload  = () => {
-    _previewCache.set(name, "ok");
-    const q = _pendingImgs.get(name) || [];
-    _pendingImgs.delete(name);
-    q.forEach(i => { i.src = url; i.classList.add("db-lp-thumb-loaded"); });
+// Fills `mount` with an <img>; if the URL isn't a decodable image (e.g. the
+// only preview asset is an mp4/webm), falls back to a muted looping <video>
+// before giving up. Shared by every preview surface (checkpoint, LoRA,
+// embedding) so none of them silently go blank for video-only previews.
+function loadMedia(mount, url, onMissing, onLoaded) {
+  const image = document.createElement("img");
+  image.alt = "";
+  image.onload = () => { mount.replaceChildren(image); onLoaded?.(); };
+  image.onerror = () => {
+    const video = document.createElement("video");
+    video.muted = true; video.loop = true; video.autoplay = true; video.playsInline = true;
+    video.onloadeddata = () => { mount.replaceChildren(video); video.play?.().catch(() => {}); onLoaded?.(); };
+    video.onerror = () => { onMissing?.(); };
+    video.src = url;
   };
-  test.onerror = () => { _previewCache.set(name, "none"); _pendingImgs.delete(name); };
-  test.src = url;
+  image.src = url;
 }
 
-// ── Model preview cache (checkpoint / vae) ────────────────────────────────────
-// Keyed by `${type}:${name}`. Calls onOk when an image exists, onNone otherwise,
-// so the caller can hide the thumbnail when a model has no sibling preview.
-const _modelPreviewCache = new Map();
-const _modelPendingImgs  = new Map();
-
-function loadModelPreviewInto(img, type, name, onOk, onNone) {
-  const url   = `/dirtybirds/model-preview?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`;
-  const key   = `${type}:${name}`;
-  const state = _modelPreviewCache.get(key);
-  if (state === "none") { onNone?.(); return; }
-  if (state === "ok")   { img.src = url; img.classList.add("db-lp-thumb-loaded"); onOk?.(); return; }
-  if (state === "loading") { _modelPendingImgs.get(key)?.push({ img, onOk, onNone }); return; }
-  _modelPreviewCache.set(key, "loading");
-  _modelPendingImgs.set(key, [{ img, onOk, onNone }]);
-  const test  = new Image();
-  test.onload = () => {
-    _modelPreviewCache.set(key, "ok");
-    const q = _modelPendingImgs.get(key) || [];
-    _modelPendingImgs.delete(key);
-    q.forEach(e => { e.img.src = url; e.img.classList.add("db-lp-thumb-loaded"); e.onOk?.(); });
-  };
-  test.onerror = () => {
-    _modelPreviewCache.set(key, "none");
-    const q = _modelPendingImgs.get(key) || [];
-    _modelPendingImgs.delete(key);
-    q.forEach(e => e.onNone?.());
-  };
-  test.src = url;
-}
-
-// ── Media preview loader (image OR video) ─────────────────────────────────────
-// Fills `mount` with an <img>; if the URL decodes as video (mp4/webm) instead,
-// swaps in a muted looping <video>. Mirrors LoRA-Manager's card rendering so
-// checkpoints shipping only a video preview still show something.
-function loadMediaUrl(mount, url, onOk, onNone, fit = "cover") {
-  const css = `width:100%;height:100%;object-fit:${fit};display:block;`;
-  const img = document.createElement("img");
-  img.style.cssText = css;
-  img.onload = () => { mount.innerHTML = ""; mount.appendChild(img); onOk?.(); };
-  img.onerror = () => {
-    const v = document.createElement("video");
-    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
-    v.style.cssText = css;
-    v.onloadeddata = () => { mount.innerHTML = ""; mount.appendChild(v); v.play?.().catch(() => {}); onOk?.(); };
-    v.onerror = () => { onNone?.(); };
-    v.src = url;
-  };
-  img.src = url;
-}
-function loadModelMedia(mount, type, name, onOk, onNone) {
-  loadMediaUrl(mount, `/dirtybirds/model-preview?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`, onOk, onNone);
-}
-
-// ── LoRA helpers ──────────────────────────────────────────────────────────────
-function loraCategory(f)    { const p = f.replace(/\\/g,"/").split("/"); return p.length>1?p[0]:"(root)"; }
-function loraDisplayName(f) { return f.replace(/\\/g,"/").split("/").pop().replace(/\.[^.]+$/,""); }
-
-// ── Resolution dropdown flyout ────────────────────────────────────────────────
-function showResolutionFlyout(dimData, keys, current, randomActive, onPick, onCustom, onEdit) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
-
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel   = document.createElement("div"); panel.className   = "db-flyout";
-  panel.style.left = Math.min(window.innerWidth/2, window.innerWidth-300) + "px";
-  panel.style.top  = Math.max(40, window.innerHeight/2-200) + "px";
-
-  const header = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = "Size Matters";
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-  header.append(titleEl, closeBtn); panel.appendChild(header);
-
-  const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
-
-  const randomRow = document.createElement("div");
-  randomRow.className = "db-res-opt db-res-random" + (randomActive ? " db-selected" : "");
-  randomRow.innerHTML = '<span class="db-res-opt-glyph">🎲</span><span class="db-res-opt-label">Random</span>';
-  randomRow.addEventListener("click", () => { close(); onPick("__random__"); });
-  list.appendChild(randomRow);
-
-  const customRow = document.createElement("div");
-  customRow.className = "db-res-opt";
-  customRow.innerHTML = '<span class="db-res-opt-glyph">+</span><span class="db-res-opt-label">Custom resolution</span>';
-  customRow.addEventListener("click", () => { close(); onCustom?.(); });
-  list.appendChild(customRow);
-
-  const editRow = document.createElement("div");
-  editRow.className = "db-res-opt";
-  editRow.innerHTML = '<span class="db-res-opt-glyph">✎</span><span class="db-res-opt-label">Edit stored resolutions</span>';
-  editRow.addEventListener("click", () => { close(); onEdit?.(); });
-  list.appendChild(editRow);
-
-  const sep = document.createElement("div"); sep.className = "db-res-sep"; list.appendChild(sep);
-
-  keys.forEach(key => {
-    const [w, h] = dimData[key] || [1024, 1024];
-    const row = document.createElement("div");
-    row.className = "db-res-opt" + (!randomActive && key === current ? " db-selected" : "");
-    const g = document.createElement("span"); g.className = "db-res-opt-glyph"; g.appendChild(makeAspectSVG(w, h));
-    const l = document.createElement("span"); l.className = "db-res-opt-label"; l.textContent = key;
-    const d = document.createElement("span"); d.className = "db-res-opt-dim"; d.textContent = `${w}×${h}`;
-    row.append(g, l, d);
-    row.addEventListener("click", () => { close(); onPick(key); });
-    list.appendChild(row);
+function closeFlyouts() {
+  document.querySelectorAll(".db-flyout-overlay,.db-flyout").forEach((item) => {
+    item._dbCleanup?.();
+    item.remove();
   });
-
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-  document.body.append(overlay, panel);
 }
 
-function showResolutionForm(title, fields, onSave) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
+function flyoutShell(title) {
+  closeFlyouts();
+  const overlay = el("div", "db-flyout-overlay");
+  const panel = el("div", "db-flyout db-generation-flyout");
+  const header = el("div", "db-flyout-header");
+  const close = button("✕", closeFlyouts, "db-flyout-close");
+  header.append(el("span", "db-flyout-title", title), close);
+  panel.append(header);
+  overlay.addEventListener("click", closeFlyouts);
+  document.body.append(overlay, panel);
+  return panel;
+}
 
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel = document.createElement("div"); panel.className = "db-flyout db-res-edit-flyout";
-  panel.style.width = "min(520px, 92vw)";
-  panel.style.left = Math.max(20, (window.innerWidth - 520) / 2) + "px";
-  panel.style.top = Math.max(40, (window.innerHeight - 520) / 2) + "px";
-
-  const header = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-  header.append(titleEl, closeBtn);
-
-  const body = document.createElement("div"); body.className = "db-res-edit-list";
-  const rows = [];
-  function addRow(label = "", width = "", height = "") {
-    const row = document.createElement("div"); row.className = "db-res-edit-row";
-    const labelInput = document.createElement("input"); labelInput.className = "db-text-input"; labelInput.placeholder = "label"; labelInput.value = label;
-    const widthInput = document.createElement("input"); widthInput.className = "db-text-input"; widthInput.placeholder = "width"; widthInput.inputMode = "numeric"; widthInput.value = width;
-    const heightInput = document.createElement("input"); heightInput.className = "db-text-input"; heightInput.placeholder = "height"; heightInput.inputMode = "numeric"; heightInput.value = height;
-    const removeBtn = document.createElement("button"); removeBtn.className = "db-res-edit-remove"; removeBtn.textContent = "✕"; removeBtn.title = "Remove";
-    removeBtn.addEventListener("click", () => { row.remove(); });
-    row.append(labelInput, widthInput, heightInput, removeBtn);
-    body.appendChild(row);
-    rows.push({ row, labelInput, widthInput, heightInput });
+function showCardPicker(title, names, current, previewURL, onPick) {
+  const panel = flyoutShell(title);
+  const toolbar = el("div", "db-generation-picker-toolbar");
+  const search = el("input", "db-generation-picker-search");
+  search.type = "search";
+  search.placeholder = `Search ${title.toLowerCase()}`;
+  search.setAttribute("aria-label", `Search ${title}`);
+  const folder = el("select", "db-generation-picker-folder");
+  folder.setAttribute("aria-label", `Filter ${title} by folder`);
+  const normalizedNames = names.map((name) => {
+    const normalized = String(name).replace(/\\/g, "/");
+    const slash = normalized.lastIndexOf("/");
+    return { name, normalized, folder: slash >= 0 ? normalized.slice(0, slash) : "(root)" };
+  });
+  const folders = [...new Set(normalizedNames.map((item) => item.folder))].sort((a, b) => a.localeCompare(b));
+  for (const value of ["All folders", ...folders]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    folder.append(option);
   }
-  fields.forEach((f) => addRow(f.label, f.width, f.height));
+  const count = el("span", "db-generation-picker-count");
+  toolbar.append(search, folder, count);
+  const grid = el("div", "db-generation-card-grid");
+  let observer = null;
 
-  const actions = document.createElement("div"); actions.className = "db-res-edit-actions";
-  const addBtn = document.createElement("button"); addBtn.className = "db-lib-btn db-lora-add-open-btn"; addBtn.textContent = "+ Add";
-  const saveBtn = document.createElement("button"); saveBtn.className = "db-lib-btn db-lora-add-open-btn"; saveBtn.textContent = "Save";
-  addBtn.addEventListener("click", () => addRow());
-  saveBtn.addEventListener("click", async () => {
-    const values = rows
-      .filter((r) => r.row.isConnected)
-      .map((r) => ({
-        label: r.labelInput.value.trim(),
-        width: parseInt(r.widthInput.value, 10),
-        height: parseInt(r.heightInput.value, 10),
-      }))
-      .filter((r) => r.label && Number.isFinite(r.width) && Number.isFinite(r.height));
-    await onSave(values);
-    close();
-  });
-  actions.append(addBtn, saveBtn);
-
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-  panel.append(header, body, actions);
-  document.body.append(overlay, panel);
-}
-
-// ── Generic card-grid flyout (LoRA-Manager style) ─────────────────────────────
-// Used by the checkpoint and embedding pickers. previewUrlFn(name) returns the
-// preview endpoint (image or video); displayFn(name) the label text.
-function showCardFlyout(title, names, current, previewUrlFn, displayFn, onPick) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
-
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel   = document.createElement("div"); panel.className   = "db-flyout";
-  panel.style.width = "min(560px, 90vw)";
-  panel.style.left  = Math.max(20, (window.innerWidth  - 560) / 2) + "px";
-  panel.style.top   = Math.max(40, (window.innerHeight - 520) / 2) + "px";
-
-  const header   = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl  = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-  header.append(titleEl, closeBtn); panel.appendChild(header);
-
-  const grid = document.createElement("div");
-  grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;padding:8px;overflow:auto;max-height:64vh;";
-  panel.appendChild(grid);
-
-  if (!names.length) {
-    const empty = document.createElement("div");
-    empty.style.cssText = "padding:20px;color:#888;font-size:12px;";
-    empty.textContent = "Nothing found";
-    grid.appendChild(empty);
-  }
-  names.forEach(name => {
-    const card = document.createElement("div");
-    card.style.cssText = "position:relative;aspect-ratio:1/1;border-radius:6px;overflow:hidden;cursor:pointer;background:#181818;border:2px solid " + (name === current ? "#5aadff" : "transparent") + ";";
-    const media = document.createElement("div");
-    media.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:10px;";
-    media.textContent = "…";
-    loadMediaUrl(media, previewUrlFn(name), null,
-      () => { media.innerHTML = ""; media.textContent = "no preview"; }, "cover");
-    const label = document.createElement("div");
-    label.textContent = displayFn ? displayFn(name) : name; label.title = name;
-    label.style.cssText = "position:absolute;left:0;right:0;bottom:0;padding:6px;font-size:10px;line-height:1.2;color:#eee;background:linear-gradient(transparent,rgba(0,0,0,.9));";
-    card.append(media, label);
-    card.addEventListener("click", () => { close(); onPick(name); });
-    grid.appendChild(card);
-  });
-
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-  document.body.append(overlay, panel);
-}
-
-// ── Small options flyout (e.g. Seed: Fixed / Random) ──────────────────────────
-function showOptionsFlyout(title, options, current, onPick) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
-
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel   = document.createElement("div"); panel.className   = "db-flyout";
-  panel.style.left = Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
-  panel.style.top  = Math.max(40, window.innerHeight / 2 - 120) + "px";
-
-  const header   = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl  = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-  header.append(titleEl, closeBtn); panel.appendChild(header);
-
-  const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
-  options.forEach(opt => {
-    const row = document.createElement("div");
-    row.className = "db-res-opt" + (opt.value === current ? " db-selected" : "");
-    row.innerHTML = `<span class="db-res-opt-glyph">${opt.glyph || ""}</span><span class="db-res-opt-label">${opt.label}</span>`;
-    row.addEventListener("click", () => { close(); onPick(opt.value); });
-    list.appendChild(row);
-  });
-
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-  document.body.append(overlay, panel);
-}
-
-// ── Scrollable name list flyout (no previews) — used by the embedding picker ──
-function showListFlyout(title, names, current, displayFn, onPick) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
-
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel   = document.createElement("div"); panel.className   = "db-flyout";
-  panel.style.width = "min(320px, 90vw)";
-  panel.style.left  = Math.max(20, (window.innerWidth - 320) / 2) + "px";
-  panel.style.top   = Math.max(40, window.innerHeight / 2 - 220) + "px";
-
-  const header   = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl  = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
-  header.append(titleEl, closeBtn); panel.appendChild(header);
-
-  const list = document.createElement("div"); list.className = "db-flyout-list";
-  list.style.cssText = "max-height:60vh;overflow:auto;";
-  panel.appendChild(list);
-
-  if (!names.length) {
-    const empty = document.createElement("div");
-    empty.style.cssText = "padding:14px;color:#888;font-size:12px;";
-    empty.textContent = "Nothing found";
-    list.appendChild(empty);
-  }
-  names.forEach(name => {
-    const row = document.createElement("div");
-    row.className = "db-res-opt" + (name === current ? " db-selected" : "");
-    const label = document.createElement("span");
-    label.className = "db-res-opt-label";
-    label.textContent = displayFn ? displayFn(name) : name;
-    label.title = name;
-    row.appendChild(label);
-    row.addEventListener("click", () => { close(); onPick(name); });
-    list.appendChild(row);
-  });
-
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
-  document.body.append(overlay, panel);
-}
-
-// ── In-node selected-lora rows ────────────────────────────────────────────────
-const SEL_ROW_H = 34;
-const SEL_PAD   = 6;
-
-function buildLoraPanel(node, entries, onChange, onLoraRemoved) {
-  const container = document.createElement("div"); container.className = "db-sel-loras";
-  function refresh() {
-    container.innerHTML = "";
-    if (!entries.length) {
-      const hint = document.createElement("div"); hint.className="db-sel-empty"; hint.textContent="No LoRAs selected"; container.appendChild(hint); return;
-    }
-    entries.forEach((entry, idx) => {
-      const row = document.createElement("div"); row.className = "db-sel-row db-weight-row db-row-stacked" + (entry.active?"":" db-inactive");
-      const preview = document.createElement("div"); preview.className="db-model-preview db-sel-large-preview"; preview.style.display = "none";
-      loadMediaUrl(preview, `/dirtybirds/lora-preview?name=${encodeURIComponent(entry.name)}`,
-        () => { preview.style.display = ""; onChange(); },
-        () => { preview.style.display = "none"; preview.innerHTML = ""; },
-        "cover");
-      const toggle = document.createElement("button"); toggle.className="db-sel-toggle"; toggle.textContent=entry.active?"●":"○"; toggle.title=entry.active?"Disable":"Enable";
-      toggle.addEventListener("click", () => { entry.active=!entry.active; onChange(); refresh(); });
-      const nameEl = document.createElement("span"); nameEl.className="db-sel-name"; nameEl.textContent=loraDisplayName(entry.name); nameEl.title=entry.name;
-      const valEl  = document.createElement("span"); valEl.className="db-sel-val"; valEl.textContent=entry.strength.toFixed(2);
-      const slider = document.createElement("input"); slider.type="range"; slider.className="db-sel-slider"; slider.min="0"; slider.max="2"; slider.step="0.05"; slider.value=String(entry.strength);
-      slider.addEventListener("input", () => { entry.strength=entry.clip_strength=parseFloat(slider.value); valEl.textContent=entry.strength.toFixed(2); onChange(); });
-      const rmBtn = document.createElement("button"); rmBtn.className="db-sel-remove"; rmBtn.textContent="✕"; rmBtn.title="Remove";
-      rmBtn.addEventListener("click", () => {
-        const removedName = entry.name;
-        entries.splice(idx,1);
-        onChange();
-        refresh();
-        onLoraRemoved?.(removedName);
-        node.setDirtyCanvas(true);
-      });
-      const head = document.createElement("div"); head.className = "db-row-head";
-      head.append(preview, nameEl);
-      const ctrl = document.createElement("div"); ctrl.className = "db-row-ctrl";
-      ctrl.append(toggle, slider, valEl, rmBtn);
-      row.append(head, ctrl); container.appendChild(row);
-    });
-  }
-  refresh();
-  return { el: container, refresh };
-}
-
-// ── Trigger word chip panel ───────────────────────────────────────────────────
-const TW_CHIP_H     = 28;
-const TW_ROW_PAD    = 10;
-const TW_MIN_H      = TW_CHIP_H + TW_ROW_PAD;
-
-function buildTWPanel(node, twEntries, onChange) {
-  const container = document.createElement("div"); container.className = "db-tw-panel";
-
-  function refresh() {
-    container.innerHTML = "";
-    if (!twEntries.length) {
-      const hint = document.createElement("div"); hint.className="db-tw-empty"; hint.textContent="No trigger words"; container.appendChild(hint); return;
-    }
-    twEntries.forEach((entry, idx) => {
-      const chip = document.createElement("span");
-      chip.className = "db-tw-chip" + (entry.active?" db-tw-active":" db-tw-inactive");
-      chip.title = `LoRA: ${loraDisplayName(entry.lora)}\nDouble-click to edit`;
-
-      const textEl = document.createElement("span"); textEl.className="db-tw-text"; textEl.textContent=entry.text;
-      chip.appendChild(textEl);
-
-      chip.addEventListener("click", (e) => {
-        if (chip.classList.contains("db-tw-editing")) return;
-        entry.active = !entry.active;
-        chip.classList.toggle("db-tw-active",   entry.active);
-        chip.classList.toggle("db-tw-inactive", !entry.active);
-        onChange();
-      });
-
-      chip.addEventListener("dblclick", (e) => {
-        e.stopPropagation();
-        if (chip.classList.contains("db-tw-editing")) return;
-        chip.classList.add("db-tw-editing");
-        const input = document.createElement("input");
-        input.className = "db-tw-input";
-        input.value = entry.text;
-        input.style.width = Math.max(80, entry.text.length * 7) + "px";
-        chip.innerHTML = "";
-        chip.appendChild(input);
-
-        function commit() {
-          const val = input.value.trim();
-          if (val) entry.text = val;
-          chip.classList.remove("db-tw-editing");
-          onChange();
-          refresh();
+  function renderCards() {
+    observer?.disconnect();
+    observer = typeof IntersectionObserver === "function"
+      ? new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          entry.target._dbLoadPreview?.();
         }
-        input.addEventListener("keydown", (ev) => { if (ev.key==="Enter") { ev.preventDefault(); input.blur(); } if (ev.key==="Escape") { input.value=entry.text; input.blur(); } });
-        input.addEventListener("blur", commit);
-        setTimeout(() => { input.focus(); input.select(); }, 10);
-      });
-
-      container.appendChild(chip);
-    });
+      }, { root: grid, rootMargin: "180px" })
+      : null;
+    const query = search.value.trim().toLowerCase();
+    const selectedFolder = folder.value;
+    const filtered = normalizedNames.filter((item) =>
+      (!query || item.normalized.toLowerCase().includes(query)) &&
+      (selectedFolder === "All folders" || item.folder === selectedFolder));
+    count.textContent = `${filtered.length} / ${normalizedNames.length}`;
+    grid.replaceChildren();
+    if (!filtered.length) grid.append(el("div", "db-generation-picker-empty", "Nothing found"));
+    for (const item of filtered) {
+      const card = el("button", `db-generation-picker-card${item.name === current ? " is-selected" : ""}`);
+      card.type = "button";
+      const media = el("div", "db-generation-picker-media", "Preview");
+      media._dbLoadPreview = () => {
+        if (media.dataset.loaded) return;
+        media.dataset.loaded = "true";
+        loadMedia(media, previewURL(item.name), () => { media.textContent = "No preview"; });
+      };
+      if (observer) observer.observe(media); else media._dbLoadPreview();
+      const label = el("span", "db-generation-picker-label", item.normalized.split("/").pop().replace(/\.[^.]+$/, ""));
+      card.title = item.normalized;
+      card.append(media, label);
+      card.addEventListener("click", () => { closeFlyouts(); onPick(item.name); });
+      grid.append(card);
+    }
   }
-
-  refresh();
-  return { el: container, refresh };
+  search.addEventListener("input", renderCards);
+  folder.addEventListener("change", renderCards);
+  panel._dbCleanup = () => observer?.disconnect();
+  panel.append(toolbar, grid);
+  renderCards();
+  requestAnimationFrame(() => search.focus());
 }
 
-// ── Extension ─────────────────────────────────────────────────────────────────
+function showResolutionEditor(title, rows, onSave) {
+  const panel = flyoutShell(title);
+  const list = el("div", "db-generation-resolution-editor");
+  const records = [];
+  const addRow = (record = { label: "Custom", width: 1024, height: 1024 }) => {
+    const row = el("div", "db-generation-resolution-edit-row");
+    const label = el("input", "db-generation-edit-input"); label.value = record.label || ""; label.placeholder = "Label";
+    const width = el("input", "db-generation-edit-input"); width.type = "number"; width.value = record.width; width.min = 64; width.max = 8192; width.step = 8;
+    const height = el("input", "db-generation-edit-input"); height.type = "number"; height.value = record.height; height.min = 64; height.max = 8192; height.step = 8;
+    const snap = (input) => {
+      const value = clamp(input.value || 1024, 64, 8192);
+      input.value = String(Math.round(value / 8) * 8);
+    };
+    width.addEventListener("change", () => snap(width));
+    height.addEventListener("change", () => snap(height));
+    const remove = button("×", () => row.remove(), "db-generation-remove");
+    row.append(label, width, height, remove); list.append(row);
+    records.push({ row, label, width, height });
+  };
+  rows.forEach(addRow);
+  const actions = el("div", "db-generation-editor-actions");
+  actions.append(button("+ Add", () => addRow()), button("Save", async () => {
+    const values = records.filter((item) => item.row.isConnected).map((item) => ({
+      label: item.label.value.trim(),
+      width: Math.round(clamp(item.width.value, 64, 8192) / 8) * 8,
+      height: Math.round(clamp(item.height.value, 64, 8192) / 8) * 8,
+    })).filter((item) => item.label && item.width >= 64 && item.height >= 64);
+    await onSave(values); closeFlyouts();
+  }, "is-active"));
+  panel.append(list, actions);
+}
+
+function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
+  const panel = flyoutShell("Resolution");
+  const list = el("div", "db-flyout-list");
+  const addChoice = (glyph, label, value, selected = false) => {
+    const row = el("button", `db-res-opt${selected ? " db-selected" : ""}`);
+    row.type = "button";
+    const icon = el("span", "db-res-opt-glyph");
+    if (glyph instanceof Element) icon.append(glyph); else icon.textContent = glyph;
+    row.append(icon, el("span", "db-res-opt-label", label));
+    row.addEventListener("click", () => { closeFlyouts(); value === "custom" ? onCustom() : value === "edit" ? onEdit() : onPick(value); });
+    list.append(row);
+  };
+  addChoice("🎲", "Random", "__random__", current === "__random__");
+  addChoice("+", "Custom resolution", "custom");
+  addChoice("✎", "Edit stored resolutions", "edit");
+  for (const [label, [width, height]] of Object.entries(dimensions)) {
+    const svg = makeAspectSVG(width, height);
+    addChoice(svg, `${label}  ·  ${width}×${height}`, label, current === label || current === `${width}x${height}`);
+  }
+  panel.append(list);
+}
+
+const NODE_WIDTH = 500;
+// Section heights are computed from known state (item counts, whether a
+// preview is reserved) rather than measured DOM height, so layout can never
+// feed its own height back into ComfyUI and grow on every draw. Lists beyond
+// their row cap scroll internally (.db-generation-lora-list /
+// .db-generation-trigger-list) instead of growing the section unbounded.
+const PANEL_BASE_HEIGHT = 320; // Generation block + Embeddings/LoRAs collapsed headers
+const EMBED_CARD_BASE_H = 92;   // enable + picker + weight field, no preview
+const EMBED_PREVIEW_H = 90;     // added once if either slot reserves a preview
+const LORA_SECTION_BASE_H = 75; // "Selected"/"Trigger Words" labels + add-row chrome
+const LORA_ROW_H = 54;
+const LORA_ROW_CAP = 4;         // beyond this the list scrolls instead of growing (4 * 54 = 216px, matches CSS max-height)
+const TRIGGER_ROW_H = 26;
+const TRIGGER_ROW_CAP = 6;      // 6 * 26 = 156px, matches CSS max-height
+const UI_VERSION = 6;
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
+const findWidget = (node, name) => node.widgets?.find((widget) => widget.name === name);
+const findInput = (node, name) => node.inputs?.find((input) => input.name === name);
+
+function parseJSON(value, fallback = []) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function setWidget(widget, value, node) {
+  if (!widget) return;
+  widget.value = value;
+  widget.callback?.(value, app.canvas, node, [0, 0], null);
+  app.graph?.setDirtyCanvas(true, true);
+}
+
+function el(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text != null) element.textContent = text;
+  return element;
+}
+
+function button(text, onClick, className = "") {
+  const control = el("button", `db-generation-button ${className}`.trim(), text);
+  control.type = "button";
+  control.addEventListener("click", onClick);
+  return control;
+}
+
+function selectControl(values, onChange) {
+  const control = el("select", "db-generation-select");
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    control.append(option);
+  }
+  control.addEventListener("change", () => onChange(control.value));
+  return control;
+}
+
+function rangeControl(min, max, step, onInput) {
+  const control = el("input", "db-generation-range");
+  control.type = "range";
+  control.min = min;
+  control.max = max;
+  control.step = step;
+  control.addEventListener("input", () => onInput(Number(control.value)));
+  return control;
+}
+
+function field(label, control, valueElement = null) {
+  const row = el("div", "db-generation-field");
+  row.append(el("span", "db-generation-field-label", label), control);
+  if (valueElement) row.append(valueElement);
+  return row;
+}
+
+// Centered "═ TITLE ▸ expand ═" heading — the same convention every other
+// DirtyBirds node uses for its optional sections (Muse, Image Loader, Save
+// Prompt). Only the label markup is reused here, not `addCollapsibleTitle`:
+// this node's sections stay plain children of the single owning panel widget,
+// with height driven by `state`/`applyLayout`, not a widget of their own.
+function section(title, key, state, applyLayout) {
+  const root = el("section", `db-generation-section db-generation-${key}`);
+  const body = el("div", "db-generation-section-body");
+  const heading = makeCollapsibleSectionLabel(title, {
+    expanded: state[key],
+    onChange: (isOpen) => {
+      state[key] = isOpen;
+      root.classList.toggle("is-open", isOpen);
+      body.hidden = !isOpen;
+      applyLayout(true);
+    },
+  });
+  root.classList.toggle("is-open", state[key]);
+  body.hidden = !state[key];
+  root.append(heading.label, body);
+  return {
+    root,
+    body,
+    setCount(count) {
+      heading.setTitle(count ? `${title} · ${count}` : title);
+    },
+  };
+}
+
+function setupGenerationNode(node) {
+  if (node._dbGenerationBuilt) return;
+  node._dbGenerationBuilt = true;
+  node.color = DB_COLOR;
+  node.bgcolor = DB_BGCOLOR;
+  node.resizable = true;
+
+  const widgets = Object.fromEntries((node.widgets || []).map((widget) => [widget.name, widget]));
+  const backingNames = [
+    // positive/negative become forceInput sockets, but ComfyUI retains their
+    // backing widgets. They must cancel their widget-row spacing too.
+    "positive", "negative", "workflow", "ckpt_name", "dimension", "loras_data", "trigger_words_data",
+    "batch_size", "seed", "denoise", "seed_mode", "pos_embedding", "neg_embedding",
+  ];
+  for (const name of backingNames) {
+    if (widgets[name]) hideWidgetShared(node, name);
+  }
+
+  const savedUiVersion = Number(node.properties?.db_generation_ui_version || 0);
+  const saved = node.properties?.db_generation_sections || {};
+  const state = {
+    embeddings: Boolean(saved.embeddings),
+    loras: Boolean(saved.loras),
+  };
+  let loras = parseJSON(widgets.loras_data?.value);
+  let triggerWords = parseJSON(widgets.trigger_words_data?.value);
+
+  const panel = el("div", "db-generation-panel");
+  panel.style.setProperty("--db-node-bg", DB_BGCOLOR);
+  const panelWidget = node.addDOMWidget("db_generation_panel", "customhtml", panel, {
+    serialize: false,
+    getMinHeight: () => currentPanelHeight(),
+    afterResize: (resizedNode) => syncPanelWidth(resizedNode),
+  });
+
+  // The DOM widget owns live width synchronization. ComfyUI calls afterResize
+  // during an interactive drag, whereas replacing node.onResize is unreliable
+  // and can conflict with LiteGraph or another extension's resize lifecycle.
+  function syncPanelWidth(resizedNode = node) {
+    panel.style.width = nodeInnerW(resizedNode || node) + "px";
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => syncPanelWidth(node)));
+
+  function embeddingsHeight() {
+    const hasPreview = Boolean(readEmbedding(widgets.pos_embedding?.value).name) ||
+      Boolean(readEmbedding(widgets.neg_embedding?.value).name);
+    return EMBED_CARD_BASE_H + (hasPreview ? EMBED_PREVIEW_H : 0);
+  }
+
+  function lorasHeight() {
+    const loraRows = Math.min(Math.max(loras.length, 1), LORA_ROW_CAP);
+    const triggerRows = Math.min(Math.max(triggerWords.length, 1), TRIGGER_ROW_CAP);
+    return LORA_SECTION_BASE_H + Math.max(loraRows * LORA_ROW_H, triggerRows * TRIGGER_ROW_H);
+  }
+
+  function currentPanelHeight() {
+    let height = PANEL_BASE_HEIGHT;
+    if (state.embeddings) height += embeddingsHeight();
+    if (state.loras) height += lorasHeight();
+    return height;
+  }
+
+  // Remember the content height independently from node.size. Section toggles
+  // apply exactly one height delta; routine syncs only enforce the current
+  // minimum and therefore preserve any extra height chosen by the user.
+  let previousPanelHeight = currentPanelHeight();
+
+  function naturalNodeHeight(panelHeight) {
+    // computeSize is safe here because the panel height is a fixed formula—no
+    // live DOM measurement feeds back into it. Temporarily clear an old
+    // serialized minimum so it cannot keep a rebuilt node artificially tall.
+    const previousMinimum = node.min_height;
+    node.min_height = 0;
+    const computed = typeof node.computeSize === "function" ? node.computeSize() : null;
+    node.min_height = previousMinimum;
+    return Math.max(panelHeight + 96, Number(computed?.[1]) || 0);
+  }
+
+  function applyLayout(adjustForSectionToggle = false, normalizeSavedHeight = false) {
+    node.properties ||= {};
+    node.properties.db_generation_sections = { ...state };
+    node.properties.db_generation_ui_version = UI_VERSION;
+    const panelHeight = currentPanelHeight();
+    const panelDelta = panelHeight - previousPanelHeight;
+    const currentWidth = node.size?.[0] || NODE_WIDTH;
+    const currentHeight = node.size?.[1] || 0;
+    const targetWidth = Math.max(NODE_WIDTH, currentWidth);
+    panelWidget.computedHeight = panelHeight;
+    panel.style.height = `${panelHeight}px`;
+    syncPanelWidth(node);
+    const minimumHeight = naturalNodeHeight(panelHeight);
+    node.min_width = NODE_WIDTH;
+    node.min_height = minimumHeight;
+
+    let targetHeight = normalizeSavedHeight ? minimumHeight : Math.max(minimumHeight, currentHeight);
+    if (adjustForSectionToggle && !normalizeSavedHeight) {
+      targetHeight = Math.max(minimumHeight, currentHeight + panelDelta);
+    }
+    previousPanelHeight = panelHeight;
+
+    if (targetWidth !== currentWidth || targetHeight !== currentHeight) {
+      node.setSize([targetWidth, targetHeight]);
+    }
+    app.graph?.setDirtyCanvas(true, true);
+  }
+
+  node._dbApplyGenerationLayout = applyLayout;
+
+  // Generation -------------------------------------------------------------
+  const generation = el("section", "db-generation-section is-open db-generation-main");
+  generation.append(makeSectionLabel("Generation"));
+  const generationBody = el("div", "db-generation-section-body");
+  generation.append(generationBody);
+
+  const workflow = el("div", "db-generation-segmented");
+  const textToImage = button("Text → Image", () => setWorkflow("Text2Image"));
+  const imageToImage = button("Image → Image", () => setWorkflow("Image2Image"));
+  workflow.append(textToImage, imageToImage);
+
+  let dimensions = { "1024x1024": [1024, 1024] };
+  const checkpointValues = widgets.ckpt_name?.options?.values || [];
+  const checkpoint = button("", () => {
+    showCardPicker("Checkpoints", checkpointValues, widgets.ckpt_name?.value,
+      (name) => `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}`,
+      (name) => { setWidget(widgets.ckpt_name, name, node); updateCheckpointControl(); updateCheckpointPreview(); });
+  }, "db-generation-model-button");
+  const checkpointTag = el("span", "db-generation-control-tag", "CKPT");
+  const checkpointName = el("span", "db-generation-control-name");
+  checkpoint.append(checkpointTag, checkpointName, el("span", "db-generation-control-caret", "▾"));
+  const preview = el("div", "db-generation-preview");
+  const previewEmpty = el("span", "db-generation-preview-empty", "No checkpoint preview");
+  preview.append(previewEmpty);
+
+  const resolution = button("", () => {
+    const current = widgets.dimension?.value || "__random__";
+    showResolutionPicker(dimensions, current, (value) => {
+      if (value === "__random__") setWidget(widgets.dimension, value, node);
+      else {
+        const [width, height] = dimensions[value] || [1024, 1024];
+        setWidget(widgets.dimension, `${width}x${height}`, node);
+      }
+      updateResolutionControl();
+    }, () => {
+      const raw = widgets.dimension?.value || "1024x1024";
+      const [width, height] = raw.split("x").map(Number);
+      showResolutionEditor("Custom Resolution", [{ label: "Custom", width: width || 1024, height: height || 1024 }], (values) => {
+        const value = values[0];
+        if (value) { setWidget(widgets.dimension, `${value.width}x${value.height}`, node); updateResolutionControl(); }
+      });
+    }, () => {
+      const rows = Object.entries(dimensions).map(([label, [width, height]]) => ({ label, width, height }));
+      showResolutionEditor("Edit Resolutions", rows, async (values) => {
+        const next = Object.fromEntries(values.map((value) => [value.label, [value.width, value.height]]));
+        const saved = await fetchJSON("/dirtybirds/dimensions", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
+        });
+        if (saved) dimensions = saved;
+        updateResolutionControl();
+      });
+    });
+  }, "db-generation-model-button");
+  resolution.append(el("span", "db-generation-control-tag", "RES"), el("span", "db-generation-control-name"), el("span", "db-generation-control-caret", "▾"));
+  const batchValue = el("output", "db-generation-value");
+  const batch = rangeControl(1, 5, 1, (value) => {
+    batchValue.textContent = String(value);
+    setWidget(widgets.batch_size, value, node);
+  });
+  const denoiseValue = el("output", "db-generation-value");
+  const denoise = rangeControl(0, 1, 0.01, (value) => {
+    denoiseValue.textContent = value.toFixed(2);
+    setWidget(widgets.denoise, value, node);
+  });
+  const i2iWarning = el("div", "db-generation-warning", "Connect an image to use Image → Image.");
+
+  const seedRow = el("div", "db-generation-seed-row");
+  seedRow.append(el("span", "db-generation-field-label", "Seed"));
+  const fixedSeed = button("Fixed", () => setSeedMode("fixed"));
+  const randomSeed = button("Random", () => setSeedMode("random"));
+  const lastSeed = button("Last", () => {
+    if (node._dbLastSeed != null) setWidget(widgets.seed, node._dbLastSeed, node);
+    setSeedMode("fixed");
+  });
+  seedRow.append(fixedSeed, randomSeed, lastSeed);
+
+  const generationColumns = el("div", "db-generation-workspace");
+  const modelColumn = el("div", "db-generation-column db-generation-model-column");
+  const settingsColumn = el("div", "db-generation-column db-generation-settings-column");
+  modelColumn.append(checkpoint, preview);
+  settingsColumn.append(
+    resolution,
+    field("Batch", batch, batchValue),
+    field("Denoise", denoise, denoiseValue),
+    seedRow,
+  );
+  generationColumns.append(modelColumn, settingsColumn);
+  generationBody.append(workflow, generationColumns, i2iWarning);
+
+  function refreshWorkflowState() {
+    const value = widgets.workflow?.value || "Text2Image";
+    const isI2I = value === "Image2Image";
+    textToImage.classList.toggle("is-active", !isI2I);
+    imageToImage.classList.toggle("is-active", isI2I);
+    denoise.disabled = !isI2I;
+    denoise.title = isI2I ? "" : "Denoise only applies in Image → Image mode";
+    denoise.closest(".db-generation-field")?.classList.toggle("is-disabled", !isI2I);
+    const input = findInput(node, "image");
+    if (input) input.hidden = !isI2I;
+    i2iWarning.hidden = !isI2I || input?.link != null;
+    resolution.disabled = isI2I;
+    resolution.title = isI2I ? "Resolution follows the connected image in Image → Image mode" : "";
+    resolution.classList.toggle("is-disabled", isI2I);
+  }
+
+  function setWorkflow(value) {
+    setWidget(widgets.workflow, value, node);
+    refreshWorkflowState();
+  }
+
+  node._dbRefreshGenerationConnections = refreshWorkflowState;
+
+  function setSeedMode(value) {
+    setWidget(widgets.seed_mode, value, node);
+    fixedSeed.classList.toggle("is-active", value !== "random");
+    randomSeed.classList.toggle("is-active", value === "random");
+    lastSeed.disabled = node._dbLastSeed == null;
+  }
+
+  function updateCheckpointPreview() {
+    const name = widgets.ckpt_name?.value || "";
+    preview.replaceChildren(previewEmpty);
+    if (!name) return;
+    const url = `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}&v=${Date.now()}`;
+    loadMedia(preview, url, () => preview.replaceChildren(previewEmpty));
+  }
+
+  function updateCheckpointControl() {
+    const value = widgets.ckpt_name?.value || checkpointValues[0] || "";
+    checkpointName.textContent = value ? value.replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "") : "Select checkpoint";
+    checkpoint.title = value;
+  }
+
+  function updateResolutionControl() {
+    const value = widgets.dimension?.value || "__random__";
+    const label = resolution.querySelector(".db-generation-control-name");
+    if (value === "__random__") label.textContent = "🎲 Random";
+    else {
+      const match = Object.entries(dimensions).find(([, [width, height]]) => `${width}x${height}` === value);
+      label.textContent = match ? match[0] : value.replace("x", "×");
+    }
+  }
+
+  // Embeddings -------------------------------------------------------------
+  const embeddingsSection = section("Embeddings", "embeddings", state, applyLayout);
+  const embeddingGrid = el("div", "db-generation-two-column");
+  embeddingsSection.body.append(embeddingGrid);
+  let embeddingNames = [];
+
+  function makeEmbeddingSlot(label, widget) {
+    const card = el("div", "db-generation-card");
+    const controls = el("div", "db-generation-embedding-controls");
+    const enabled = el("input"); enabled.type = "checkbox"; enabled.title = "Enable embedding";
+    const picker = selectControl(["(none)", ...embeddingNames], (value) => {
+      const parsed = readEmbedding(widget?.value);
+      const name = value === "(none)" ? "" : value;
+      setWidget(widget, writeEmbedding(name, parsed.strength, enabled.checked), node);
+      refreshEmbeddingCount();
+      updateEmbeddingPreview(card, name);
+      applyLayout();
+    });
+    const strengthValue = el("output", "db-generation-value", "1.00");
+    const strength = rangeControl(0, 2, 0.05, (value) => {
+      strengthValue.textContent = value.toFixed(2);
+      setWidget(widget, writeEmbedding(picker.value === "(none)" ? "" : picker.value, value, enabled.checked), node);
+    });
+    enabled.addEventListener("change", () => {
+      setWidget(widget, writeEmbedding(picker.value === "(none)" ? "" : picker.value, Number(strength.value), enabled.checked), node);
+      card.classList.toggle("is-disabled", !enabled.checked);
+    });
+    controls.append(enabled, picker);
+    const preview = el("div", "db-generation-embed-preview");
+    preview.hidden = true;
+    card.append(el("span", "db-generation-card-label", label), controls, field("Weight", strength, strengthValue), preview);
+    card._picker = picker;
+    card._enabled = enabled;
+    card._strength = strength;
+    card._strengthValue = strengthValue;
+    card._preview = preview;
+    return card;
+  }
+
+  // Reserves preview space whenever a name is chosen (matches the checkpoint
+  // preview's box-always-present convention) rather than after the image/video
+  // actually resolves, so `currentPanelHeight()` stays a pure function of state.
+  function updateEmbeddingPreview(card, name) {
+    card._preview.hidden = !name;
+    if (!name) { card._preview.replaceChildren(); return; }
+    const empty = el("span", "db-generation-preview-empty", "No preview");
+    card._preview.replaceChildren(empty);
+    loadMedia(card._preview, `/dirtybirds/embedding-preview?name=${encodeURIComponent(name)}`,
+      () => card._preview.replaceChildren(empty));
+  }
+  const posEmbedding = makeEmbeddingSlot("Positive", widgets.pos_embedding);
+  const negEmbedding = makeEmbeddingSlot("Negative", widgets.neg_embedding);
+  embeddingGrid.append(posEmbedding, negEmbedding);
+
+  function readEmbedding(raw) {
+    raw = String(raw || "");
+    const active = !raw.startsWith("!");
+    if (!active) raw = raw.slice(1);
+    const match = raw.match(/^(.*):(-?\d+(?:\.\d+)?)$/);
+    return { name: match ? match[1] : raw, strength: match ? Number(match[2]) : 1, active };
+  }
+
+  function writeEmbedding(name, strength = 1, active = true) {
+    if (!name) return "";
+    const weighted = Math.abs(strength - 1) < 0.001 ? name : `${name}:${Number(strength).toFixed(2)}`;
+    return active ? weighted : `!${weighted}`;
+  }
+
+  function syncEmbeddingCard(card, widget) {
+    const parsed = readEmbedding(widget?.value);
+    if (parsed.name && !Array.from(card._picker.options).some((option) => option.value === parsed.name)) {
+      const option = document.createElement("option"); option.value = parsed.name; option.textContent = parsed.name; card._picker.append(option);
+    }
+    card._picker.value = parsed.name || "(none)";
+    card._enabled.checked = parsed.active;
+    card._strength.value = String(parsed.strength);
+    card._strengthValue.textContent = parsed.strength.toFixed(2);
+    card.classList.toggle("is-disabled", !parsed.active);
+    updateEmbeddingPreview(card, parsed.name);
+  }
+
+  function refreshEmbeddingCount() {
+    const count = [widgets.pos_embedding?.value, widgets.neg_embedding?.value]
+      .map(readEmbedding)
+      .filter((item) => item.name && item.active).length;
+    embeddingsSection.setCount(count);
+  }
+
+  // LoRAs ------------------------------------------------------------------
+  const loraSection = section("LoRAs", "loras", state, applyLayout);
+  let availableLoraNames = [];
+  const loraAddRow = el("div", "db-generation-add-row");
+  const loraAddBtn = button("", () => {
+    showCardPicker("Add LoRA", availableLoraNames, null,
+      (name) => `/dirtybirds/lora-preview?name=${encodeURIComponent(name)}`,
+      (name) => addLora(name));
+  }, "db-generation-model-button");
+  loraAddBtn.append(
+    el("span", "db-generation-control-tag", "LORA"),
+    el("span", "db-generation-control-name", "+ Add"),
+    el("span", "db-generation-control-caret", "▾"),
+  );
+  loraAddRow.append(loraAddBtn);
+  const loraList = el("div", "db-generation-lora-list");
+  const triggers = el("div", "db-generation-trigger-list");
+  const loraColumns = el("div", "db-generation-lora-columns");
+  const selectedColumn = el("div", "db-generation-lora-column");
+  const triggerColumn = el("div", "db-generation-lora-column");
+  selectedColumn.append(el("span", "db-generation-card-label", "Selected"), loraAddRow, loraList);
+  triggerColumn.append(el("span", "db-generation-card-label", "Trigger Words"), triggers);
+  loraColumns.append(selectedColumn, triggerColumn);
+  loraSection.body.append(loraColumns);
+
+  function saveLoras() {
+    setWidget(widgets.loras_data, JSON.stringify(loras), node);
+    setWidget(widgets.trigger_words_data, JSON.stringify(triggerWords), node);
+    renderLoras();
+    applyLayout();
+  }
+
+  async function addLora(name) {
+    if (!name || loras.some((item) => item.name === name)) return;
+    loras.push({ name, strength: 1, clip_strength: 1, active: true });
+    try {
+      const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`);
+      for (const text of meta?.trigger_words || []) {
+        if (!triggerWords.some((item) => item.lora === name && item.text === text)) {
+          triggerWords.push({ lora: name, text, active: true });
+        }
+      }
+    } catch (_) { /* metadata is optional */ }
+    saveLoras();
+  }
+
+  function renderLoras() {
+    loraList.replaceChildren();
+    triggers.replaceChildren();
+    for (const item of loras) {
+      const row = el("div", "db-generation-lora-row");
+      const top = el("div", "db-generation-lora-row-top");
+      const weights = el("div", "db-generation-lora-weights");
+      const thumb = el("div", "db-generation-lora-thumb");
+      thumb.hidden = true;
+      loadMedia(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`, undefined, () => { thumb.hidden = false; });
+      const active = el("input");
+      active.type = "checkbox";
+      active.checked = item.active !== false;
+      active.addEventListener("change", () => { item.active = active.checked; saveLoras(); });
+      const name = el("span", "db-generation-lora-name", item.name);
+      const strength = el("input", "db-generation-number");
+      strength.type = "number"; strength.min = "-2"; strength.max = "2"; strength.step = "0.05";
+      strength.value = String(item.strength ?? 1);
+      strength.title = "Model strength";
+      strength.addEventListener("change", () => { item.strength = clamp(strength.value, -2, 2); saveLoras(); });
+      const clip = strength.cloneNode();
+      clip.value = String(item.clip_strength ?? item.strength ?? 1);
+      clip.title = "CLIP strength";
+      clip.addEventListener("change", () => { item.clip_strength = clamp(clip.value, -2, 2); saveLoras(); });
+      const remove = button("×", () => {
+        loras = loras.filter((candidate) => candidate !== item);
+        triggerWords = triggerWords.filter((candidate) => candidate.lora !== item.name);
+        saveLoras();
+      }, "db-generation-remove");
+      top.append(thumb, active, name, remove);
+      weights.append(el("span", "db-generation-weight-label", "Model"), strength,
+        el("span", "db-generation-weight-label", "CLIP"), clip);
+      row.append(top, weights);
+      loraList.append(row);
+    }
+    for (const item of triggerWords) {
+      const chip = el("label", "db-generation-trigger");
+      chip.title = "Double-click to rename";
+      const active = el("input");
+      active.type = "checkbox";
+      active.checked = item.active !== false;
+      active.addEventListener("change", () => { item.active = active.checked; saveLoras(); });
+      const text = el("span", "db-generation-trigger-text", item.text);
+      chip.append(active, text);
+      chip.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        const input = el("input", "db-generation-trigger-input");
+        input.value = item.text;
+        chip.replaceChild(input, text);
+        input.focus();
+        input.select();
+        const commit = () => {
+          const value = input.value.trim();
+          if (value) item.text = value;
+          saveLoras();
+        };
+        input.addEventListener("keydown", (keyEvent) => {
+          if (keyEvent.key === "Enter") input.blur();
+          if (keyEvent.key === "Escape") { input.value = item.text; input.blur(); }
+        });
+        input.addEventListener("blur", commit, { once: true });
+      });
+      triggers.append(chip);
+    }
+    if (!loras.length) loraList.append(el("div", "db-generation-empty", "No LoRAs selected"));
+    if (!triggerWords.length) triggers.append(el("div", "db-generation-empty", "Trigger words appear here"));
+    const activeCount = loras.filter((item) => item.active !== false).length;
+    loraSection.setCount(activeCount);
+  }
+
+  node._dbApplyLoras = (incoming, mode = "append") => {
+    const normalized = (incoming || []).filter((item) => item?.name).map((item) => ({
+      name: item.name,
+      strength: Number(item.strength ?? 1),
+      clip_strength: Number(item.clip_strength ?? item.strength ?? 1),
+      active: item.active !== false,
+    }));
+    if (mode === "replace") loras = normalized;
+    else for (const item of normalized) {
+      const index = loras.findIndex((candidate) => candidate.name === item.name);
+      if (index >= 0) loras[index] = item; else loras.push(item);
+    }
+    saveLoras();
+  };
+
+  panel.append(generation, embeddingsSection.root, loraSection.root);
+
+  async function loadLibraries() {
+    const [loadedDimensions, embeddings, availableLoras] = await Promise.all([
+      fetchJSON("/dirtybirds/dimensions").catch(() => ({ "1024x1024": [1024, 1024] })),
+      fetchJSON("/dirtybirds/embeddings").catch(() => []),
+      fetchJSON("/dirtybirds/loras").catch(() => []),
+    ]);
+    dimensions = loadedDimensions || dimensions;
+    embeddingNames = embeddings || [];
+    for (const card of [posEmbedding, negEmbedding]) {
+      const current = card._picker.value;
+      card._picker.replaceChildren();
+      for (const value of ["(none)", ...embeddingNames]) {
+        const option = document.createElement("option"); option.value = value; option.textContent = value;
+        card._picker.append(option);
+      }
+      card._picker.value = current;
+    }
+    availableLoraNames = availableLoras || [];
+    syncFromWidgets();
+  }
+
+  function syncFromWidgets() {
+    batch.value = String(widgets.batch_size?.value ?? 1);
+    batchValue.textContent = batch.value;
+    denoise.value = String(widgets.denoise?.value ?? 1);
+    denoiseValue.textContent = Number(denoise.value).toFixed(2);
+    syncEmbeddingCard(posEmbedding, widgets.pos_embedding);
+    syncEmbeddingCard(negEmbedding, widgets.neg_embedding);
+    setWorkflow(widgets.workflow?.value || "Text2Image");
+    setSeedMode(widgets.seed_mode?.value || "fixed");
+    refreshEmbeddingCount();
+    renderLoras();
+    updateCheckpointControl();
+    updateResolutionControl();
+    updateCheckpointPreview();
+  }
+
+  node._dbGenerationSync = syncFromWidgets;
+  node._dbGenerationExecuted = (message) => {
+    node._dbLastSeed = message?.db_seed_used?.[0];
+    lastSeed.disabled = node._dbLastSeed == null;
+    renderLoras();
+  };
+
+  loadLibraries();
+  requestAnimationFrame(() => {
+    syncFromWidgets();
+    // Version 6 removes leaked forceInput widget rows and the obsolete base
+    // reserve. Normalize once; later routine syncs preserve manual resizing.
+    applyLayout(false, savedUiVersion < UI_VERSION);
+  });
+}
 
 app.registerExtension({
-  name: "DirtyBirds.Loader",
-
-  setup() {
-    // ── LoRA Manager eligibility shim ────────────────────────────────────
-    // comfyui-lora-manager only sends LoRAs to nodes its registry flags as
-    // lora-capable (hardcoded to its own classes in workflow_registry.js).
-    // It already lists our node (it has a ckpt_name widget) but with
-    // supports_lora:false. Intercept its /api/lm/register-nodes POST and flip
-    // our node's flag to true so "send to node" targets us. Self-contained;
-    // no LoRA Manager files are edited.
-    if (!window.__dbLoraRegisterPatched) {
-      window.__dbLoraRegisterPatched = true;
-      const _origFetch = window.fetch.bind(window);
-      window.fetch = function (input, init) {
-        try {
-          const url = typeof input === "string" ? input : input?.url;
-          if (url && url.indexOf("/api/lm/register-nodes") !== -1 &&
-              init && typeof init.body === "string") {
-            const data = JSON.parse(init.body);
-            if (Array.isArray(data?.nodes)) {
-              let changed = false;
-              for (const n of data.nodes) {
-                if ((n?.comfy_class === "DirtyBirdsLoader" || n?.type === "DirtyBirdsLoader")) {
-                  n.capabilities = n.capabilities || {};
-                  if (n.capabilities.supports_lora !== true) {
-                    n.capabilities.supports_lora = true;
-                    changed = true;
-                  }
-                }
-              }
-              if (changed) init = { ...init, body: JSON.stringify(data) };
-            }
-          }
-        } catch (e) { /* fall through to original fetch unmodified */ }
-        return _origFetch(input, init);
-      };
-    }
-
-    api.addEventListener("dirtybirds_set_loras", (event) => {
-      const d = event?.detail || {};
-      const node = app.graph?.getNodeById?.(Number(d.node_id)) ||
-                   app.graph?.getNodeById?.(d.node_id);
-      if (!node || node.comfyClass !== "DirtyBirdsLoader") return;
-      if (typeof node._dbApplyLoras === "function") {
-        node._dbApplyLoras(d.loras || [], d.mode || "append");
-      }
-    });
-
-    // ── LoRA Manager integration ─────────────────────────────────────────
-    // Receives <lora:name:strength> or <lora:name:strength:clip_strength>
-    // syntax from the comfyui-lora-manager "Send to node" action.
-    api.addEventListener("lora_code_update", (event) => {
-      const d = event?.detail || {};
-      const nodeId = d.node_id ?? d.id;
-      const loraCode = d.lora_code ?? "";
-      const mode = d.mode ?? "append";
-
-      const numericId = typeof nodeId === "string" ? Number(nodeId) : nodeId;
-
-      // Collect target DB loader nodes
-      const targets = [];
-      if (numericId === -1) {
-        // Broadcast — find all DirtyBirdsLoader nodes
-        const allNodes = app.graph?._nodes || Object.values(app.graph?._nodes_by_id || {});
-        (Array.isArray(allNodes) ? allNodes : []).forEach(n => {
-          if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
-        });
-      } else {
-        const n = app.graph?.getNodeById?.(numericId);
-        if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
-      }
-
-      if (!targets.length) return;
-
-      // Parse <lora:name:model_strength> or <lora:name:model_strength:clip_strength>
-      const loraPattern = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
-      const loras = [];
-      let match;
-      while ((match = loraPattern.exec(loraCode)) !== null) {
-        const strength = parseFloat(match[2]);
-        const clipStrength = match[3] != null ? parseFloat(match[3]) : null;
-        loras.push({
-          name: match[1],
-          strength: isNaN(strength) ? 1.0 : strength,
-          clip_strength: (clipStrength != null && !isNaN(clipStrength)) ? clipStrength : null,
-          active: true,
-        });
-      }
-
-      if (!loras.length) return;
-
-      targets.forEach(n => {
-        if (typeof n._dbApplyLoras === "function") {
-          n._dbApplyLoras(loras, mode);
-        }
-      });
-    });
-
-    // ── Register DirtyBirdsLoader as lora-capable in LoRA Manager's registry ─────
-    // Replaces LM's refreshRegistry so DirtyBirdsLoader appears in "Send to node".
-    // We must include DirtyBirds in the SAME register-nodes POST that LM makes,
-    // because the server waits for exactly one POST and returns immediately after.
-    //
-    // The install is load-order safe: if LM's extension hasn't registered yet
-    // when this setup() runs, we retry briefly until it appears. refreshRegistry
-    // is only invoked on a user "Send to node" action, so installing within a
-    // couple seconds of load is always in time.
-    function installLMRegistryOverride() {
-      const lmExt = app.extensions?.find(e => e.name === "LoraManager.WorkflowRegistry");
-      if (!lmExt || typeof lmExt.refreshRegistry !== "function") return false;
-      if (lmExt._dbOverrideInstalled) return true;  // idempotent
-      lmExt._dbOverrideInstalled = true;
-
-      const LM_LORA_CLASSES = new Set([
-        "Lora Loader (LoraManager)",
-        "Lora Stacker (LoraManager)",
-        "WanVideo Lora Select (LoraManager)",
-      ]);
-      const LM_TARGET_WIDGETS = new Set(["ckpt_name", "unet_name"]);
-
-      lmExt.refreshRegistry = async function () {
-        try {
-          const workflowNodes = [];
-
-          function collectNodes(g, visited = new Set()) {
-            const gid = String(g?.id ?? "root");
-            if (!g || visited.has(gid)) return;
-            visited.add(gid);
-
-            if (Array.isArray(g._nodes)) {
-              const graphName = typeof g.name === "string" && g.name.trim() ? g.name : null;
-              for (const node of g._nodes) {
-                if (!node) continue;
-                const widgetNames = Array.isArray(node.widgets)
-                  ? node.widgets.map(w => w?.name).filter(n => typeof n === "string" && n)
-                  : [];
-                const isLMNode = LM_LORA_CLASSES.has(node.comfyClass);
-                const isDBNode = node.comfyClass === "DirtyBirdsLoader";
-                const hasTargetWidget = widgetNames.some(n => LM_TARGET_WIDGETS.has(n));
-                if (!isLMNode && !isDBNode && !hasTargetWidget) continue;
-
-                workflowNodes.push({
-                  node_id: node.id,
-                  graph_id: gid,
-                  graph_name: graphName,
-                  bgcolor: node.bgcolor ?? node.color ?? null,
-                  title: node.title || node.comfyClass,
-                  type: node.comfyClass,
-                  comfy_class: node.comfyClass,
-                  mode: node.mode,
-                  capabilities: {
-                    supports_lora: isLMNode || isDBNode,
-                    widget_names: widgetNames,
-                  },
-                });
-              }
-            }
-
-            // Walk subgraphs (mirrors LM's traverseGraphs logic)
-            const subs = g._subgraphs;
-            if (subs) {
-              const subArr = typeof subs.values === "function"
-                ? [...subs.values()] : Object.values(subs);
-              for (const sg of subArr) {
-                const sub = sg?.graph || sg?._graph || sg;
-                if (sub && sub !== g) collectNodes(sub, visited);
-              }
-            }
-          }
-
-          collectNodes(app.graph);
-
-          const resp = await fetch("/api/lm/register-nodes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nodes: workflowNodes }),
-          });
-          if (!resp.ok) console.warn("[DirtyBirds] LM register-nodes failed:", resp.statusText);
-        } catch (e) {
-          console.warn("[DirtyBirds] Error in LM registry refresh:", e);
-        }
-      };
-      return true;
-    }
-
-    // Try now; if LoRA Manager hasn't registered yet, retry (~2s @ 50ms).
-    if (!installLMRegistryOverride()) {
-      let tries = 0;
-      const lmTimer = setInterval(() => {
-        if (installLMRegistryOverride() || ++tries > 40) clearInterval(lmTimer);
-      }, 50);
-    }
-
-    api.addEventListener("dirtybirds_set_embedding", (event) => {
-      const d = event?.detail || {};
-      const node = app.graph?.getNodeById?.(Number(d.node_id)) ||
-                   app.graph?.getNodeById?.(d.node_id);
-      if (!node || node.comfyClass !== "DirtyBirdsLoader") return;
-      if (typeof node._dbApplyEmbedding === "function") {
-        node._dbApplyEmbedding(d.slot, d.name, d.strength);
-      }
-    });
-  },
-
-  async beforeRegisterNodeDef(nodeType, nodeData) {
+  name: "DirtyBirds.GenerationSetup",
+  beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsLoader") return;
+    const originalCreated = nodeType.prototype.onNodeCreated;
+    const originalConfigure = nodeType.prototype.onConfigure;
+    const originalExecuted = nodeType.prototype.onExecuted;
+    const originalConnectionsChange = nodeType.prototype.onConnectionsChange;
 
-    const dimensions = await fetchJSON("/dirtybirds/dimensions");
-    let dimData = dimensions || { "1024x1024": [1024, 1024] };
-    let dimensionKeys = Object.keys(dimData);
-
-    // Receive executed prompt text → update the "Dirty Talk" preview
-    // Also receive external lora_stack names → show as read-only chips.
-    const onExecuted = nodeType.prototype.onExecuted;
-    nodeType.prototype.onExecuted = function (message) {
-      onExecuted?.apply(this, arguments);
-      const stackNames = message?.db_lora_stack;
-      if (Array.isArray(stackNames)) {
-        this._dbRefreshStackChips?.(stackNames);
-      }
-    };
-
-    const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
-      onNodeCreated?.apply(this, arguments);
-      const node = this;
-      node.size[0] = 420;
-      node.color   = DB_COLOR;
-      node.bgcolor = DB_BGCOLOR;
-
-      // ── Hide backing STRING widgets (not positive/negative — those stay native) ──
-      function hideWidget(name) {
-        const w = node.widgets?.find(w => w.name === name);
-        if (!w) return undefined;
-        w.computeSize    = () => [0, 0];
-        w.serializeValue = () => w.value;
-        if (typeof w.setHidden === "function") w.setHidden(true);
-        else if ("hidden" in w) w.hidden = true;
-        return w;
-      }
-
-      const workflowWidget  = hideWidget("workflow");
-      const dimensionWidget = hideWidget("dimension");
-      const posEmbedWidget  = hideWidget("pos_embedding");
-      const negEmbedWidget  = hideWidget("neg_embedding");
-      const lorasDataWidget = hideWidget("loras_data");
-      const twDataWidget    = hideWidget("trigger_words_data");
-      // positive / negative are hidden — edited via the Dirty Talk panel below
-      // positive / negative are forceInput sockets (fed by the Prompt node),
-      // not widgets — nothing to hide here.
-
-      // Random resolution is stored as the sentinel "__random__" in the
-      // dimension widget so Python re-picks a fresh size on every run.
-      const RANDOM_DIM = "__random__";
-
-      // ── DOM widget helpers ───────────────────────────────────────────────
-      function addFixed(name, el, h) {
-        el.style.cssText += "box-sizing:border-box;overflow:hidden;";
-        node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
-      }
-      function addTitle(name, el, h) {
-        h = Math.max(h || 0, 30); // enough height so centered section text isn't clipped
-        el.style.cssText += "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
-        node.addDOMWidget(name, "customhtml", el, { serialize:false, height:h, getMinHeight:()=>h });
-      }
-
-      // ── 1. WORKFLOW TOGGLE (sliding switch) ──────────────────────────────
-      const workflowDOM = document.createElement("div"); workflowDOM.className="db-workflow-switch";
-      const wfKnob = document.createElement("div"); wfKnob.className="db-wf-knob";
-      const wfOptT = document.createElement("div"); wfOptT.className="db-wf-opt"; wfOptT.textContent="Text → Image";
-      const wfOptI = document.createElement("div"); wfOptI.className="db-wf-opt"; wfOptI.textContent="Image → Image";
-      workflowDOM.append(wfKnob, wfOptT, wfOptI);
-
-      // Paint visual state only (no side effects) — safe to call during init,
-      // before denoise/resolution helpers below are wired up.
-      function paintWorkflow(mode) {
-        const isI2I = mode === "Image2Image";
-        workflowDOM.classList.toggle("db-wf-right", isI2I);
-        wfOptT.classList.toggle("db-wf-active", !isI2I);
-        wfOptI.classList.toggle("db-wf-active", isI2I);
-      }
-      // Full select (visual + side effects) — only fired by user clicks, after
-      // applyWorkflowDenoiseDefault / updateResolutionState are defined.
-      function selectWorkflow(mode) {
-        if (workflowWidget) workflowWidget.value = mode;
-        paintWorkflow(mode);
-        node.inputs?.forEach(inp => { if (inp.name==="image") inp.hidden=(mode!=="Image2Image"); });
-        applyWorkflowDenoiseDefault();
-        updateResolutionState();
-        node.setDirtyCanvas(true);
-      }
-      wfOptT.addEventListener("click", () => selectWorkflow("Text2Image"));
-      wfOptI.addEventListener("click", () => selectWorkflow("Image2Image"));
-      paintWorkflow(workflowWidget?.value ?? "Text2Image");
-      addFixed("db_workflow", workflowDOM, 40);
-      const wIdx = node.widgets.findIndex(w=>w.name==="db_workflow");
-      if (wIdx>0) { const [we]=node.widgets.splice(wIdx,1); node.widgets.unshift(we); }
-
-      // ── 1b. THE MAIN ATTRACTION — checkpoint / vae styled flyout buttons ──
-      addTitle("db_modellabel", makeSectionLabel("The Main Attraction"), 20);
-
-      // Hide the native checkpoint combo; the styled button below drives it.
-      // VAE is no longer a UI control — it is always baked from the checkpoint.
-      const ckptWidget = hideWidget("ckpt_name");
-
-      const ckptDisplay = (v) => (v || "(none)").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
-
-      // Checkpoint flyout button (TAG + name + caret). Clicking opens a
-      // LoRA-Manager-style card grid; the selected checkpoint's preview
-      // (image or video) renders in the panel beneath the button.
-      const ckptBtn = document.createElement("div");
-      ckptBtn.className = "db-sel-row"; ckptBtn.style.cursor = "pointer";
-      const ckptTag   = document.createElement("span"); ckptTag.className = "db-model-tag"; ckptTag.textContent = "CKPT";
-      const ckptName  = document.createElement("span"); ckptName.className = "db-sel-name"; ckptName.style.flex = "1";
-      const ckptCaret = document.createElement("span"); ckptCaret.className = "db-model-caret"; ckptCaret.textContent = "▾";
-      ckptBtn.append(ckptTag, ckptName, ckptCaret);
-
-      // Selected-checkpoint preview (image or video) below the button.
-      const ckptPreview = document.createElement("div");
-      ckptPreview.className = "db-model-preview";
-      ckptPreview.style.cssText = "display:none;margin-top:6px;";
-
-      function refreshCkptName() {
-        const v = ckptWidget?.value ?? "";
-        ckptName.textContent = v ? ckptDisplay(v) : "Select checkpoint";
-        ckptBtn.title = v || "";
-      }
-      function refreshCkptPreview() {
-        const v = ckptWidget?.value ?? "";
-        ckptPreview.style.display = "none";
-        ckptPreview.innerHTML = "";
-        if (v) {
-          loadModelMedia(ckptPreview, "checkpoints", v,
-            () => { ckptPreview.style.display = "block"; syncTopRowH(); },
-            () => { ckptPreview.style.display = "none"; ckptPreview.innerHTML = ""; syncTopRowH(); });
-        } else {
-          syncTopRowH();
-        }
-      }
-      ckptBtn.addEventListener("click", () => {
-        showCardFlyout("Checkpoints", ckptWidget?.options?.values || [], ckptWidget?.value,
-          (n) => `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(n)}`,
-          ckptDisplay, (name) => {
-            if (ckptWidget) ckptWidget.value = name;
-            refreshCkptName();
-            refreshCkptPreview();
-            node.setDirtyCanvas(true);
-          });
-      });
-      refreshCkptName();
-
-      // Left column: Checkpoint button + preview
-      const leftCol = document.createElement("div");
-      leftCol.style.cssText = "display:flex;flex-direction:column;flex:1;min-width:0;";
-      leftCol.append(ckptBtn, ckptPreview);
-
-      // Resolution is stored as "WIDTHxHEIGHT" or the RANDOM_DIM sentinel in the hidden `dimension` widget.
-      if (dimensionWidget && dimensionWidget.value !== RANDOM_DIM &&
-          !/^\d+x\d+$/.test(dimensionWidget.value || "")) {
-        dimensionWidget.value = "1024x1024";
-      }
-
-      // Resolution picker row (styled like checkpoint loader button: Tag + Name + Caret)
-      const resRow = document.createElement("div");
-      resRow.className = "db-sel-row";
-      resRow.style.cursor = "pointer";
-      
-      const resTag = document.createElement("span");
-      resTag.className = "db-model-tag";
-      resTag.textContent = "RES";
-      
-      const resLabel = document.createElement("span");
-      resLabel.className = "db-sel-name";
-      resLabel.style.flex = "1";
-      
-      const resCaret = document.createElement("span");
-      resCaret.className = "db-model-caret";
-      resCaret.textContent = "▾";
-      
-      resRow.append(resTag, resLabel, resCaret);
-
-      function refreshResRow() {
-        const cur = dimensionWidget?.value || "1024x1024";
-        if (cur === RANDOM_DIM) {
-          resLabel.textContent = "🎲 Random";
-        } else {
-          const [w, h] = cur.split("x").map(Number);
-          const key = Object.keys(dimData).find(k => {
-            const wh = dimData[k] || [];
-            return Number(wh[0]) === w && Number(wh[1]) === h;
-          });
-          const numericKey = key?.replace(/\s/g, "").replace("×", "x");
-          const dimensions = `${w}x${h}`;
-          resLabel.textContent = key
-            ? (numericKey === dimensions ? key : `${key} (${w}×${h})`)
-            : `${w}×${h}`;
-        }
-      }
-      // Flyout (same styled panel as the checkpoint picker); Random is an option.
-      function currentResKey() {
-        const cur = dimensionWidget?.value;
-        if (!cur || cur === RANDOM_DIM) return null;
-        const [w, h] = cur.split("x").map(Number);
-        return Object.keys(dimData).find(k => {
-          const wh = dimData[k] || [];
-          return Number(wh[0]) === w && Number(wh[1]) === h;
-        }) || null;
-      }
-      function applyDimensionMap(nextData) {
-        dimData = nextData || dimData;
-        dimensionKeys = Object.keys(dimData);
-        refreshResRow();
-      }
-      function openCustomResolution() {
-        const cur = dimensionWidget?.value && dimensionWidget.value !== RANDOM_DIM ? dimensionWidget.value : "1024x1024";
-        const [curW, curH] = cur.split("x").map(Number);
-        showResolutionForm("Custom Resolution", [
-          { label: "Custom", width: curW || 1024, height: curH || 1024 },
-        ], async (values) => {
-          const item = values[0];
-          if (!item) return;
-          if (dimensionWidget) dimensionWidget.value = `${item.width}x${item.height}`;
-          refreshResRow();
-          node.setDirtyCanvas(true);
-        });
-      }
-      function openEditResolutions() {
-        const fields = dimensionKeys.map((label) => {
-          const [width, height] = dimData[label] || [1024, 1024];
-          return { label, width, height };
-        });
-        showResolutionForm("Edit Resolutions", fields, async (values) => {
-          const next = {};
-          values.forEach((item) => { next[item.label] = [item.width, item.height]; });
-          const saved = await fetchJSON("/dirtybirds/dimensions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(next),
-          });
-          applyDimensionMap(saved);
-          node.setDirtyCanvas(true);
-        });
-      }
-      resRow.addEventListener("click", () => {
-        showResolutionFlyout(dimData, dimensionKeys, currentResKey(),
-          dimensionWidget?.value === RANDOM_DIM, (pick) => {
-            if (pick === "__random__") {
-              if (dimensionWidget) dimensionWidget.value = RANDOM_DIM;
-            } else if (dimData[pick]) {
-              const [w, h] = dimData[pick];
-              if (dimensionWidget) dimensionWidget.value = `${w}x${h}`;
-            }
-            refreshResRow();
-            node.setDirtyCanvas(true);
-          }, openCustomResolution, openEditResolutions);
-      });
-
-      // Right column: Resolutions selector
-      const rightCol = document.createElement("div");
-      rightCol.style.cssText = "display:flex;flex-direction:column;flex:1;min-width:0;";
-      rightCol.appendChild(resRow);
-
-      // Top row container (flex)
-      const topRow = document.createElement("div");
-      topRow.style.cssText = "display:flex;gap:6px;align-items:flex-start;width:100%;";
-      topRow.append(leftCol, rightCol);
-
-      // Add topRow widget
-      const topRowWidget = node.addDOMWidget("db_ckpt_res_row", "customhtml", topRow, {
-        serialize: false,
-        height: 30,
-        getMinHeight: () => Math.max(30, topRow.scrollHeight || 30),
-      });
-
-      function syncTopRowH() {
-        requestAnimationFrame(() => {
-          const h = Math.max(30, topRow.scrollHeight || 30);
-          if (topRowWidget) topRowWidget.computedHeight = h;
-          node.setDirtyCanvas(true);
-        });
-      }
-
-      // ── Embedding apply method (from Casting Coach event) ────────────────
-      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
-        // Store as "name" (strength 1) or "name:strength" so the node can
-        // emit a weighted (embedding:name:strength) token at encode time.
-        const s = Number(strength);
-        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
-        if (slot === "positive" && posEmbedWidget) posEmbedWidget.value = stored;
-        if (slot === "negative" && negEmbedWidget) negEmbedWidget.value = stored;
-        node.setDirtyCanvas(true);
-      };
-
-      // ── 2. SIZE MATTERS controls — Batch / Seed / Denoise live in the right
-      //    column beneath the Resolution button (appended to rightCol below).
-      const batchWidget = hideWidget("batch_size");
-      function clampBatch(v) { v = parseInt(v, 10); return Number.isFinite(v) ? Math.max(1, Math.min(5, v)) : 1; }
-      const batchRow = document.createElement("div");
-      batchRow.className = "db-slider-row";
-      batchRow.style.justifyContent = "space-between";
-      const batchLabel = document.createElement("span"); batchLabel.className = "db-slider-label"; batchLabel.textContent = "Batch";
-      const batchSlider = document.createElement("input"); batchSlider.type = "range"; batchSlider.className = "db-sel-slider";
-      batchSlider.min = "1"; batchSlider.max = "5"; batchSlider.step = "1"; batchSlider.style.flex = "0 0 50px";
-      batchSlider.value = String(clampBatch(batchWidget?.value));
-      const batchVal = document.createElement("span"); batchVal.className = "db-sel-val"; batchVal.textContent = batchSlider.value;
-      batchSlider.addEventListener("input", () => {
-        const bv = clampBatch(batchSlider.value);
-        if (batchWidget) batchWidget.value = bv;
-        batchVal.textContent = String(bv);
-      });
-      batchRow.append(batchLabel, batchSlider, batchVal);
-
-      // ── Seed (inline mode buttons) + Denoise (slider) — both ride the pipe
-      //    to the DirtyBirds sampler. Random is re-rolled every run by Python.
-      const seedWidget     = hideWidget("seed");
-      const seedModeWidget = hideWidget("seed_mode");
-      const denoiseWidget  = hideWidget("denoise");
-      // ComfyUI may auto-add a control_after_generate widget for an INT named
-      // "seed"; hide it — seed mode is driven by the inline buttons below.
-      hideWidget("control_after_generate");
-
-      const seedRow = document.createElement("div");
-      seedRow.className = "db-seed-mode-row";
-      const seedTag = document.createElement("span");
-      seedTag.className = "db-model-tag";
-      seedTag.textContent = "SEED";
-      const seedButtons = document.createElement("div");
-      seedButtons.className = "db-seed-mode-buttons";
-      const fixedBtn = document.createElement("button");
-      fixedBtn.type = "button";
-      fixedBtn.className = "db-seed-mode-btn";
-      fixedBtn.textContent = "📌 Fixed";
-      const randomBtn = document.createElement("button");
-      randomBtn.type = "button";
-      randomBtn.className = "db-seed-mode-btn";
-      randomBtn.textContent = "🎲 Random";
-      const seedHint = document.createElement("span");
-      seedHint.className = "db-seed-mode-hint";
-      seedHint.textContent = "re-rolls each run";
-      seedButtons.append(fixedBtn, randomBtn);
-      seedRow.append(seedTag, seedButtons, seedHint);
-
-      function refreshSeedRow() {
-        const mode = (seedModeWidget?.value === "random") ? "random" : "fixed";
-        fixedBtn.classList.toggle("db-active", mode === "fixed");
-        randomBtn.classList.toggle("db-active", mode === "random");
-        seedHint.style.visibility = mode === "random" ? "visible" : "hidden";
-      }
-      function setSeedMode(mode) {
-        if (seedModeWidget) seedModeWidget.value = mode;
-        // A fixed seed needs a concrete value; roll one if still unset.
-        if (mode === "fixed" && seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
-        }
-        refreshSeedRow();
-        node.setDirtyCanvas(true);
-      }
-      fixedBtn.addEventListener("click", () => setSeedMode("fixed"));
-      randomBtn.addEventListener("click", () => setSeedMode("random"));
-      // A seed widget left empty fails Python's INT conversion at run time.
-      // Ensure it always holds a concrete value, regardless of mode.
-      if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-        seedWidget.value = Math.floor(Math.random() * 9007199254740991);
-      }
-      refreshSeedRow();
-
-      const denoiseRow = document.createElement("div");
-      denoiseRow.className = "db-slider-row";
-      denoiseRow.style.justifyContent = "space-between";
-      const denoiseLabel = document.createElement("span"); denoiseLabel.className = "db-slider-label"; denoiseLabel.textContent = "Denoise";
-      const denoiseSlider = document.createElement("input");
-      denoiseSlider.type = "range"; denoiseSlider.className = "db-sel-slider";
-      denoiseSlider.min = "0"; denoiseSlider.max = "1"; denoiseSlider.step = "0.01"; denoiseSlider.style.flex = "1"; denoiseSlider.style.minWidth = "0";
-      const denoiseVal = document.createElement("span"); denoiseVal.className = "db-sel-val";
-      function setDenoise(v) {
-        v = Math.max(0, Math.min(1, Number(v)));
-        if (!Number.isFinite(v)) v = 1.0;
-        denoiseSlider.value = String(v);
-        denoiseVal.textContent = v.toFixed(2);
-        if (denoiseWidget) denoiseWidget.value = v;
-      }
-      denoiseSlider.addEventListener("input", () => setDenoise(denoiseSlider.value));
-      setDenoise(typeof denoiseWidget?.value === "number" ? denoiseWidget.value : 1.0);
-      denoiseRow.append(denoiseLabel, denoiseSlider, denoiseVal);
-
-      // Seed is the compact final control at the bottom of The Main
-      // Attraction's right column.
-      rightCol.append(batchRow, denoiseRow, seedRow);
-      syncTopRowH();
-
-      // Denoise default per workflow: 1.0 for Text2Image, 0.7 for Image2Image.
-      // Applied when the workflow toggle changes.
-      function applyWorkflowDenoiseDefault() {
-        const mode = workflowWidget?.value ?? "Text2Image";
-        setDenoise(mode === "Image2Image" ? 0.7 : 1.0);
-      }
-
-      // T2I enables resolution picker; I2I disables it (image drives the size).
-      let resEnabled = true;
-      function updateResolutionState() {
-        resEnabled = (workflowWidget?.value ?? "Text2Image") === "Text2Image";
-        resRow.style.opacity = resEnabled ? "" : "0.4";
-        resRow.style.pointerEvents = resEnabled ? "" : "none";
-      }
-
-      refreshResRow();
-      updateResolutionState();
-
-      // ── 3. THE CAST — positive / negative embedding picker (compact rows) ────
-      addTitle("db_castlabel", makeSectionLabel("The Cast"), 20);
-
-      function buildEmbedSlot(slot, widget) {
-        // slot: "positive" or "negative"
-        // Returns a single db-sel-row that expands/collapses based on state
-        // Applies color-coded border stripe via db-emb-pos / db-emb-neg class
-
-        const isPositive = slot === "positive";
-        const slotClass = isPositive ? "db-emb-pos" : "db-emb-neg";
-
-        // Wrapper holds the selector row + an on-node preview (same as checkpoint).
-        const wrap = document.createElement("div");
-        wrap.style.cssText = "display:flex;flex-direction:column;min-width:0;";
-
-        const row = document.createElement("div");
-        row.className = `db-sel-row ${slotClass}`;
-
-        const preview = document.createElement("div");
-        preview.className = "db-model-preview";
-        preview.style.cssText = "display:none;margin-top:6px;";
-
-        wrap.append(row, preview);
-
-        let current = { name: "", strength: 1.0, active: true };
-        let _embedList = null;
-
-        // Medium preview of the selected embedding (mirrors refreshCkptPreview).
-        function refreshEmbedPreview() {
-          preview.style.display = "none";
-          preview.innerHTML = "";
-          if (current.name) {
-            loadMediaUrl(preview, `/dirtybirds/embedding-preview?name=${encodeURIComponent(current.name)}`,
-              () => { preview.style.display = "block"; syncEmbedH(); },
-              () => { preview.style.display = "none"; preview.innerHTML = ""; syncEmbedH(); }, "cover");
-          } else {
-            syncEmbedH();
-          }
-        }
-
-        // Serialize to widget value: "name", "name:strength", or "!name:strength"
-        function serializeEmbed() {
-          if (!current.name) return "";
-          const base = Math.abs(current.strength - 1.0) < 0.001 ? current.name : `${current.name}:${current.strength.toFixed(2)}`;
-          return current.active ? base : `!${base}`;
-        }
-
-        // Render the row state (empty add-button or populated LoRA-style row)
-        function render() {
-          row.innerHTML = "";
-          row.style.cssText = "";
-
-          if (!current.name) {
-            // Empty state: slim dashed add-button that fits a half-width column.
-            // Header already says Positive/Negative, so the label is just "＋ Add".
-            row.className = `db-emb-add ${slotClass}`;
-            row.textContent = "＋ Add";
-            row.title = isPositive ? "Add positive embedding" : "Add negative embedding";
-            row.addEventListener("click", openEmbedMenu);
-            refreshEmbedPreview();
-            return;
-          }
-
-          // Populated state: mirror buildLoraPanel's row (controls; preview below).
-          row.className = "db-sel-row db-weight-row db-row-stacked " + slotClass + (current.active ? "" : " db-inactive");
-
-          const toggle = document.createElement("button");
-          toggle.className = "db-sel-toggle";
-          toggle.textContent = current.active ? "●" : "○";
-          toggle.title = current.active ? "Disable" : "Enable";
-          toggle.addEventListener("click", () => {
-            current.active = !current.active;
-            toggle.textContent = current.active ? "●" : "○";
-            toggle.title = current.active ? "Disable" : "Enable";
-            row.classList.toggle("db-inactive", !current.active);
-            if (widget) widget.value = serializeEmbed();
-          });
-
-          const nameEl = document.createElement("span");
-          nameEl.className = "db-sel-name";
-          // Display only the asset basename; retain the full path/extension in
-          // the title and serialized value. If this layout regresses again,
-          // rebuild Cast/Talent rather than adding another sizing workaround.
-          nameEl.textContent = (current.name || "")
-            .replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
-          nameEl.title = current.name;
-
-          const slider = document.createElement("input");
-          slider.type = "range";
-          slider.className = "db-sel-slider";
-          slider.min = "0.10";
-          slider.max = "2.00";
-          slider.step = "0.05";
-          slider.value = current.strength.toFixed(2);
-          slider.title = `Weight: ${current.strength.toFixed(2)}`;
-
-          const valEl = document.createElement("span");
-          valEl.className = "db-sel-val";
-          valEl.textContent = current.strength.toFixed(2);
-
-          slider.addEventListener("input", () => {
-            current.strength = parseFloat(slider.value);
-            valEl.textContent = current.strength.toFixed(2);
-            slider.title = `Weight: ${current.strength.toFixed(2)}`;
-            if (widget) widget.value = serializeEmbed();
-          });
-
-          const rmBtn = document.createElement("button");
-          rmBtn.className = "db-sel-remove";
-          rmBtn.textContent = "✕";
-          rmBtn.title = "Remove";
-          rmBtn.addEventListener("click", () => {
-            current = { name: "", strength: 1.0, active: true };
-            if (widget) widget.value = "";
-            render();
-            syncEmbedH();
-          });
-
-          // Small inline preview thumb at the row start (mirrors buildLoraPanel),
-          // hidden until the embedding has a sibling preview image/video.
-          const thumb = document.createElement("div");
-          thumb.className = "db-model-preview db-sel-large-preview";
-          thumb.style.display = "none";
-          if (current.name) {
-            loadMediaUrl(thumb, `/dirtybirds/embedding-preview?name=${encodeURIComponent(current.name)}`,
-              () => { thumb.style.display = ""; syncEmbedH(); },
-              () => { thumb.style.display = "none"; thumb.innerHTML = ""; }, "cover");
-          }
-
-          const head = document.createElement("div");
-          head.className = "db-row-head";
-          head.append(thumb, nameEl);
-          const ctrl = document.createElement("div");
-          ctrl.className = "db-row-ctrl";
-          ctrl.append(toggle, slider, valEl, rmBtn);
-          row.append(head, ctrl);
-        }
-
-        // Open embedding selection menu (LoRA-Manager-style card grid w/ previews)
-        const embDisplay = (n) => (n || "").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
-        async function openEmbedMenu() {
-          if (!_embedList) {
-            const data = await fetchJSON("/dirtybirds/embeddings");
-            _embedList = Array.isArray(data) ? data : [];
-          }
-          showListFlyout(isPositive ? "Positive Embedding" : "Negative Embedding",
-            _embedList, current.name, embDisplay, (n) => {
-              current = { name: n, strength: 1.0, active: true };
-              if (widget) widget.value = serializeEmbed();
-              render();
-              syncEmbedH();
-            });
-        }
-
-        // Deserialize from widget value
-        function deserialize(raw) {
-          raw = (raw || "").trim();
-          if (!raw) {
-            current = { name: "", strength: 1.0, active: true };
-            render();
-            return;
-          }
-          const active = !raw.startsWith("!");
-          const stripped = active ? raw : raw.slice(1);
-          const parts = stripped.split(":");
-          const strength = parts.length > 1 ? parseFloat(parts[parts.length - 1]) || 1.0 : 1.0;
-          const name = parts.length > 1 ? parts.slice(0, -1).join(":") : stripped;
-          current = { name, strength, active };
-          render();
-        }
-
-        // Public methods for compatibility with old API
-        wrap._set = (name, strength, active = true) => {
-          current = { name, strength, active };
-          if (widget) widget.value = serializeEmbed();
-          render();
-          syncEmbedH();
-        };
-
-        wrap._deserialize = deserialize;
-
-        // Initial render (empty state)
-        render();
-
-        return wrap;
-      }
-
-      // Two-column container mirroring "The Talent" — Positive | divider | Negative
-      const embedColsEl = document.createElement("div");
-      embedColsEl.className = "db-talent-columns";
-      embedColsEl.style.cssText = "box-sizing:border-box;overflow:visible;width:100%;max-width:100%;";
-
-      const posEmbedRow = buildEmbedSlot("positive", posEmbedWidget);
-      const negEmbedRow = buildEmbedSlot("negative", negEmbedWidget);
-
-      // Left column: Positive
-      const posColEl = document.createElement("div");
-      posColEl.className = "db-talent-loras";
-      const posColHeader = document.createElement("div");
-      posColHeader.className = "db-talent-col-header db-emb-head-pos";
-      posColHeader.innerHTML = 'Positive <span class="db-col-hint">embedding</span>';
-      posColEl.append(posColHeader, posEmbedRow);
-
-      // Vertical divider
-      const embedDividerEl = document.createElement("div");
-      embedDividerEl.className = "db-talent-divider";
-
-      // Right column: Negative
-      const negColEl = document.createElement("div");
-      negColEl.className = "db-talent-triggerwords";
-      const negColHeader = document.createElement("div");
-      negColHeader.className = "db-talent-col-header db-emb-head-neg";
-      negColHeader.innerHTML = 'Negative <span class="db-col-hint">embedding</span>';
-      negColEl.append(negColHeader, negEmbedRow);
-
-      embedColsEl.append(posColEl, embedDividerEl, negColEl);
-
-      const embedColsWidget = node.addDOMWidget("db_embed_cols", "customhtml", embedColsEl, {
-        serialize: false, height: 60,
-        getMinHeight: () => Math.max(60, embedColsEl.scrollHeight || 60),
-      });
-
-      function syncEmbedH() {
-        requestAnimationFrame(() => {
-          const h = Math.max(60, embedColsEl.scrollHeight || 60);
-          if (embedColsWidget) embedColsWidget.computedHeight = h;
-          const needed = typeof node.computeSize === "function" ? node.computeSize() : null;
-          if (needed && typeof node.setSize === "function" && (node.size?.[1] || 0) < needed[1]) {
-            node.setSize([node.size[0], needed[1]]);
-          }
-          node.setDirtyCanvas(true);
-        });
-      }
-      syncEmbedH();
-
-      // Override _dbApplyEmbedding to refresh UI slots
-      node._dbApplyEmbedding = (slot, name, strength = 1.0) => {
-        const s = Number(strength);
-        const stored = (!isNaN(s) && Math.abs(s - 1.0) > 1e-3) ? `${name}:${s.toFixed(2)}` : name;
-        if (slot === "positive") {
-          if (posEmbedWidget) posEmbedWidget.value = stored;
-          posEmbedRow._set(name, isNaN(s) ? 1.0 : s);
-        }
-        if (slot === "negative") {
-          if (negEmbedWidget) negEmbedWidget.value = stored;
-          negEmbedRow._set(name, isNaN(s) ? 1.0 : s);
-        }
-        node.setDirtyCanvas(true);
-      };
-
-      // ── 4. THE TALENT — two-column layout ────────────────────────────────
-      addTitle("db_loralabel", makeSectionLabel("The Talent"), 20);
-      let loraEntries = [];
-      let twEntries   = [];
-
-      function serializeLoras() { if (lorasDataWidget) lorasDataWidget.value=JSON.stringify(loraEntries); }
-      function serializeTW()    { if (twDataWidget)    twDataWidget.value   =JSON.stringify(twEntries);   }
-
-      // Two-column container
-      const talentColsEl = document.createElement("div");
-      talentColsEl.className = "db-talent-columns";
-      talentColsEl.style.cssText = "box-sizing:border-box;overflow:visible;width:100%;max-width:100%;";
-
-      // Left: LoRA list
-      const loraColEl = document.createElement("div");
-      loraColEl.className = "db-talent-loras";
-      const loraColHeader = document.createElement("div");
-      loraColHeader.className = "db-talent-col-header";
-      loraColHeader.textContent = "Lora Selected";
-
-      const loraPanel = buildLoraPanel(node, loraEntries,
-        () => { serializeLoras(); syncTalentH(); syncTWToLoras(); },
-        (removedName) => { syncTWToLoras(); }
-      );
-      // Read-only section for loras arriving via the lora_stack input socket
-      const stackSectionEl = document.createElement("div");
-      stackSectionEl.style.cssText = "display:none;margin-top:4px;";
-      const stackSepEl = document.createElement("div");
-      stackSepEl.style.cssText = "font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;";
-      stackSepEl.textContent = "via lora_stack";
-      const stackListEl = document.createElement("div");
-      stackSectionEl.append(stackSepEl, stackListEl);
-      loraColEl.append(loraColHeader, loraPanel.el, stackSectionEl);
-
-      node._dbRefreshStackChips = (names) => {
-        stackListEl.innerHTML = "";
-        if (!names || !names.length) { stackSectionEl.style.display = "none"; syncTalentH(); return; }
-        stackSectionEl.style.display = "";
-        names.forEach(n => {
-          const chip = document.createElement("div");
-          chip.style.cssText = "font-size:10px;color:#888;padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-          chip.textContent = n;
-          chip.title = n;
-          stackListEl.appendChild(chip);
-        });
-        syncTalentH();
-      };
-
-      // Vertical divider
-      const dividerEl = document.createElement("div");
-      dividerEl.className = "db-talent-divider";
-
-      // Right: trigger words
-      const twColEl = document.createElement("div");
-      twColEl.className = "db-talent-triggerwords";
-      const twColHeader = document.createElement("div");
-      twColHeader.className = "db-talent-col-header";
-      twColHeader.textContent = "Lora Trigger Words";
-
-      const twPanel = buildTWPanel(node, twEntries, () => { serializeTW(); syncTalentH(); });
-      twColEl.append(twColHeader, twPanel.el);
-
-      talentColsEl.append(loraColEl, dividerEl, twColEl);
-
-      const talentColsWidget = node.addDOMWidget("db_talent_cols", "customhtml", talentColsEl, {
-        serialize: false, height: 60,
-        getMinHeight: () => Math.max(60, talentColsEl.scrollHeight || 60),
-      });
-
-      function syncTalentH() {
-        requestAnimationFrame(() => {
-          const h = Math.max(60, talentColsEl.scrollHeight || 60);
-          if (talentColsWidget) talentColsWidget.computedHeight = h;
-          const needed = typeof node.computeSize === "function" ? node.computeSize() : null;
-          if (needed && typeof node.setSize === "function" && (node.size?.[1] || 0) < needed[1]) {
-            node.setSize([node.size[0], needed[1]]);
-          }
-          node.setDirtyCanvas(true);
-        });
-      }
-
-      function syncTWToLoras() {
-        const alive = new Set(loraEntries.map(e=>e.name));
-        const before = twEntries.length;
-        // Mutate in place (splice) so the array reference captured by
-        // buildTWPanel's closure stays valid — reassigning would orphan it.
-        for (let i = twEntries.length - 1; i >= 0; i--) {
-          if (!alive.has(twEntries[i].lora)) twEntries.splice(i, 1);
-        }
-        if (twEntries.length !== before) { serializeTW(); twPanel.refresh(); syncTalentH(); }
-      }
-
-      async function addTWForLora(loraName) {
-        const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(loraName)}`);
-        const words = meta?.trigger_words || [];
-        if (!words.length) return;
-        let changed = false;
-        words.forEach(w => {
-          const text = w.trim();
-          if (text && !twEntries.find(e=>e.lora===loraName && e.text===text)) {
-            twEntries.push({ lora:loraName, text, active:true });
-            changed = true;
-          }
-        });
-        if (changed) { serializeTW(); twPanel.refresh(); syncTalentH(); node.setDirtyCanvas(true); }
-      }
-
-      function addLoraEntry(name, strength = 1.0, clip = null, active = true) {
-        if (!name) return false;
-        if (loraEntries.some(e => e.name === name)) return false;
-        loraEntries.push({
-          name,
-          strength: Number(strength),
-          clip_strength: clip == null ? Number(strength) : Number(clip),
-          active: !!active,
-        });
-        serializeLoras(); loraPanel.refresh(); syncTalentH();
-        addTWForLora(name);
-        return true;
-      }
-
-      node._dbApplyLoras = (loras, mode = "append") => {
-        if (mode === "replace") {
-          loraEntries.splice(0, loraEntries.length);
-          twEntries.splice(0, twEntries.length);
-          serializeTW(); twPanel.refresh(); syncTalentH();
-        }
-        let added = 0;
-        (loras || []).forEach(l => {
-          if (addLoraEntry(l.name, l.strength, l.clip_strength, l.active)) added++;
-        });
-        node.setDirtyCanvas(true);
-        return added;
-      };
-
-      // Dirty Talk remains a dedicated prompt-authoring node.
-
-      // ── Restore saved state ──────────────────────────────────────────────
+      const result = originalCreated?.apply(this, arguments);
+      setupGenerationNode(this);
+      return result;
+    };
+    nodeType.prototype.onConfigure = function () {
+      const result = originalConfigure?.apply(this, arguments);
       requestAnimationFrame(() => {
-        // Checkpoint button label + preview (native value restored post-onNodeCreated)
-        refreshCkptName();
-        refreshCkptPreview();
-
-        // Resolution chip + batch slider reflect restored hidden-widget values
-        refreshResRow();
-        if (batchWidget) {
-          const bv = clampBatch(batchWidget.value);
-          batchSlider.value = String(bv); batchVal.textContent = String(bv);
-        }
-
-        // Seed mode + denoise reflect restored hidden-widget values.
-        // A restored seed of '' (or 0) fails Python's INT conversion — repair it.
-        if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
-          seedWidget.value = Math.floor(Math.random() * 9007199254740991);
-        }
-        refreshSeedRow();
-        if (denoiseWidget && typeof denoiseWidget.value === "number") setDenoise(denoiseWidget.value);
-
-        // LoRAs
-        const savedL = lorasDataWidget?.value;
-        if (savedL && savedL !== "[]") {
-          try {
-            const parsed = JSON.parse(savedL);
-            if (Array.isArray(parsed) && parsed.length) {
-              loraEntries.splice(0, loraEntries.length, ...parsed);
-              loraPanel.refresh(); syncTalentH();
-            }
-          } catch (e) { console.warn("[DirtyBirds] Could not restore LoRAs:", e); }
-        }
-        // Embeddings
-        if (posEmbedWidget?.value) posEmbedRow._deserialize(posEmbedWidget.value);
-        if (negEmbedWidget?.value) negEmbedRow._deserialize(negEmbedWidget.value);
-        syncEmbedH();
-
-        // Trigger words
-        const savedTW = twDataWidget?.value;
-        if (savedTW && savedTW !== "[]") {
-          try {
-            const parsed = JSON.parse(savedTW);
-            if (Array.isArray(parsed) && parsed.length) {
-              twEntries.splice(0, twEntries.length, ...parsed);
-              twPanel.refresh(); syncTalentH();
-            }
-          } catch (e) { console.warn("[DirtyBirds] Could not restore trigger words:", e); }
-        }
-
-        // Re-fetch trigger words for any restored LoRA that has none yet. Saved
-        // graphs from before the LoRA's metadata resolved (or saved with an empty
-        // trigger_words_data) otherwise show "No trigger words" forever, even
-        // though the meta is available locally now. addTWForLora dedupes, so
-        // LoRAs that already restored words are left untouched.
-        const lorasWithTW = new Set(twEntries.map(e => e.lora));
-        loraEntries.forEach(e => { if (!lorasWithTW.has(e.name)) addTWForLora(e.name); });
+        this._dbGenerationSync?.();
+        this._dbApplyGenerationLayout?.(false);
       });
-
-      // ── Prune stale outputs from older workflows ─────────────────────────
-      // The node exposes a single "db_pipe" output. Saved graphs built against
-      // earlier versions may carry extra output sockets (e.g. "pipe",
-      // "basic_pipe", "latent"); strip them so the node matches its def.
-      requestAnimationFrame(() => {
-        const allowed = new Set(["db_pipe"]);
-        if (Array.isArray(node.outputs)) {
-          for (let i = node.outputs.length - 1; i >= 0; i--) {
-            if (!allowed.has(node.outputs[i]?.name)) {
-              try { node.removeOutput(i); } catch (e) {}
-            }
-          }
-          node.setDirtyCanvas(true, true);
-        }
-      });
-
-      // ── Width sync ───────────────────────────────────────────────────────
-      const domEls = [workflowDOM, topRow, embedColsEl, talentColsEl];
-      function applyWidths() {
-        const w = nodeInnerW(node);
-        domEls.forEach(el => { el.style.width=w+"px"; });
-        node.widgets.forEach(ww => {
-          if (ww.element?.classList?.contains("db-section-label")) ww.element.style.width=w+"px";
-        });
-      }
-      requestAnimationFrame(() => requestAnimationFrame(applyWidths));
-      const origResize = node.onResize;
-      node.onResize = function(size) { origResize?.call(this,size); applyWidths(); };
+      return result;
+    };
+    nodeType.prototype.onExecuted = function (message) {
+      const result = originalExecuted?.apply(this, arguments);
+      this._dbGenerationExecuted?.(message);
+      return result;
+    };
+    nodeType.prototype.onConnectionsChange = function () {
+      const result = originalConnectionsChange?.apply(this, arguments);
+      requestAnimationFrame(() => this._dbRefreshGenerationConnections?.());
+      return result;
     };
   },
+});
+
+api.addEventListener("dirtybirds_set_loras", ({ detail }) => {
+  const node = app.graph?._nodes?.find((candidate) => String(candidate.id) === String(detail?.node_id));
+  node?._dbApplyLoras?.(detail?.loras, detail?.mode);
+});
+
+api.addEventListener("dirtybirds_set_embedding", ({ detail }) => {
+  const node = app.graph?._nodes?.find((candidate) => String(candidate.id) === String(detail?.node_id));
+  if (!node) return;
+  const widget = findWidget(node, detail?.slot === "negative" ? "neg_embedding" : "pos_embedding");
+  const strength = Number(detail?.strength ?? 1);
+  const value = detail?.name
+    ? (Math.abs(strength - 1) < 0.001 ? detail.name : `${detail.name}:${strength.toFixed(2)}`)
+    : "";
+  setWidget(widget, value, node);
+  node._dbGenerationSync?.();
 });

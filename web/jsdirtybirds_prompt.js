@@ -1,5 +1,5 @@
 /**
- * DirtyBirds Playhouse – Prompt (Dirty Talk) Node UI
+ * DirtyBirds Playhouse – Prompt Builder Node UI
  *
  * Native positive / negative multiline widgets + a "Load Wildcards" button.
  * Clicking it opens a native LiteGraph context menu listing wildcard keys from
@@ -10,7 +10,10 @@
 
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel } from "./db_shared.js";
+import {
+  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel,
+  hideWidget as hideWidgetShared, makeCollapsibleSectionLabel,
+} from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -25,7 +28,7 @@ function escapeHTML(value) {
 
 function promptToMarkdown(label, value) {
   const text = String(value || "").trim();
-  return `### ${label}\n${text || "_empty_"}`;
+  return `### ${label}${text ? `\n${text}` : ""}`;
 }
 
 function renderMarkdownText(value) {
@@ -340,6 +343,23 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsPrompt") return;
 
+    function removeLegacyCyclerOutput(node) {
+      for (let i = (node.outputs?.length || 0) - 1; i >= 0; i--) {
+        if (node.outputs[i]?.name === "cycler_text") node.removeOutput?.(i);
+      }
+    }
+
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = onConfigure?.apply(this, arguments);
+      removeLegacyCyclerOutput(this);
+      requestAnimationFrame(() => {
+        this._dbRestoreToyboxState?.();
+        this._dbMigratePromptLayout?.();
+      });
+      return result;
+    };
+
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
@@ -355,14 +375,25 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
+      // Migrate saved nodes from the former public cycler output. The active
+      // line now travels privately with the positive STRING into db_pipe.
+      removeLegacyCyclerOutput(node);
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
       const DB_MIN_W = 420;
       node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
-      const DB_MIN_H = 392;
-      const DB_PANEL_MIN_H = 334;
-      node.min_height = Math.max(node.min_height || 0, DB_MIN_H);
+      // Keep the body large enough for its controls. ComfyUI owns DOM-widget
+      // height allocation; the panel does not run its own resize loop.
+      const DB_PANEL_MIN_H = 342;
+      const DB_TOYBOX_EXPANDED_H = 34;
+      const DB_CHROME_H = 80;
+      const DB_MIN_H = DB_PANEL_MIN_H + DB_CHROME_H;
+      // Old workflows may serialize a stale minimum from a previous DOM
+      // layout. Preserving it would permanently clamp the rebuilt node tall.
+      node.min_height = DB_MIN_H;
       node.min_width = Math.max(node.min_width || 0, DB_MIN_W);
+      node.size[1] = Math.max(node.size[1] || 0, DB_MIN_H);
+      node.resizable = true;
 
       // Saved workflows can carry obsolete DOM widgets from older Script UI
       // layouts. Drop them before adding the compact panel, otherwise invisible
@@ -382,10 +413,13 @@ app.registerExtension({
 
       const posWidget = node.widgets?.find(w => w.name === "positive");
       const negWidget = node.widgets?.find(w => w.name === "negative");
+      const cyclerTextWidget = node.widgets?.find(w => w.name === "cycler_text");
 
       function hideBackingWidget(widget) {
         if (!widget) return;
-        widget.computeSize = () => [0, 0];
+        widget.computeSize = () => [0, -4];
+        widget.getMinHeight = () => -4;
+        widget.computedHeight = 0;
         widget.serializeValue = () => widget.value;
         // Keep the real STRING widget serializable. ComfyUI's setHidden(true)
         // can mark converted widgets as non-serializing, which made custom
@@ -397,6 +431,7 @@ app.registerExtension({
 
       hideBackingWidget(posWidget);
       hideBackingWidget(negWidget);
+      hideBackingWidget(cyclerTextWidget);
 
       // Display-only slot labels for the optional concat inputs; the underlying
       // input names (concat_positive/negative) stay intact so links don't break.
@@ -432,15 +467,7 @@ app.registerExtension({
       loadAutocompleteData();
 
       // ── Seed (Fixed / Random) ───────────────────────────────────────────
-      function hideWidget(name) {
-        const w = node.widgets?.find(w => w.name === name);
-        if (!w) return undefined;
-        w.computeSize = () => [0, 0];
-        w.serializeValue = () => w.value;
-        if (typeof w.setHidden === "function") w.setHidden(true);
-        else if ("hidden" in w) w.hidden = true;
-        return w;
-      }
+      const hideWidget = (name) => hideWidgetShared(node, name);
 
       const seedWidget = hideWidget("seed");
       const rerollWidget = hideWidget("reroll_each_run");
@@ -452,7 +479,7 @@ app.registerExtension({
       }
 
       function setSeedMode(mode) {
-        const isRandom = !!mode;
+        const isRandom = mode === "random";
         if (rerollWidget) rerollWidget.value = isRandom;
         if (seedWidget) {
           if (isRandom) {
@@ -749,6 +776,11 @@ app.registerExtension({
           if (widget) widget.value = ta.value;
           handleAutocompleteInput(e, ta, node);
           node._dbRenderPromptMarkdown?.(posWidget?.value || "", negWidget?.value || "", true);
+          if (tone === "positive") {
+            window.dispatchEvent(new CustomEvent("dirtybirds:prompt-source-changed", {
+              detail: { nodeId: node.id },
+            }));
+          }
           node.setDirtyCanvas(true, true);
         });
         ta.addEventListener("keydown", (e) => handleAutocompleteKeydown(e, ta));
@@ -758,10 +790,29 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-script-panel";
 
-      const scriptLabel = makeSectionLabel("The Script");
+      const scriptLabel = makeSectionLabel("User Prompt");
       const posTA = makePromptTextarea(posWidget, "positive");
       const negTA = makePromptTextarea(negWidget, "negative");
       const promptEditors = [posTA, negTA];
+
+      function cyclerLines(value) {
+        if (!value) return [];
+        let normalized = value.replace(/\r\n?/g, "\n");
+        // Match Python splitlines(): the final newline terminates the current
+        // line; it does not create an additional cycler item.
+        if (normalized.endsWith("\n")) normalized = normalized.slice(0, -1);
+        return normalized.split("\n");
+      }
+      function syncCyclerValue(value) {
+        const lines = cyclerLines(value);
+        let limited = value;
+        if (lines.length > 50) {
+          limited = lines.slice(0, 50).join("\n");
+        }
+        if (cyclerTextWidget) cyclerTextWidget.value = limited;
+        return limited;
+      }
+      syncCyclerValue(cyclerTextWidget?.value || "");
 
       // onNodeCreated runs before ComfyUI restores saved widget values onto a
       // reloaded graph, so the textarea snapshot above can be empty/stale.
@@ -769,13 +820,14 @@ app.registerExtension({
       requestAnimationFrame(() => {
         if (posWidget && posTA.value !== posWidget.value) posTA.value = posWidget.value || "";
         if (negWidget && negTA.value !== negWidget.value) negTA.value = negWidget.value || "";
+        syncCyclerValue(cyclerTextWidget?.value || "");
         node._dbRenderPromptMarkdown?.(posWidget?.value || "", negWidget?.value || "");
       });
       node._dbPositiveTextarea = posTA;
       node._dbNegativeTextarea = negTA;
       node._dbLastPromptTextarea = posTA;
 
-      const toolsLabel = makeSectionLabel("The Toybox");
+      let toyboxExpanded = false;
       if (seedWidget && !(parseInt(seedWidget.value, 10) > 0)) {
         seedWidget.value = randomSeedValue();
       }
@@ -783,15 +835,56 @@ app.registerExtension({
       const origExecuted = node.onExecuted;
       node.onExecuted = function (message) {
         origExecuted?.call(this, message);
+        if (seedWidget && Number.isFinite(Number(seedWidget.value))) {
+          node._dbLastQueuedSeed = Number(seedWidget.value);
+        }
         if (rerollWidget?.value && seedWidget) {
           seedWidget.value = randomSeedValue();
-          node.setDirtyCanvas(true, true);
         }
+        paintSeedMode();
+        node.setDirtyCanvas(true, true);
       };
 
       const toyboxGrid = document.createElement("div");
       toyboxGrid.className = "db-prompt-tool-grid";
       toyboxGrid.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
+      toyboxGrid.style.display = "none";
+      function applyToyboxState(expanded, resize = true) {
+        toyboxExpanded = !!expanded;
+        toyboxGrid.style.display = toyboxExpanded ? "grid" : "none";
+        node.properties = node.properties || {};
+        node.properties.db_toybox_expanded = toyboxExpanded;
+        if (resize) {
+          const currentH = node.size?.[1] || DB_MIN_H;
+          node.setSize([
+            node.size[0],
+            toyboxExpanded
+              ? currentH + DB_TOYBOX_EXPANDED_H
+              : Math.max(DB_MIN_H, currentH - DB_TOYBOX_EXPANDED_H),
+          ]);
+        }
+        node.setDirtyCanvas(true, true);
+      }
+      const toyboxSection = makeCollapsibleSectionLabel("Prompt Tools", {
+        expanded: false,
+        onChange: (expanded) => applyToyboxState(expanded, true),
+      });
+      node._dbRestoreToyboxState = () => {
+        const expanded = !!node.properties?.db_toybox_expanded;
+        toyboxSection.setExpanded(expanded, false);
+        applyToyboxState(expanded, false);
+      };
+      node._dbMigratePromptLayout = () => {
+        const layoutVersion = 3;
+        node.properties = node.properties || {};
+        if (Number(node.properties.db_prompt_layout_version || 0) >= layoutVersion) return;
+        node.setSize([
+          Math.max(DB_MIN_W, node.size?.[0] || DB_MIN_W),
+          DB_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),
+        ]);
+        node.properties.db_prompt_layout_version = layoutVersion;
+        node.setDirtyCanvas(true, true);
+      };
       // ── Booru / Caption tools ───────────────────────────────────────────
       function currentImageUrl() {
         const peepShow = (app.graph?._nodes || []).find(
@@ -801,6 +894,9 @@ app.registerExtension({
         const urlW = peepShow.widgets?.find((w) => w.name === "image_url");
         const u = String(urlW?.value || "").trim();
         if (u) return u;
+        const imageW = peepShow.widgets?.find((w) => w.name === "image");
+        const filename = String(imageW?.value || "").trim();
+        if (filename) return `/view?filename=${encodeURIComponent(filename)}&type=input`;
         return String(peepShow.imgs?.[0]?.src || "").trim();
       }
 
@@ -809,7 +905,7 @@ app.registerExtension({
       booruBtn.textContent = "Booru";
       booruBtn.addEventListener("click", async () => {
         const url = currentImageUrl();
-        if (!url) return showOptionsFlyout("Booru", [{ value: "", label: "No image URL -- load one in Peep Show", glyph: "⚠" }], "", () => {});
+        if (!url) return showOptionsFlyout("Booru", [{ value: "", label: "No image URL -- load one in Image Loader", glyph: "⚠" }], "", () => {});
         const flyout = openCaptionFlyout("Booru Tags", booruBtn);
         flyout.setStatus("Fetching AIBooru tags...");
         const data = await fetchJSON(`/dirtybirds/aibooru-post-tags?url=${encodeURIComponent(url)}`);
@@ -858,7 +954,7 @@ app.registerExtension({
         if (!models.length) { flyout.setStatus(lmData?.error || "LM Studio offline -- start it and load a vision model.", "err"); return; }
         flyout.setStatus(`LM Studio: ${models[0]}`);
         const url = currentImageUrl();
-        if (!url) { flyout.setStatus("No image -- load one in Peep Show first.", "err"); return; }
+        if (!url) { flyout.setStatus("No image -- load one in Image Loader first.", "err"); return; }
         flyout.setStatus("Captioning image...");
         const params = new URLSearchParams({
           url,
@@ -872,10 +968,82 @@ app.registerExtension({
         flyout.setStatus("Caption replaced.", "ok");
         setTimeout(() => flyout.close(), 1200);
       });
+      function paintImageToolAvailability() {
+        const available = !!currentImageUrl();
+        for (const button of [booruBtn, captionBtn]) {
+          button.disabled = !available;
+          button.title = available ? "" : "Load an image in Image Loader first";
+        }
+      }
+      window.addEventListener("dirtybirds:image-source-changed", paintImageToolAvailability);
+      const previousOnRemoved = node.onRemoved;
+      node.onRemoved = function () {
+        window.removeEventListener("dirtybirds:image-source-changed", paintImageToolAvailability);
+        return previousOnRemoved?.apply(this, arguments);
+      };
+      requestAnimationFrame(() => requestAnimationFrame(paintImageToolAvailability));
 
-      toyboxGrid.append(loadBtn, btn, booruBtn, captionBtn);
+      const cyclerBtn = document.createElement("button");
+      cyclerBtn.className = "db-lib-btn db-lora-add-open-btn";
+      function paintCyclerButton() {
+        const count = cyclerLines(cyclerTextWidget?.value || "").filter((line) => line.trim()).length;
+        cyclerBtn.textContent = count ? `Cycler · ${count}` : "Cycler";
+        cyclerBtn.title = count ? `${count} active cycler line${count === 1 ? "" : "s"}` : "Add prompt lines to cycle";
+        toyboxSection.setTitle(count ? `Prompt Tools · Cycler: ${count}` : "Prompt Tools");
+      }
+      function openCyclerFlyout() {
+        document.querySelector(".db-flyout-overlay")?.remove();
+        document.querySelector(".db-flyout")?.remove();
+        const overlay = document.createElement("div");
+        overlay.className = "db-flyout-overlay";
+        const flyout = document.createElement("div");
+        flyout.className = "db-flyout db-cycler-flyout";
+        flyout.style.cssText += "width:min(460px,90vw);left:50%;top:50%;transform:translate(-50%,-50%);";
+        const header = document.createElement("div");
+        header.className = "db-flyout-header";
+        const title = document.createElement("span");
+        title.className = "db-flyout-title";
+        title.textContent = "The Cycler";
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "db-flyout-close";
+        closeBtn.textContent = "✕";
+        header.append(title, closeBtn);
+        const editor = document.createElement("textarea");
+        editor.className = "db-script-textarea db-script-positive";
+        editor.placeholder = "one prompt addition per line";
+        editor.value = cyclerTextWidget?.value || "";
+        editor.spellcheck = false;
+        editor.style.cssText += "height:220px;min-height:140px;resize:vertical;margin:10px;width:calc(100% - 20px);";
+        const footer = document.createElement("div");
+        footer.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:0 10px 10px;color:#6f7b84;font-size:9px;";
+        const count = document.createElement("span");
+        const done = document.createElement("button");
+        done.className = "db-lib-btn db-lora-add-open-btn";
+        done.textContent = "Done";
+        function sync() {
+          const limited = syncCyclerValue(editor.value);
+          if (limited !== editor.value) editor.value = limited;
+          count.textContent = `${cyclerLines(limited).filter((line) => line.trim()).length} / 50 lines`;
+          paintCyclerButton();
+          node.setDirtyCanvas(true, true);
+        }
+        function close() { sync(); overlay.remove(); flyout.remove(); }
+        editor.addEventListener("input", sync);
+        closeBtn.addEventListener("click", close);
+        done.addEventListener("click", close);
+        overlay.addEventListener("click", close);
+        footer.append(count, done);
+        flyout.append(header, editor, footer);
+        document.body.append(overlay, flyout);
+        sync();
+        editor.focus();
+      }
+      cyclerBtn.addEventListener("click", openCyclerFlyout);
+      paintCyclerButton();
 
-      const previewLabel = makeSectionLabel("The Prompt");
+      toyboxGrid.append(loadBtn, booruBtn, captionBtn, cyclerBtn);
+
+      const previewLabel = makeSectionLabel("Preview");
       const previewSplit = document.createElement("div");
       previewSplit.className = "db-prompt-md-split";
       const previewPos = document.createElement("div");
@@ -887,10 +1055,15 @@ app.registerExtension({
       previewSplit.append(previewPos, previewDivider, previewNeg);
 
       node._dbRenderPromptMarkdown = (positive, negative, draft = false) => {
+        const positiveEmpty = !String(positive || "").trim();
+        const negativeEmpty = !String(negative || "").trim();
         const posMd = promptToMarkdown(draft ? "Positive Draft" : "Positive", positive);
         const negMd = promptToMarkdown(draft ? "Negative Draft" : "Negative", negative);
         previewPos.innerHTML = renderMarkdownText(posMd);
         previewNeg.innerHTML = renderMarkdownText(negMd);
+        previewPos.classList.toggle("db-prompt-md-empty", positiveEmpty);
+        previewNeg.classList.toggle("db-prompt-md-empty", negativeEmpty);
+        previewSplit.classList.toggle("db-prompt-md-all-empty", positiveEmpty && negativeEmpty);
         syncPanelH();
       };
 
@@ -907,33 +1080,72 @@ app.registerExtension({
       const seedSeg = document.createElement("div");
       seedSeg.className = "db-seg";
       seedSeg.style.cssText = "flex:0 0 auto;height:18px;";
-      const seedFixed = document.createElement("div");
-      seedFixed.className = "db-seg-opt"; seedFixed.textContent = "📌 Fixed";
-      seedFixed.style.cssText = "padding:0 8px;font-size:9px;";
       const seedRandom = document.createElement("div");
-      seedRandom.className = "db-seg-opt"; seedRandom.textContent = "🎲 Random";
-      seedRandom.style.cssText = "padding:0 8px;font-size:9px;";
-      seedSeg.append(seedFixed, seedRandom);
+      seedRandom.className = "db-seg-opt"; seedRandom.textContent = "Each";
+      seedRandom.title = "Use a different seed each run";
+      seedRandom.style.cssText = "padding:0 2px;font-size:9px;min-width:0;";
+      const seedNewFixed = document.createElement("div");
+      seedNewFixed.className = "db-seg-opt"; seedNewFixed.textContent = "New";
+      seedNewFixed.title = "Create a new fixed seed";
+      seedNewFixed.style.cssText = "padding:0 2px;font-size:9px;min-width:0;";
+      const seedLast = document.createElement("div");
+      seedLast.className = "db-seg-opt"; seedLast.textContent = "Last";
+      seedLast.style.cssText = "padding:0 2px;font-size:9px;min-width:0;";
+      seedSeg.append(seedRandom, seedNewFixed, seedLast);
       const seedVal = document.createElement("span");
       seedVal.className = "db-sel-val";
-      seedVal.style.cssText = "flex:1;text-align:right;width:auto;color:#555;font-size:9px;";
+      seedVal.style.display = "none";
       seedRow.append(seedLbl, seedSeg, seedVal);
-      seedFixed.addEventListener("click", () => setSeedMode(false));
-      seedRandom.addEventListener("click", () => setSeedMode(true));
+      seedRandom.addEventListener("click", () => setSeedMode("random"));
+      seedNewFixed.addEventListener("click", () => {
+        if (seedWidget) seedWidget.value = randomSeedValue();
+        setSeedMode("fixed");
+      });
+      seedLast.addEventListener("click", () => {
+        if (!Number.isFinite(node._dbLastQueuedSeed)) return;
+        if (seedWidget) seedWidget.value = node._dbLastQueuedSeed;
+        setSeedMode("fixed");
+      });
       paintSeedMode = () => {
         const isRandom = !!rerollWidget?.value;
         seedRandom.classList.toggle("db-seg-active", isRandom);
-        seedFixed.classList.toggle("db-seg-active", !isRandom);
+        const hasLast = Number.isFinite(node._dbLastQueuedSeed);
+        seedLast.style.opacity = hasLast ? "1" : "0.35";
+        seedLast.style.pointerEvents = hasLast ? "auto" : "none";
+        seedLast.title = hasLast ? `Use last queued seed: ${node._dbLastQueuedSeed}` : "No queued seed is available yet";
         seedVal.textContent = isRandom ? "re-rolls each run" : String(seedWidget?.value ?? "");
+        seedRow.title = isRandom ? "Seed: different each run" : `Fixed seed: ${seedWidget?.value ?? ""}`;
       };
 
-      panel.append(scriptLabel, posTA, negTA, toolsLabel, toyboxGrid, previewLabel, previewSplit, seedRow);
+      const primaryRow = document.createElement("div");
+      primaryRow.className = "db-prompt-primary-row";
+      const seedCol = document.createElement("div");
+      seedCol.className = "db-prompt-primary-col";
+      const seedHead = document.createElement("div");
+      seedHead.className = "db-talent-col-header";
+      seedHead.textContent = "Seed";
+      seedLbl.style.display = "none";
+      seedCol.append(seedHead, seedRow);
+      const primaryDivider = document.createElement("div");
+      primaryDivider.className = "db-prompt-primary-divider";
+      const wildcardCol = document.createElement("div");
+      wildcardCol.className = "db-prompt-primary-col";
+      const wildcardHead = document.createElement("div");
+      wildcardHead.className = "db-talent-col-header";
+      wildcardHead.textContent = "Wildcard";
+      wildcardCol.append(wildcardHead, btn);
+      primaryRow.append(seedCol, primaryDivider, wildcardCol);
+
+      panel.append(scriptLabel, posTA, negTA, primaryRow, toyboxSection.label, toyboxGrid, previewLabel, previewSplit);
       node._dbRenderPromptMarkdown(posWidget?.value || "", negWidget?.value || "", true);
       paintSeedMode();
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {
         serialize: false,
-        height: DB_PANEL_MIN_H,
-        getMinHeight: () => Math.max(DB_PANEL_MIN_H, panel.scrollHeight || DB_PANEL_MIN_H),
+        getMinHeight: () => DB_PANEL_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),
+        afterResize: (resizedNode) => {
+          applyWidths();
+          applyEditorHeight(resizedNode.size?.[1] || DB_MIN_H);
+        },
       });
 
       // ── Width sync ───────────────────────────────────────────────────────
@@ -951,24 +1163,10 @@ app.registerExtension({
         });
       }
       function syncPanelH() {
-        if (node._dbPromptSizing) return;
         applyWidths();
         requestAnimationFrame(() => {
-          node._dbPromptSizing = true;
           applyEditorHeight(node.size?.[1] || DB_MIN_H);
-          const h = Math.max(DB_PANEL_MIN_H, panel.scrollHeight || DB_PANEL_MIN_H);
-          if (scriptPanelWidget) {
-            try { scriptPanelWidget.height = h; } catch (_) { }
-            scriptPanelWidget.computedHeight = h;
-          }
-          const nodeH = Math.max(DB_MIN_H, h + 58);
-          if (Math.abs((node.size?.[1] || 0) - nodeH) > 2) {
-            if (typeof node.setSize === "function") node.setSize([node.size[0], nodeH]);
-            else node.size[1] = nodeH;
-          }
-          node.min_height = DB_MIN_H;
           node.setDirtyCanvas(true, true);
-          node._dbPromptSizing = false;
         });
       }
       function applyLayout() {
@@ -976,30 +1174,6 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       }
       requestAnimationFrame(() => requestAnimationFrame(applyLayout));
-      const origResize = node.onResize;
-      node.onResize = function (size) {
-        size[0] = Math.max(DB_MIN_W, size[0] || DB_MIN_W);
-        const h = Math.max(DB_MIN_H, size[1] || DB_MIN_H);
-        origResize?.call(this, [size[0], h]);
-        this.size[0] = Math.max(DB_MIN_W, this.size?.[0] || DB_MIN_W);
-        this.size[1] = h;
-        applyEditorHeight(h);
-        applyLayout();
-      };
-      const origDrawForeground = node.onDrawForeground;
-      node.onDrawForeground = function (ctx) {
-        if (!this.flags?.collapsed) {
-          if (this.size?.[0] < DB_MIN_W) {
-            if (typeof this.setSize === "function") this.setSize([DB_MIN_W, this.size[1]]);
-            else this.size[0] = DB_MIN_W;
-          }
-          if (this.size?.[1] < DB_MIN_H) {
-            if (typeof this.setSize === "function") this.setSize([this.size[0], DB_MIN_H]);
-            else this.size[1] = DB_MIN_H;
-          }
-        }
-        origDrawForeground?.call(this, ctx);
-      };
     };
   },
 });

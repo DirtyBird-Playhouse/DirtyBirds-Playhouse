@@ -86,13 +86,77 @@ export function makeSectionLabel(text) {
   return el;
 }
 
+// ── Collapsible section label ───── TITLE ▸ expand ─────────────────────────
+// Keeps TITLE geometrically centered; the action hint is absolutely positioned
+// so it never shifts the section heading. Values inside `content` are untouched.
+export function makeCollapsibleSectionLabel(text, { expanded = false, onChange } = {}) {
+  const label = makeSectionLabel(text);
+  label.classList.add("db-collapsible-label");
+  label.style.cursor = "pointer";
+  const labelText = label.querySelector(".db-sep-text");
+  const title = document.createElement("span");
+  title.textContent = text;
+  const caret = document.createElement("span");
+  caret.className = "db-collapsible-caret";
+  const helper = document.createElement("span");
+  helper.className = "db-collapsible-helper";
+  const action = document.createElement("span");
+  action.className = "db-collapsible-action";
+  action.append(caret, helper);
+  labelText?.replaceChildren(title, action);
+
+  let isExpanded = !!expanded;
+  function paint(notify = false) {
+    caret.textContent = isExpanded ? "▾" : "▸";
+    helper.textContent = isExpanded ? "collapse" : "expand";
+    label.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+    if (notify) onChange?.(isExpanded);
+  }
+  label.addEventListener("click", () => {
+    isExpanded = !isExpanded;
+    paint(true);
+  });
+  paint(false);
+  return {
+    label,
+    isExpanded: () => isExpanded,
+    setTitle(value) { title.textContent = String(value || text); },
+    setExpanded(value, notify = true) { isExpanded = !!value; paint(notify); },
+  };
+}
+
+// Register a collapsible section heading as a DOM widget.
+export function addCollapsibleTitle(node, name, text, options = {}, h = 30) {
+  const section = makeCollapsibleSectionLabel(text, options);
+  h = Math.max(h || 0, 30);
+  section.label.style.cssText += "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
+  section.widget = node.addDOMWidget(name, "customhtml", section.label, {
+    serialize: false, height: h, getMinHeight: () => h,
+  });
+  return section;
+}
+
+// Collapse a DOM widget without touching its value or serialization state.
+export function setDOMWidgetShown(node, widget, shown) {
+  if (!widget) return;
+  if (!widget._dbOpenComputeSize) widget._dbOpenComputeSize = widget.computeSize;
+  if (!widget._dbOpenMinHeight) widget._dbOpenMinHeight = widget.getMinHeight;
+  widget.element?.style && (widget.element.style.display = shown ? "" : "none");
+  widget.computedHeight = shown ? undefined : 0;
+  widget.computeSize = shown ? widget._dbOpenComputeSize : (() => [0, -4]);
+  widget.getMinHeight = shown ? widget._dbOpenMinHeight : (() => -4);
+  node.setDirtyCanvas?.(true, true);
+}
+
 // ── Hide a native widget (keeps its value serialized) ─────────────────────────
 // Mirrors the local helper in jsdirtybirds.js, but takes the node explicitly so
 // it can be shared. Returns the widget (or undefined if not found).
 export function hideWidget(node, name) {
   const w = node.widgets?.find((w) => w.name === name);
   if (!w) return undefined;
-  w.computeSize    = () => [0, 0];
+  w.computeSize    = () => [0, -4];
+  w.getMinHeight   = () => -4;
+  w.computedHeight = 0;
   w.serializeValue = () => w.value;
   w.options = { ...(w.options || {}), hidden: true };
   if (w.element?.style) w.element.style.display = "none";

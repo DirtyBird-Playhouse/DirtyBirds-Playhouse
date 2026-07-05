@@ -11,9 +11,11 @@ import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, addTitle } from "./db_shared.js
 
 ensureStylesheet();
 
+// In-node section label; the node title already reads "Undress — Pipe Out" /
+// "Dress — Pipe In", so the label carries just the flavor line.
 const PIPE_NODES = {
-  DirtyBirdsPipeOut: "Undress — Tap the Pipe",
-  DirtyBirdsPipeIn:  "Dress — Build the Pipe",
+  DirtyBirdsPipeOut: "Tap the Pipe",
+  DirtyBirdsPipeIn:  "Build the Pipe",
 };
 
 app.registerExtension({

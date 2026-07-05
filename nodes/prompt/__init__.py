@@ -9,6 +9,7 @@ from server import PromptServer
 # can be unit-tested standalone. load_wildcard_dict and process are re-exported
 # here for backwards compatibility with anything importing them from this module.
 from .utils.wildcard_engine import load_wildcard_dict, process
+from .cycler import append_positive, cycle_text, with_cycler_metadata
 
 # Booru tag fetcher: a widget of this (Dirty Talk) node. Imported for the
 # side-effect of registering its /dirtybirds/booru-search route.
@@ -94,6 +95,7 @@ class DirtyBirdsPrompt:
                 # When on, wildcards re-roll randomly every run (ignores seed).
                 # When off, the seed above gives a fixed, reproducible roll.
                 "reroll_each_run": ("BOOLEAN", {"default": True}),
+                "cycler_text": ("STRING", {"multiline": True, "default": ""}),
             },
             "optional": {
                 # Concatenate additional prompt text after the node's own output.
@@ -104,6 +106,7 @@ class DirtyBirdsPrompt:
 
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("positive", "negative")
+    OUTPUT_IS_LIST = (True, False)
     FUNCTION = "process"
     CATEGORY = "DirtyBirds"
 
@@ -114,7 +117,8 @@ class DirtyBirdsPrompt:
         return (positive, negative, seed)
 
     def process(self, positive, negative, reroll_each_run=True, seed=0,
-                concat_positive=None, concat_negative=None):
+                cycler_text="", concat_positive=None, concat_negative=None,
+                **_deprecated_inputs):
         if reroll_each_run:
             seed = random.randint(0, 0xffffffffffffffff)
 
@@ -130,17 +134,22 @@ class DirtyBirdsPrompt:
         cp = str(concat_positive or "").strip()
         cn = str(concat_negative or "").strip()
         if cp:
-            pos_out = (pos_out + ", " + cp) if pos_out else cp
+            pos_out = append_positive(pos_out, cp)
         if cn:
             neg_out = (neg_out + ", " + cn) if neg_out else cn
 
+        cycle_items = cycle_text(cycler_text)
+        positives = [with_cycler_metadata(append_positive(pos_out, item), item)
+                     for item in cycle_items]
+
         logger.info(
-            "[DirtyBirds] Script: concat_positive=%r -> final positive=%r",
-            cp[:120], (pos_out or "")[:120])
+            "[DirtyBirds] Script: concat_positive=%r cycler_items=%d -> first positive=%r",
+            cp[:120], len(cycle_items), (positives[0] or "")[:120])
 
         # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
         # before the sampler runs, letting the user cancel early if it's wrong.
-        return {"ui": {"db_prompts_md": [pos_out, neg_out]}, "result": (pos_out, neg_out)}
+        return {"ui": {"db_prompts_md": [positives[0], neg_out]},
+                "result": (positives, neg_out)}
 
 
 # ---------------------------------------------------------------------------
@@ -148,4 +157,4 @@ class DirtyBirdsPrompt:
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsPrompt": DirtyBirdsPrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "🗨️ Dirty Talk"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPrompt": "🗨️ Prompt Builder"}

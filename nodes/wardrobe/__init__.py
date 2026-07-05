@@ -1,5 +1,5 @@
 """
-DirtyBirds Playhouse — Pillow Talk node.
+DirtyBirds Playhouse — The Wardrobe node (formerly "Pillow Talk").
 
 Pick LoRAs and toggle their trigger words on/off. The active words are pushed
 straight into the Dirty Talk positive prompt via the node's "Send to Dirty
@@ -43,7 +43,7 @@ class DirtyBirdsWardrobe:
         try:
             chips = json.loads(trigger_words_data or "[]")
         except Exception as e:
-            logger.warning("[DirtyBirds] Pillow Talk: bad trigger_words_data (%s)", e)
+            logger.warning("[DirtyBirds] The Wardrobe: bad trigger_words_data (%s)", e)
             chips = []
 
         words, seen = [], set()
@@ -55,9 +55,9 @@ class DirtyBirdsWardrobe:
                 seen.add(t.lower())
                 words.append(t)
 
-        logger.info("[DirtyBirds] Pillow Talk -> %d active trigger words", len(words))
+        logger.info("[DirtyBirds] The Wardrobe -> %d active trigger words", len(words))
         return ()
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsWardrobe": DirtyBirdsWardrobe}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "🗣️ Pillow Talk"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "👗 The Wardrobe · Trigger Words"}

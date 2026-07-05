@@ -96,7 +96,7 @@ class DirtyBirdsFixer:
             clip=pipe.get("clip"),
             **settings,
         )
-        final_image, processed_face, comparison, final_mask = result
+        final_image, processed_face, comparison, _ = result
         pipe["images"] = final_image
         result = (pipe, final_image, processed_face)
         try:
@@ -111,4 +111,5 @@ class DirtyBirdsFixer:
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsFixer": DirtyBirdsFixer}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFixer": "🎯 Fixer — Forbidden Vision"}
+# Forbidden Vision credit lives in the module docstring / README.
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsFixer": "💄 The Fixer · Face Restore"}

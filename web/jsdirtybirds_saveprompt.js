@@ -7,7 +7,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget } from "./db_shared.js";
+import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget, makeCollapsibleSectionLabel } from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -125,6 +125,22 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsSavePrompt") return;
 
+    // The saved image renders in this node's own "Saved Image" panel. As an
+    // OUTPUT_NODE the frontend also attaches its native "$$canvas-image-preview"
+    // widget, which draws the images at the node's foot (outside our panel).
+    // Suppress that native preview entirely so the image only shows under the
+    // heading. (onDrawBackground is where core re-adds the widget.)
+    const onDrawBackground = nodeType.prototype.onDrawBackground;
+    nodeType.prototype.onDrawBackground = function () {
+      const ws = this.widgets;
+      if (Array.isArray(ws)) {
+        const i = ws.findIndex(w => w?.name === "$$canvas-image-preview");
+        if (i > -1) { ws[i].onRemove?.(); ws.splice(i, 1); }
+      }
+      this.imgs = null;
+      this.preview = null;
+    };
+
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
@@ -164,7 +180,6 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-archive-panel";
 
-      const promptLabel = makeSectionLabel("Final Prompt");
       const promptBox = document.createElement("textarea");
       promptBox.className = "db-script-textarea db-archive-markdown";
       promptBox.readOnly = true;
@@ -174,6 +189,20 @@ app.registerExtension({
       const imagePanel = document.createElement("div");
       imagePanel.className = "db-url-preview db-archive-image";
       imagePanel.style.display = "none";
+      const previewContent = document.createElement("div");
+      previewContent.className = "db-collapsible-content";
+      previewContent.style.display = "none";
+      previewContent.append(promptBox, imageLabel, imagePanel);
+      const previewSection = makeCollapsibleSectionLabel("Saved Output", {
+        expanded: false,
+        onChange: (expanded) => {
+          previewContent.style.display = expanded ? "flex" : "none";
+          requestAnimationFrame(() => {
+            node.setSize(node.computeSize());
+            node.setDirtyCanvas(true, true);
+          });
+        },
+      });
 
       const archiveLabel = makeSectionLabel("The Archive");
       const archiveRow = document.createElement("div");
@@ -298,13 +327,13 @@ app.registerExtension({
       });
 
       archiveRow.append(prefixRow.row, folderRow, fileRow, savePromptBtn, status);
-      panel.append(promptLabel, promptBox, imageLabel, imagePanel, archiveLabel, archiveRow);
+      panel.append(archiveLabel, archiveRow, previewSection.label, previewContent);
       syncPromptFile();
 
       const panelWidget = node.addDOMWidget("db_archive_panel", "customhtml", panel, {
         serialize: false,
         height: 320,
-        getMinHeight: () => Math.max(260, panel.scrollHeight || 260),
+        getMinHeight: () => previewSection.isExpanded() ? 420 : 210,
       });
 
       node._dbArchivePaint = () => {

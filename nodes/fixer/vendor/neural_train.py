@@ -707,7 +707,6 @@ def hue_band_chroma_match_loss_v2(
     cp = torch.sqrt(up * up + vp * vp + eps)
     ct = torch.sqrt(ut * ut + vt * vt + eps)
 
-    hp = torch.atan2(vp, up)
     ht = torch.atan2(vt, ut)
 
     valid_luma = ss(yt, luma_lo, luma_lo + 0.06) * (1.0 - ss(yt, luma_hi - 0.03, luma_hi))
@@ -1219,9 +1218,9 @@ def wb_global_cast_loss(
 
     if x_in is not None:
         in_b = blur_rgb(x_in, blur_sigma)
-        _, u_in, v_in, c_in = get_yuv(in_b)
+        _, u_in, v_in, _ = get_yuv(in_b)
     else:
-        u_in = v_in = c_in = None
+        u_in = v_in = None
 
     total = x_wb.new_tensor(0.0)
     total_w = x_wb.new_tensor(0.0)
@@ -2252,8 +2251,6 @@ def diagnose_controls(model, device, epoch):
     out, aux = model(xfull, x384)
     hgp      = highlight_gradient_preserve_loss(out,x_orig=xfull,lo=0.80,weight=1.0)
     hi_brake = input_highlight_brake_loss(out,xfull,lo=0.88,weight=1.0)
-    ev       = aux["ev"].item()
-    hi       = aux["hi"].item()
     shadows  = aux["shadows"].item()
     
     curve    = aux["curve"].view(-1).cpu().numpy()
