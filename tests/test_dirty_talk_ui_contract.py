@@ -280,7 +280,11 @@ def test_generation_setup_has_no_external_custom_node_dependency():
     loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
     backend = (ROOT / "nodes" / "loader" / "__init__.py").read_text(encoding="utf-8")
     library_backend = (ROOT / "nodes" / "loader" / "library_backend.py").read_text(encoding="utf-8")
-    banned = ("comfyroll", "itools", "rgthree", "impact_pack", "lora_manager", "lora-manager")
+    # LoRA Manager integration is intentional and OPTIONAL: the loader monkey-
+    # patches LoRA Manager's registry only if it is installed and listens for its
+    # "lora_code_update" event, degrading silently when it is absent. So a
+    # reference to lora-manager is allowed; hard deps on other packs are not.
+    banned = ("comfyroll", "itools", "rgthree", "impact_pack")
     for term in banned:
         assert term not in loader.lower()
     for source in (backend, library_backend):

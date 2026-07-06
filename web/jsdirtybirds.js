@@ -825,6 +825,153 @@ function setupGenerationNode(node) {
 
 app.registerExtension({
   name: "DirtyBirds.GenerationSetup",
+  setup() {
+    // ── LoRA Manager integration ─────────────────────────────────────────
+    // Receives <lora:name:strength> or <lora:name:strength:clip_strength>
+    // syntax from the comfyui-lora-manager "Send to node" action.
+    // (The dirtybirds_set_loras / _set_embedding listeners live at module scope.)
+    api.addEventListener("lora_code_update", (event) => {
+      const d = event?.detail || {};
+      const nodeId = d.node_id ?? d.id;
+      const loraCode = d.lora_code ?? "";
+      const mode = d.mode ?? "append";
+
+      const numericId = typeof nodeId === "string" ? Number(nodeId) : nodeId;
+
+      // Collect target DB loader nodes
+      const targets = [];
+      if (numericId === -1) {
+        // Broadcast — find all DirtyBirdsLoader nodes
+        const allNodes = app.graph?._nodes || Object.values(app.graph?._nodes_by_id || {});
+        (Array.isArray(allNodes) ? allNodes : []).forEach(n => {
+          if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
+        });
+      } else {
+        const n = app.graph?.getNodeById?.(numericId);
+        if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
+      }
+
+      if (!targets.length) return;
+
+      // Parse <lora:name:model_strength> or <lora:name:model_strength:clip_strength>
+      const loraPattern = /<lora:([^:>]+):([-\d.]+)(?::([-\d.]+))?>/g;
+      const loras = [];
+      let match;
+      while ((match = loraPattern.exec(loraCode)) !== null) {
+        const strength = parseFloat(match[2]);
+        const clipStrength = match[3] != null ? parseFloat(match[3]) : null;
+        loras.push({
+          name: match[1],
+          strength: isNaN(strength) ? 1.0 : strength,
+          clip_strength: (clipStrength != null && !isNaN(clipStrength)) ? clipStrength : null,
+          active: true,
+        });
+      }
+
+      if (!loras.length) return;
+
+      targets.forEach(n => {
+        if (typeof n._dbApplyLoras === "function") {
+          n._dbApplyLoras(loras, mode);
+        }
+      });
+    });
+
+    // ── Register DirtyBirdsLoader as lora-capable in LoRA Manager's registry ─────
+    // Replaces LM's refreshRegistry so DirtyBirdsLoader appears in "Send to node".
+    // We must include DirtyBirds in the SAME register-nodes POST that LM makes,
+    // because the server waits for exactly one POST and returns immediately after.
+    //
+    // The install is load-order safe: if LM's extension hasn't registered yet
+    // when this setup() runs, we retry briefly until it appears. refreshRegistry
+    // is only invoked on a user "Send to node" action, so installing within a
+    // couple seconds of load is always in time.
+    function installLMRegistryOverride() {
+      const lmExt = app.extensions?.find(e => e.name === "LoraManager.WorkflowRegistry");
+      if (!lmExt || typeof lmExt.refreshRegistry !== "function") return false;
+      if (lmExt._dbOverrideInstalled) return true;  // idempotent
+      lmExt._dbOverrideInstalled = true;
+
+      const LM_LORA_CLASSES = new Set([
+        "Lora Loader (LoraManager)",
+        "Lora Stacker (LoraManager)",
+        "WanVideo Lora Select (LoraManager)",
+      ]);
+      const LM_TARGET_WIDGETS = new Set(["ckpt_name", "unet_name"]);
+
+      lmExt.refreshRegistry = async function () {
+        try {
+          const workflowNodes = [];
+
+          function collectNodes(g, visited = new Set()) {
+            const gid = String(g?.id ?? "root");
+            if (!g || visited.has(gid)) return;
+            visited.add(gid);
+
+            if (Array.isArray(g._nodes)) {
+              const graphName = typeof g.name === "string" && g.name.trim() ? g.name : null;
+              for (const node of g._nodes) {
+                if (!node) continue;
+                const widgetNames = Array.isArray(node.widgets)
+                  ? node.widgets.map(w => w?.name).filter(n => typeof n === "string" && n)
+                  : [];
+                const isLMNode = LM_LORA_CLASSES.has(node.comfyClass);
+                const isDBNode = node.comfyClass === "DirtyBirdsLoader";
+                const hasTargetWidget = widgetNames.some(n => LM_TARGET_WIDGETS.has(n));
+                if (!isLMNode && !isDBNode && !hasTargetWidget) continue;
+
+                workflowNodes.push({
+                  node_id: node.id,
+                  graph_id: gid,
+                  graph_name: graphName,
+                  bgcolor: node.bgcolor ?? node.color ?? null,
+                  title: node.title || node.comfyClass,
+                  type: node.comfyClass,
+                  comfy_class: node.comfyClass,
+                  mode: node.mode,
+                  capabilities: {
+                    supports_lora: isLMNode || isDBNode,
+                    widget_names: widgetNames,
+                  },
+                });
+              }
+            }
+
+            // Walk subgraphs (mirrors LM's traverseGraphs logic)
+            const subs = g._subgraphs;
+            if (subs) {
+              const subArr = typeof subs.values === "function"
+                ? [...subs.values()] : Object.values(subs);
+              for (const sg of subArr) {
+                const sub = sg?.graph || sg?._graph || sg;
+                if (sub && sub !== g) collectNodes(sub, visited);
+              }
+            }
+          }
+
+          collectNodes(app.graph);
+
+          const resp = await fetch("/api/lm/register-nodes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nodes: workflowNodes }),
+          });
+          if (!resp.ok) console.warn("[DirtyBirds] LM register-nodes failed:", resp.statusText);
+        } catch (e) {
+          console.warn("[DirtyBirds] Error in LM registry refresh:", e);
+        }
+      };
+      return true;
+    }
+
+    // Try now; if LoRA Manager hasn't registered yet, retry (~2s @ 50ms).
+    if (!installLMRegistryOverride()) {
+      let tries = 0;
+      const lmTimer = setInterval(() => {
+        if (installLMRegistryOverride() || ++tries > 40) clearInterval(lmTimer);
+      }, 50);
+    }
+  },
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsLoader") return;
     const originalCreated = nodeType.prototype.onNodeCreated;
