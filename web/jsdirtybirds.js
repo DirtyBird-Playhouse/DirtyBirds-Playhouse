@@ -877,99 +877,47 @@ app.registerExtension({
       });
     });
 
-    // ── Register DirtyBirdsLoader as lora-capable in LoRA Manager's registry ─────
-    // Replaces LM's refreshRegistry so DirtyBirdsLoader appears in "Send to node".
-    // We must include DirtyBirds in the SAME register-nodes POST that LM makes,
-    // because the server waits for exactly one POST and returns immediately after.
+    // ── Advertise DirtyBirdsLoader as lora-capable to LoRA Manager ──────────────
+    // LoRA Manager's "Send to node" only offers nodes whose registry entry has
+    // capabilities.supports_lora === true, and it sets that flag only for its own
+    // three hardcoded Lora node classes (see workflow_registry.js LORA_NODE_CLASSES).
+    // DirtyBirdsLoader isn't one, so it's registered with supports_lora:false and
+    // rejected with the "no supported nodes" toast.
     //
-    // The install is load-order safe: if LM's extension hasn't registered yet
-    // when this setup() runs, we retry briefly until it appears. refreshRegistry
-    // is only invoked on a user "Send to node" action, so installing within a
-    // couple seconds of load is always in time.
-    function installLMRegistryOverride() {
-      const lmExt = app.extensions?.find(e => e.name === "LoraManager.WorkflowRegistry");
-      if (!lmExt || typeof lmExt.refreshRegistry !== "function") return false;
-      if (lmExt._dbOverrideInstalled) return true;  // idempotent
-      lmExt._dbOverrideInstalled = true;
-
-      const LM_LORA_CLASSES = new Set([
-        "Lora Loader (LoraManager)",
-        "Lora Stacker (LoraManager)",
-        "WanVideo Lora Select (LoraManager)",
-      ]);
-      const LM_TARGET_WIDGETS = new Set(["ckpt_name", "unet_name"]);
-
-      lmExt.refreshRegistry = async function () {
+    // Rather than reimplement LM's registry builder (which drifts every time they
+    // update the pack — it already broke once), we intercept the single
+    // /api/lm/register-nodes POST it makes and flip our node's flag to true. Our
+    // loader is already IN that POST because it has a "ckpt_name" widget (LM's own
+    // hasTargetWidget filter includes it); we only change one boolean and leave
+    // LM's exact node reference (node_id/graph_id) untouched, so this is immune to
+    // however LM computes those internally.
+    if (!window.__dbLMFetchPatched) {
+      window.__dbLMFetchPatched = true;
+      const origFetch = window.fetch;
+      window.fetch = function (input, init) {
         try {
-          const workflowNodes = [];
-
-          function collectNodes(g, visited = new Set()) {
-            const gid = String(g?.id ?? "root");
-            if (!g || visited.has(gid)) return;
-            visited.add(gid);
-
-            if (Array.isArray(g._nodes)) {
-              const graphName = typeof g.name === "string" && g.name.trim() ? g.name : null;
-              for (const node of g._nodes) {
-                if (!node) continue;
-                const widgetNames = Array.isArray(node.widgets)
-                  ? node.widgets.map(w => w?.name).filter(n => typeof n === "string" && n)
-                  : [];
-                const isLMNode = LM_LORA_CLASSES.has(node.comfyClass);
-                const isDBNode = node.comfyClass === "DirtyBirdsLoader";
-                const hasTargetWidget = widgetNames.some(n => LM_TARGET_WIDGETS.has(n));
-                if (!isLMNode && !isDBNode && !hasTargetWidget) continue;
-
-                workflowNodes.push({
-                  node_id: node.id,
-                  graph_id: gid,
-                  graph_name: graphName,
-                  bgcolor: node.bgcolor ?? node.color ?? null,
-                  title: node.title || node.comfyClass,
-                  type: node.comfyClass,
-                  comfy_class: node.comfyClass,
-                  mode: node.mode,
-                  capabilities: {
-                    supports_lora: isLMNode || isDBNode,
-                    widget_names: widgetNames,
-                  },
-                });
+          const url = typeof input === "string" ? input : input?.url;
+          const method = (init?.method || (typeof input === "object" ? input?.method : "") || "GET").toUpperCase();
+          if (url && url.includes("/api/lm/register-nodes") && method === "POST"
+              && init && typeof init.body === "string") {
+            const data = JSON.parse(init.body);
+            if (data && Array.isArray(data.nodes)) {
+              let flipped = 0;
+              for (const n of data.nodes) {
+                if (n && n.comfy_class === "DirtyBirdsLoader") {
+                  n.capabilities = (n.capabilities && typeof n.capabilities === "object") ? n.capabilities : {};
+                  n.capabilities.supports_lora = true;
+                  flipped++;
+                }
               }
-            }
-
-            // Walk subgraphs (mirrors LM's traverseGraphs logic)
-            const subs = g._subgraphs;
-            if (subs) {
-              const subArr = typeof subs.values === "function"
-                ? [...subs.values()] : Object.values(subs);
-              for (const sg of subArr) {
-                const sub = sg?.graph || sg?._graph || sg;
-                if (sub && sub !== g) collectNodes(sub, visited);
-              }
+              if (flipped) init = { ...init, body: JSON.stringify(data) };
             }
           }
-
-          collectNodes(app.graph);
-
-          const resp = await fetch("/api/lm/register-nodes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nodes: workflowNodes }),
-          });
-          if (!resp.ok) console.warn("[DirtyBirds] LM register-nodes failed:", resp.statusText);
         } catch (e) {
-          console.warn("[DirtyBirds] Error in LM registry refresh:", e);
+          console.warn("[DirtyBirds] LM register-nodes intercept failed; passing request through:", e);
         }
+        return origFetch.call(this, input, init);
       };
-      return true;
-    }
-
-    // Try now; if LoRA Manager hasn't registered yet, retry (~2s @ 50ms).
-    if (!installLMRegistryOverride()) {
-      let tries = 0;
-      const lmTimer = setInterval(() => {
-        if (installLMRegistryOverride() || ++tries > 40) clearInterval(lmTimer);
-      }, 50);
     }
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
