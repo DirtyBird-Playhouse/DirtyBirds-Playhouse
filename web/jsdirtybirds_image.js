@@ -97,6 +97,8 @@ app.registerExtension({
       const resizeHeightWidget = hideNative(node, "resize_height");
       hideNative(node, "allow_upscale"); // legacy serialized workflows
       const sharpenWidget = hideNative(node, "sharpen");
+      // Numeric widgets (resize_max/width/height, sharpen strength, …) are
+      // guarded against serializing "" centrally in db_shared's hideWidget.
 
       function hideStockWidgets() {
         hideNative(node, "image");

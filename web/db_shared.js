@@ -157,7 +157,27 @@ export function hideWidget(node, name) {
   w.computeSize    = () => [0, -4];
   w.getMinHeight   = () => -4;
   w.computedHeight = 0;
-  w.serializeValue = () => w.value;
+  // Numeric widgets must never serialize an empty string: a blank value (e.g.
+  // from an older saved workflow, or a widget that never received its default)
+  // makes ComfyUI's INT/FLOAT coercion fail with "invalid literal for int()"
+  // before the node runs. Emit a valid number, falling back to a numeric default.
+  // The default is taken from the widget config if present, else from the widget's
+  // current value at hide time (which is normally the freshly-created default), so
+  // this works regardless of how the frontend exposes the config default.
+  const numericDefault =
+    typeof w.options?.default === "number" ? w.options.default
+    : typeof w.value === "number" && Number.isFinite(w.value) ? w.value
+    : (Number.isFinite(parseFloat(w.value)) ? parseFloat(w.value) : null);
+  if (numericDefault !== null) {
+    // Repair a currently-blank value now, and guarantee serialization is numeric.
+    if (!Number.isFinite(parseFloat(w.value))) w.value = numericDefault;
+    w.serializeValue = () => {
+      const n = parseFloat(w.value);
+      return Number.isFinite(n) ? n : numericDefault;
+    };
+  } else {
+    w.serializeValue = () => w.value;
+  }
   w.options = { ...(w.options || {}), hidden: true };
   if (w.element?.style) w.element.style.display = "none";
   if (w.inputEl?.style) w.inputEl.style.display = "none";

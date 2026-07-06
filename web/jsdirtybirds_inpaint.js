@@ -1,4 +1,4 @@
-/** DirtyBirds image-only LanPaint node and Image Loader handoff. */
+/** DirtyBirds image-only Inpainting node and Image Loader handoff. */
 
 import { app } from "../../../scripts/app.js";
 import {
@@ -34,7 +34,7 @@ app.registerExtension({
         [
           "segment_prompt", "confidence", "seed", "steps", "cfg",
           "sampler_name", "scheduler", "denoise", "lanpaint_steps",
-          "prompt_mode", "blend_feather",
+          "prompt_mode", "blend_feather", "grow_mask",
         ].map((name) => [name, hideWidget(node, name)])
       );
 
@@ -137,6 +137,7 @@ app.registerExtension({
         makeSectionLabel("Segmentation"),
         prompt,
         slider("Confidence", widgets.confidence, 0.05, 0.95, 0.01, (v) => v.toFixed(2)),
+        slider("Grow", widgets.grow_mask, 0, 64, 1, (v) => String(Math.round(v)), true),
         slider("Feather", widgets.blend_feather, 1, 51, 2, (v) => String(Math.round(v)), true),
       );
       const maskHint = document.createElement("div");
@@ -150,7 +151,7 @@ app.registerExtension({
       const right = document.createElement("div");
       right.className = "db-inpaint-column";
       right.append(
-        makeSectionLabel("LanPaint"),
+        makeSectionLabel("Sampling"),
         makeSelect("Sampler", widgets.sampler_name),
         makeSelect("Scheduler", widgets.scheduler),
         makeSelect("Priority", widgets.prompt_mode),

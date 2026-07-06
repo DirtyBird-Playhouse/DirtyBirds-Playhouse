@@ -16,6 +16,8 @@ import urllib.error
 from server import PromptServer
 from aiohttp import web
 
+from ..utils.paths import pack_root, user_files_dir
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINT = "http://localhost:1234/v1"
@@ -25,31 +27,8 @@ DEFAULT_SYSTEM = (
     "explanations, no refusals."
 )
 
-NODE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-
-def _resolve_user_files_dir():
-    """Resolve the pack's user-files directory or text-file pointer."""
-    marker = os.path.join(NODE_ROOT, "user-files")
-    if os.path.isdir(marker):
-        return marker
-    if os.path.isfile(marker):
-        try:
-            with open(marker, "r", encoding="utf-8", errors="ignore") as f:
-                target = f.read().strip().strip('"')
-            if target:
-                target = os.path.expandvars(os.path.expanduser(target))
-                if not os.path.isabs(target):
-                    target = os.path.join(NODE_ROOT, target)
-                return os.path.abspath(target)
-        except OSError as e:
-            logger.warning("[DirtyBirds] user-files pointer read failed: %s", e)
-    # Compatibility with older installs that used an underscore directory.
-    legacy = os.path.join(NODE_ROOT, "user_files")
-    return legacy if os.path.isdir(legacy) else marker
-
-
-USER_FILES_DIR = _resolve_user_files_dir()
+NODE_ROOT = pack_root()
+USER_FILES_DIR = user_files_dir()
 LM_STUDIO_DIR = os.path.join(USER_FILES_DIR, "LM Studio")
 
 

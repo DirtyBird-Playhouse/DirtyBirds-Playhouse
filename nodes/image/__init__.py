@@ -3,7 +3,7 @@ DirtyBirds Playhouse — Load Image node.
 
 A branded Load Image node that pulls an image from the ComfyUI input folder
 (upload picker) OR from a URL / local path and outputs a clean IMAGE + alpha
-MASK plus width/height. Text-prompted segmentation is owned by Inpainting.
+MASK. Text-prompted segmentation is owned by the Inpainting node.
 """
 
 import os
@@ -175,7 +175,7 @@ def _to_tensors(img):
     else:
         image = output_images[0]
         mask = output_masks[0]
-    return image, mask, w, h
+    return image, mask
 
 
 def _run_sam3(image_tensor, prompt, confidence):
@@ -215,16 +215,20 @@ class DirtyBirdsLoadImage:
                 # (aspect preserved, snapped to a multiple of 8).
                 "resize": ("BOOLEAN", {"default": False}),
                 "resize_mode": (["long_side", "custom"], {"default": "long_side"}),
-                "resize_max": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "resize_width": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "resize_height": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                # Ranges match the on-node sliders (256–2048, step 64).
+                "resize_max": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                "resize_width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                "resize_height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                # Retained only so older saved workflows still load. The UI hides
+                # it and long_side resize always hits the chosen target (up or
+                # down), so this input is intentionally ignored.
                 "allow_upscale": ("BOOLEAN", {"default": False}),
                 "sharpen": (["off", "auto", "low", "medium", "high"], {"default": "auto"}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "IMAGE", "INT", "INT")
-    RETURN_NAMES = ("image", "mask", "segmented", "width", "height")
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("image", "mask")
     FUNCTION = "load"
     CATEGORY = "DirtyBirds"
 
@@ -241,12 +245,14 @@ class DirtyBirdsLoadImage:
                     img = img.resize((width, height), Image.LANCZOS)
             else:
                 # Enabling Resize means the selected long side is the target,
-                # whether that requires reducing or enlarging the source.
+                # whether that requires reducing or enlarging the source — so
+                # upscaling is always permitted here (the allow_upscale input is
+                # retired; see INPUT_TYPES).
                 img = _resize_to_max(img, int(resize_max), allow_upscale=True)
         scale_ratio = max(img.size) / original_longest if original_longest else 1.0
         img = _sharpen_image(img, sharpen, scale_ratio)
-        out_image, out_mask, w, h = _to_tensors(img)
-        return (out_image, out_mask, out_image, w, h)
+        out_image, out_mask = _to_tensors(img)
+        return (out_image, out_mask)
 
     @classmethod
     def IS_CHANGED(cls, image=None, image_url="", resize=False, resize_mode="long_side",

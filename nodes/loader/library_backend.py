@@ -697,7 +697,7 @@ async def api_fetch_meta(request):
     names = data.get("names") or []
     scope = data.get("scope", "missing")
     asset = data.get("type", "loras")   # "loras" | "embeddings"
-    print(f"[DirtyBirds] /fetch-meta request: type={asset}, scope={scope}, names={len(names)}", flush=True)
+    logger.info(f"[DirtyBirds] /fetch-meta request: type={asset}, scope={scope}, names={len(names)}")
 
     is_emb       = (asset == "embeddings")
     folder       = "embeddings" if is_emb else "loras"
@@ -706,7 +706,7 @@ async def api_fetch_meta(request):
 
     def _fetch():
         targets = list(names) if names else folder_paths.get_filename_list(folder)
-        print(f"[DirtyBirds] Fetch-meta started: {len(targets)} {folder}, scope={scope}", flush=True)
+        logger.info(f"[DirtyBirds] Fetch-meta started: {len(targets)} {folder}, scope={scope}")
         results = {}
         for idx, name in enumerate(targets, 1):
             cached = _meta_cache.get(cache_prefix + name, {})
@@ -721,12 +721,12 @@ async def api_fetch_meta(request):
                 continue
             # Force a fresh remote resolve by dropping the cached entry
             _meta_cache.pop(cache_prefix + name, None)
-            print(f"[DirtyBirds] ({idx}/{len(targets)}) Civitai lookup: {name}", flush=True)
+            logger.info(f"[DirtyBirds] ({idx}/{len(targets)}) Civitai lookup: {name}")
             try:
                 m = resolver(name, allow_remote=True)
                 ok_img = "img" if m.get("has_preview") else "no-img"
                 ok_url = "url" if m.get("civitai_url") else "no-url"
-                print(f"[DirtyBirds]    -> {m.get('model_name', '')} [{ok_img}, {ok_url}]", flush=True)
+                logger.info(f"[DirtyBirds]    -> {m.get('model_name', '')} [{ok_img}, {ok_url}]")
                 results[name] = {
                     "trigger_words": m.get("trigger_words", []),
                     "has_preview":   m.get("has_preview", False),
@@ -734,14 +734,14 @@ async def api_fetch_meta(request):
                     "civitai_url":   m.get("civitai_url", ""),
                 }
             except Exception as e:
-                print(f"[DirtyBirds] fetch-meta failed for {name}: {e}", flush=True)
+                logger.warning(f"[DirtyBirds] fetch-meta failed for {name}: {e}")
                 results[name] = {"error": str(e)}
         return results
 
     loop = asyncio.get_event_loop()
     results = await loop.run_in_executor(None, _fetch)
     fetched = sum(1 for r in results.values() if not r.get("skipped") and not r.get("error"))
-    print(f"[DirtyBirds] Fetch-meta done: {fetched} fetched, {len(results)} total", flush=True)
+    logger.info(f"[DirtyBirds] Fetch-meta done: {fetched} fetched, {len(results)} total")
     return web.json_response({"success": True, "fetched": fetched, "results": results})
 
 
@@ -905,9 +905,9 @@ async def api_download(request):
         if not dest_dir.startswith(os.path.normpath(base)):
             raise ValueError("Invalid destination folder")
         dest = os.path.join(dest_dir, filename)
-        print(f"[DirtyBirds] Downloading {filename} → {asset}/{folder or '(root)'} …", flush=True)
+        logger.info(f"[DirtyBirds] Downloading {filename} → {asset}/{folder or '(root)'} …")
         size = _stream_download(download_url, dest, token)
-        print(f"[DirtyBirds] Downloaded {filename} ({size/1048576:.1f} MB)", flush=True)
+        logger.info(f"[DirtyBirds] Downloaded {filename} ({size/1048576:.1f} MB)")
         # Resolve metadata for the freshly downloaded file (preview + civitai link)
         rel = os.path.join(folder, filename) if folder else filename
         try:
@@ -924,7 +924,7 @@ async def api_download(request):
         result = await loop.run_in_executor(None, _do)
         return web.json_response({"success": True, **result})
     except Exception as e:
-        print(f"[DirtyBirds] Download failed: {e}", flush=True)
+        logger.warning(f"[DirtyBirds] Download failed: {e}")
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 

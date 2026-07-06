@@ -55,12 +55,13 @@ def test_custom_resize_uses_exact_latent_friendly_dimensions(monkeypatch):
     source = Image.new("RGB", (640, 360))
     monkeypatch.setattr(image_loader, "_open_source", lambda *_: source)
 
-    image, _, _, width, height = image_loader.DirtyBirdsLoadImage().load(
+    image, _mask = image_loader.DirtyBirdsLoadImage().load(
         image="ignored", resize=True, resize_mode="custom",
         resize_width=800, resize_height=600, sharpen="off",
     )
 
-    assert (width, height) == (800, 600)
+    # Outputs are just image + mask now; verify the resize via the image tensor
+    # shape ([B, H, W, C]).
     assert tuple(image.shape[1:3]) == (600, 800)
 
 

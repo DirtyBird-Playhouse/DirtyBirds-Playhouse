@@ -16,12 +16,14 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
+from ..utils.paths import pack_root
+
 logger = logging.getLogger(__name__)
 
-# Repo-root user_files/prompts/My_Prompts.txt, derived from this file's location
-# (nodes/saveprompt/) so the path is portable across installs instead of a
-# machine-specific absolute path. Resolves to the same file in the live install.
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# Repo-root user_files/prompts/My_Prompts.txt. The pack root is derived from the
+# file layout (see utils.paths.pack_root) so the path is portable across installs
+# instead of a machine-specific absolute path.
+_REPO_ROOT = pack_root()
 DEFAULT_PROMPTS_FILE = os.path.join(
     _REPO_ROOT, "user_files", "prompts", "My_Prompts.txt"
 )

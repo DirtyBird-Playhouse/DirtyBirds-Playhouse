@@ -16,6 +16,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _active_trigger_words(trigger_words_data="[]"):
+    """Parse the chip JSON and return active trigger words, de-duplicated
+    case-insensitively and preserving first-seen order. Bad JSON yields []."""
+    try:
+        chips = json.loads(trigger_words_data or "[]")
+    except Exception as e:
+        logger.warning("[DirtyBirds] The Wardrobe: bad trigger_words_data (%s)", e)
+        chips = []
+
+    words, seen = [], set()
+    for c in chips if isinstance(chips, list) else []:
+        if not isinstance(c, dict) or not c.get("active", True):
+            continue
+        t = str(c.get("text", "")).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            words.append(t)
+    return words
+
+
 class DirtyBirdsWardrobe:
     """Emit selected LoRA trigger words as a prompt-ready STRING."""
 
@@ -40,21 +60,7 @@ class DirtyBirdsWardrobe:
         return (trigger_words_data,)
 
     def build(self, trigger_words_data="[]"):
-        try:
-            chips = json.loads(trigger_words_data or "[]")
-        except Exception as e:
-            logger.warning("[DirtyBirds] The Wardrobe: bad trigger_words_data (%s)", e)
-            chips = []
-
-        words, seen = [], set()
-        for c in chips if isinstance(chips, list) else []:
-            if not isinstance(c, dict) or not c.get("active", True):
-                continue
-            t = str(c.get("text", "")).strip()
-            if t and t.lower() not in seen:
-                seen.add(t.lower())
-                words.append(t)
-
+        words = _active_trigger_words(trigger_words_data)
         logger.info("[DirtyBirds] The Wardrobe -> %d active trigger words", len(words))
         return ()
 

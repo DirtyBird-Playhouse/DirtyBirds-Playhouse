@@ -21,11 +21,12 @@ from server import PromptServer
 
 import folder_paths
 
+from ..utils.paths import pack_root
+
 logger = logging.getLogger(__name__)
 
-# Node pack root (…/custom_nodes/DirtyBirds-Playhouse). This file lives two
-# levels down (nodes/folders/), hence the double dirname up.
-_NODE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Node pack root (…/custom_nodes/DirtyBirds-Playhouse).
+_NODE_DIR = pack_root()
 # …/custom_nodes
 _CUSTOM_NODES_DIR = os.path.dirname(_NODE_DIR)
 

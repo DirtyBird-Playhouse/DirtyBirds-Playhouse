@@ -5,7 +5,7 @@ import logging
 import folder_paths
 from aiohttp import web
 from server import PromptServer
-from comfy.sd import load_checkpoint_guess_config, load_lora_for_models, VAE
+from comfy.sd import load_checkpoint_guess_config, load_lora_for_models
 import comfy.utils
 
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
@@ -15,7 +15,6 @@ from .dimension_store import load_dimensions, normalize_runtime_dimensions, save
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_CACHE = {}
-_VAE_CACHE = {}
 
 BAKED_VAE = "Baked VAE"
 _DEFAULT_DIMENSIONS_PATH = os.path.join(os.path.dirname(__file__), "dimensions.json")
@@ -30,26 +29,10 @@ def _load_dimensions():
 
 
 # ---------------------------------------------------------------------------
-# Helper: Load a standalone VAE (cached)
-# ---------------------------------------------------------------------------
-
-def load_vae(vae_name):
-    vae_path = folder_paths.get_full_path("vae", vae_name)
-    if not vae_path or not os.path.exists(vae_path):
-        logger.warning("[DirtyBirds] VAE not found: %s — using baked VAE", vae_name)
-        return None
-    if vae_path in _VAE_CACHE:
-        return _VAE_CACHE[vae_path]
-    sd = comfy.utils.load_torch_file(vae_path)
-    vae = VAE(sd=sd)
-    _VAE_CACHE[vae_path] = vae
-    return vae
-
-# ---------------------------------------------------------------------------
 # Helper: Apply LoRA Stack
 # ---------------------------------------------------------------------------
 
-def apply_lora_stack(model, clip, lora_stack):
+def _apply_lora_stack(model, clip, lora_stack):
     if not lora_stack:
         return model, clip
     for lora_path, strength_model, strength_clip in lora_stack:
@@ -234,7 +217,7 @@ class DirtyBirdsLoader:
         inline_count = len(combined_stack)
 
         # lora_stack entries (e.g. from "Lora Cycler (LoraManager)") carry a name
-        # RELATIVE to the loras root, not a full path. apply_lora_stack feeds the
+        # RELATIVE to the loras root, not a full path. _apply_lora_stack feeds the
         # first element straight to load_torch_file, which resolves against the cwd —
         # so resolve to a real path here (mirrors the inline-entry handling above),
         # tolerating both relative names and already-absolute paths.
@@ -253,7 +236,7 @@ class DirtyBirdsLoader:
         if combined_stack:
             logger.info("[DirtyBirds] Applying %d LoRA(s): %d inline + %d via lora_stack",
                         len(combined_stack), inline_count, len(combined_stack) - inline_count)
-            model, clip = apply_lora_stack(model, clip, combined_stack)
+            model, clip = _apply_lora_stack(model, clip, combined_stack)
 
         # ── Trigger words (appended to positive before encoding) ─────────────
         try:

@@ -11,6 +11,12 @@ Public entry point:
 
 `image_tensor` is a ComfyUI IMAGE [B, H, W, C] in [0, 1]; we segment the first
 frame. Returns a black-background cutout IMAGE [1, H, W, C] and a MASK [1, H, W].
+
+Environment overrides (each falls back to the machine defaults below):
+    DIRTYBIRDS_SAM3_CHECKPOINT      absolute path to sam3.pt
+    DIRTYBIRDS_SAM3_SITE_PACKAGES   site-packages dir holding comfyui_sam3's
+                                    `sam3` package (disambiguates it from
+                                    comfyui-rmbg's bundled copy)
 """
 
 import os
@@ -27,9 +33,13 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_NAME = "sam3.pt"
 
-# The checkpoint's known absolute location on this machine (user-provided).
-# This is the authoritative source; the folder_paths lookups below are fallbacks.
-SAM3_CHECKPOINT = r"C:\Users\mpick\My_AI_Tools\models\sam3\sam3.pt"
+# The checkpoint's known location. Overridable via DIRTYBIRDS_SAM3_CHECKPOINT;
+# otherwise the user-provided absolute path below is the authoritative source,
+# and the folder_paths lookups further down are fallbacks.
+SAM3_CHECKPOINT = (
+    os.environ.get("DIRTYBIRDS_SAM3_CHECKPOINT")
+    or r"C:\Users\mpick\My_AI_Tools\models\sam3\sam3.pt"
+)
 
 # BPE tokenizer vocab, vendored INTO this pack so we don't rely on the `sam3`
 # package's default lookup — that default resolves relative to whichever `sam3`
@@ -39,8 +49,12 @@ BPE_PATH = os.path.join(os.path.dirname(__file__), "assets", "bpe_simple_vocab_1
 
 # The venv that holds comfyui_sam3's installed `sam3` package (matches sam3.pt).
 # comfyui-rmbg ALSO ships a top-level `sam3`, so a bare `import sam3` is a coin
-# flip; we force the site-packages copy here. Derived from the install root.
-_VENV_SITE_PACKAGES = r"C:\Users\mpick\ComfyUI-Installs\ComfyUI\ComfyUI\.venv\Lib\site-packages"
+# flip; we force the site-packages copy here. Overridable via
+# DIRTYBIRDS_SAM3_SITE_PACKAGES; otherwise the machine default below is used.
+_VENV_SITE_PACKAGES = (
+    os.environ.get("DIRTYBIRDS_SAM3_SITE_PACKAGES")
+    or r"C:\Users\mpick\ComfyUI-Installs\ComfyUI\ComfyUI\.venv\Lib\site-packages"
+)
 
 # Loaded once; the 3.2 GB model is reused across runs.
 _SAM3 = {"model": None, "processor": None, "device": None}
