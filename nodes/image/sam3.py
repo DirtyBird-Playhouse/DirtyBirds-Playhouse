@@ -47,14 +47,40 @@ SAM3_CHECKPOINT = (
 # path that may not exist. `assets/` lives in this node folder (alongside sam3.py).
 BPE_PATH = os.path.join(os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz")
 
-# The venv that holds comfyui_sam3's installed `sam3` package (matches sam3.pt).
-# comfyui-rmbg ALSO ships a top-level `sam3`, so a bare `import sam3` is a coin
-# flip; we force the site-packages copy here. Overridable via
-# DIRTYBIRDS_SAM3_SITE_PACKAGES; otherwise the machine default below is used.
-_VENV_SITE_PACKAGES = (
-    os.environ.get("DIRTYBIRDS_SAM3_SITE_PACKAGES")
-    or r"C:\Users\mpick\ComfyUI-Installs\ComfyUI\ComfyUI\.venv\Lib\site-packages"
-)
+# The venv site-packages that holds comfyui_sam3's installed `sam3` package
+# (the one that matches sam3.pt). comfyui-rmbg ALSO ships a top-level `sam3`, so
+# a bare `import sam3` is a coin flip; we force the site-packages copy here.
+#
+# Resolved dynamically from the running interpreter so it survives reinstalls and
+# works on any machine — we scan this env's site dirs for the copy that actually
+# holds `sam3/model_builder.py`. Overridable via DIRTYBIRDS_SAM3_SITE_PACKAGES.
+def _resolve_sam3_site_packages():
+    override = os.environ.get("DIRTYBIRDS_SAM3_SITE_PACKAGES")
+    if override:
+        return override
+    import site
+    candidates = []
+    getter = getattr(site, "getsitepackages", None)
+    if getter:
+        try:
+            candidates.extend(getter())
+        except Exception:
+            pass
+    user_site = getattr(site, "getusersitepackages", None)
+    if user_site:
+        try:
+            candidates.append(user_site())
+        except Exception:
+            pass
+    for d in candidates:
+        if d and os.path.isfile(os.path.join(d, "sam3", "model_builder.py")):
+            return d
+    # Nothing matched (package not installed, or unusual layout); return the
+    # first site dir so the caller's isfile() guard cleanly no-ops.
+    return candidates[0] if candidates else ""
+
+
+_VENV_SITE_PACKAGES = _resolve_sam3_site_packages()
 
 # Loaded once; the 3.2 GB model is reused across runs.
 _SAM3 = {"model": None, "processor": None, "device": None}
