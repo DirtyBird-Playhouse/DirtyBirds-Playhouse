@@ -753,18 +753,37 @@ function setupGenerationNode(node) {
     loraSection.setCount(activeCount);
   }
 
-  node._dbApplyLoras = (incoming, mode = "append") => {
+  node._dbApplyLoras = async (incoming, mode = "append") => {
     const normalized = (incoming || []).filter((item) => item?.name).map((item) => ({
       name: item.name,
       strength: Number(item.strength ?? 1),
       clip_strength: Number(item.clip_strength ?? item.strength ?? 1),
       active: item.active !== false,
     }));
-    if (mode === "replace") loras = normalized;
-    else for (const item of normalized) {
-      const index = loras.findIndex((candidate) => candidate.name === item.name);
-      if (index >= 0) loras[index] = item; else loras.push(item);
+    if (mode === "replace") {
+      loras = normalized;
+      // Drop trigger words whose LoRA is no longer selected.
+      const names = new Set(normalized.map((item) => item.name));
+      triggerWords = triggerWords.filter((candidate) => names.has(candidate.lora));
+    } else {
+      for (const item of normalized) {
+        const index = loras.findIndex((candidate) => candidate.name === item.name);
+        if (index >= 0) loras[index] = item; else loras.push(item);
+      }
     }
+    // Extract trigger words for each incoming LoRA, same as the picker's addLora.
+    // LoRAs sent from LoRA Manager come through here, so without this their
+    // trigger words never get pulled from the LoRA's metadata/sidecar.
+    await Promise.all(normalized.map(async (item) => {
+      try {
+        const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}`);
+        for (const text of meta?.trigger_words || []) {
+          if (!triggerWords.some((candidate) => candidate.lora === item.name && candidate.text === text)) {
+            triggerWords.push({ lora: item.name, text, active: true });
+          }
+        }
+      } catch (_) { /* metadata is optional */ }
+    }));
     saveLoras();
   };
 
