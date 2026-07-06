@@ -2631,7 +2631,7 @@
 }
 .db-generation-embed-preview[hidden] { display: none; }
 .db-generation-embed-preview img,
-.db-generation-embed-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.db-generation-embed-preview video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .db-generation-empty { padding: 12px 6px; color: #67737b; font-size: 10px; text-align: center; }
 
 .db-generation-flyout {
