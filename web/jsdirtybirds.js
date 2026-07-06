@@ -970,6 +970,9 @@ app.registerExtension({
 
           collectNodes(app.graph);
 
+          const dbCount = workflowNodes.filter(n => n.comfy_class === "DirtyBirdsLoader").length;
+          console.debug(`[DirtyBirds] LM refreshRegistry (override): posting ${workflowNodes.length} node(s), ${dbCount} DirtyBirdsLoader`);
+
           const resp = await fetch("/api/lm/register-nodes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -980,15 +983,21 @@ app.registerExtension({
           console.warn("[DirtyBirds] Error in LM registry refresh:", e);
         }
       };
+      console.debug("[DirtyBirds] LM registry override installed");
       return true;
     }
 
-    // Try now; if LoRA Manager hasn't registered yet, retry (~2s @ 50ms).
+    // Try now; if LoRA Manager's extension hasn't registered yet, keep retrying.
+    // "Send to node" happens well after load, but LM can register slowly on cold
+    // starts, so we poll generously (~30s) rather than giving up after a beat —
+    // if the override isn't installed when the user sends, LM's own (empty on
+    // this setup) refreshRegistry runs and the send fails with "no supported
+    // nodes". Once installed it's idempotent and we stop.
     if (!installLMRegistryOverride()) {
       let tries = 0;
       const lmTimer = setInterval(() => {
-        if (installLMRegistryOverride() || ++tries > 40) clearInterval(lmTimer);
-      }, 50);
+        if (installLMRegistryOverride() || ++tries > 300) clearInterval(lmTimer);
+      }, 100);
     }
   },
   beforeRegisterNodeDef(nodeType, nodeData) {
