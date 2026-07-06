@@ -68,7 +68,7 @@ async def get_prompt_file(request):
     if not os.path.isfile(full):
         raise web.HTTPNotFound()
     with open(full, "r", encoding="utf-8") as fh:
-        lines = [l.strip() for l in fh if l.strip()]
+        lines = [line.strip() for line in fh if line.strip()]
     return web.json_response({"lines": lines})
 
 
