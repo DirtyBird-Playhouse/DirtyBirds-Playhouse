@@ -142,9 +142,11 @@ class DirtyBirdsPrompt:
         positives = [with_cycler_metadata(append_positive(pos_out, item), item)
                      for item in cycle_items]
 
+        # Log operational counts only — never the prompt text itself, which can
+        # be sensitive and would otherwise land in the console/log files.
         logger.info(
-            "[DirtyBirds] Script: concat_positive=%r cycler_items=%d -> first positive=%r",
-            cp[:120], len(cycle_items), (positives[0] or "")[:120])
+            "[DirtyBirds] Script: concat_positive=%s, concat_negative=%s, cycler_items=%d",
+            "set" if cp else "none", "set" if cn else "none", len(cycle_items))
 
         # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
         # before the sampler runs, letting the user cancel early if it's wrong.
