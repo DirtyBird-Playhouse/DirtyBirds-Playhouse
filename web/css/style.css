@@ -2566,8 +2566,13 @@
 .db-generation-value { text-align: right; color: #aeb7bd; font-variant-numeric: tabular-nums; }
 .db-generation-range { width: 100%; accent-color: #51aef0; }
 .db-generation-field.is-disabled { opacity: .38; }
+/* One "medium" size for every model preview in the Loader panel — checkpoint,
+   embedding, LoRA thumbs, and picker cards all read from this single knob so
+   the previews stay visually uniform. Retune here, nowhere else. */
+:root { --db-preview-size: 64px; }
 .db-generation-preview {
-  height: 118px; display: flex; align-items: center; justify-content: center;
+  width: var(--db-preview-size); height: var(--db-preview-size);
+  display: flex; align-items: center; justify-content: center;
   overflow: hidden; border: 1px solid #34383c; border-radius: 8px; background: #1b1c1f;
 }
 .db-generation-preview img,
@@ -2587,24 +2592,35 @@
 .db-generation-card { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .db-generation-card.is-disabled { opacity: .5; }
 .db-generation-embedding-controls { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; align-items: center; }
+/* Embedding weight box — mirrors the LoRA weight inputs (label + number box). */
+.db-generation-embed-weights { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 5px; }
+/* Positive/negative embeddings carry a top accent line matching the prompt
+   preview blocks (.db-preview-block.db-pos/.db-neg) — top edge only, no fill. */
+.db-generation-card.db-emb-pos,
+.db-generation-card.db-emb-neg { border: 0; border-top: 2px solid transparent; border-radius: 4px 4px 0 0; padding-top: 6px; }
+.db-generation-card.db-emb-pos { border-top-color: #3a6a3a; }
+.db-generation-card.db-emb-neg { border-top-color: #6a3a3a; }
 .db-generation-card .db-generation-field { grid-template-columns: 45px minmax(0, 1fr) 34px; }
 .db-generation-add-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
 .db-generation-lora-list {
-  max-height: 216px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px;
+  max-height: 440px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px;
   scrollbar-width: thin;
 }
 .db-generation-lora-row {
   display: flex; flex-direction: column; gap: 5px; padding: 5px 6px;
   border-radius: 6px; background: #202125;
 }
-.db-generation-lora-row-top { display: grid; grid-template-columns: 28px 18px minmax(0, 1fr) 28px; align-items: center; gap: 5px; }
+.db-generation-lora-row-top { display: grid; grid-template-columns: var(--db-preview-size) 18px minmax(0, 1fr) 28px; align-items: center; gap: 5px; }
 .db-generation-lora-thumb {
-  width: 28px; height: 28px; border-radius: 5px; overflow: hidden;
+  width: var(--db-preview-size); height: var(--db-preview-size); border-radius: 5px; overflow: hidden;
   background: #14161a; border: 1px solid #2c3034;
 }
 .db-generation-lora-thumb[hidden] { display: none; }
 .db-generation-lora-thumb img,
 .db-generation-lora-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Placeholder shown when a LoRA has no local preview image/video. */
+.db-generation-lora-thumb-empty { display: grid; place-items: center; }
+.db-generation-lora-thumb-empty::after { content: "▨"; color: #4b525a; font-size: 24px; line-height: 1; }
 .db-generation-lora-weights { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 4px; }
 .db-generation-weight-label { color: #72818a; font-size: 8px; text-transform: uppercase; }
 .db-generation-lora-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -2626,7 +2642,8 @@
   border: 1px solid #5aadff; border-radius: 999px; font-size: 11px; padding: 1px 6px;
 }
 .db-generation-embed-preview {
-  height: 80px; margin-top: 2px; display: flex; align-items: center; justify-content: center;
+  width: var(--db-preview-size); height: var(--db-preview-size); margin-top: 2px;
+  display: flex; align-items: center; justify-content: center;
   overflow: hidden; border: 1px solid #34383c; border-radius: 8px; background: #1b1c1f;
 }
 .db-generation-embed-preview[hidden] { display: none; }
@@ -2652,7 +2669,7 @@
 }
 .db-generation-picker-count { color: #82909a; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .db-generation-card-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(105px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--db-preview-size), 1fr));
   gap: 8px; padding: 10px; max-height: 66vh; overflow-y: auto;
 }
 .db-generation-picker-card {

@@ -32,6 +32,7 @@ master.yaml
 
 # Pytest cache
 .pytest_cache/
+.pytest-bt/
 
 # Loader settings — can hold a Civitai API token, never commit
 dirtybirds_settings.json

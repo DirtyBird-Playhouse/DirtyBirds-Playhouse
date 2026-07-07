@@ -13,7 +13,7 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 3   # bump to auto-invalidate stale cached entries (v3: civitai.red URLs)
+CACHE_VERSION = 5   # bump to auto-invalidate stale cached entries (v5: split comma-joined trigger words)
 
 # Cache + settings live alongside this module in the loader folder; web/previews
 # stays under the repo-root web/ dir (browser-served via WEB_DIRECTORY).
@@ -144,6 +144,86 @@ def _is_image(path):
     return bool(path) and os.path.splitext(path)[1].lower() in _IMAGE_EXTS
 
 
+def _split_trigger_words(trained):
+    """Flatten Civitai trainedWords into individual trigger words. Entries are
+    often comma-joined ('bbc, huge penis'), so split each into its own chip and
+    de-duplicate in order — keeps every source (sidecar / LM / Civitai) uniform.
+    """
+    words = []
+    for entry in (trained or []):
+        for word in str(entry).split(","):
+            word = word.strip()
+            if word and word not in words:
+                words.append(word)
+    return words
+
+
+# ---------------------------------------------------------------------------
+# comfyui-lora-manager cache bridge
+# ---------------------------------------------------------------------------
+# LoRA Manager keeps a rich cache (previews + Civitai trainedWords) for every
+# model it manages — loras, checkpoints and embeddings. Many models have no
+# local sidecar next to the file, so our sibling-file / .metadata.json lookups
+# come up empty even though LM already has the data. We query LM's own HTTP API
+# (same server) by bare name as a fallback. Decoupled on purpose: any failure
+# (LM absent, cache cold, network) just returns None and we fall through.
+
+_LM_PREFIXES = {"loras", "checkpoints", "embeddings"}
+
+def _server_port():
+    try:
+        from comfy.cli_args import args as _cli_args  # type: ignore
+        if getattr(_cli_args, "port", None):
+            return int(_cli_args.port)
+    except Exception:
+        pass
+    try:
+        return int(getattr(PromptServer.instance, "port"))
+    except Exception:
+        return 8188
+
+def _lm_cache_lookup(prefix, name):
+    """Look up a model in comfyui-lora-manager's cache by (bare) name.
+
+    Returns {"trained_words": [...], "preview_url": "/api/lm/previews?path=..."}
+    or None. Best-effort and side-effect free.
+    """
+    if prefix not in _LM_PREFIXES or not name:
+        return None
+    try:
+        raw = str(name).replace("\\", "/")
+        bare = os.path.splitext(os.path.basename(raw))[0]
+        folder = os.path.dirname(raw)
+        url = (f"http://127.0.0.1:{_server_port()}/api/lm/{prefix}/list"
+               f"?search={urllib.parse.quote(bare)}&page=1&page_size=50")
+        req = urllib.request.Request(url, headers={"User-Agent": "DirtyBirds-Playhouse/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        items = data.get("items") or []
+        if not items:
+            return None
+
+        def _name_eq(item):
+            return str(item.get("file_name", "")).lower() == bare.lower()
+
+        # Prefer an exact folder + name match to disambiguate same-named models.
+        chosen = None
+        if folder:
+            chosen = next((it for it in items if _name_eq(it) and
+                           str(it.get("folder", "")).replace("\\", "/").lower() == folder.lower()), None)
+        if not chosen:
+            chosen = next((it for it in items if _name_eq(it)), None)
+        if not chosen:
+            return None
+
+        civ = chosen.get("civitai") or {}
+        return {"trained_words": _split_trigger_words(civ.get("trainedWords")),
+                "preview_url": chosen.get("preview_url") or ""}
+    except Exception as e:
+        logger.debug(f"[DirtyBirds] LM cache lookup failed for {prefix}/{name}: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # SHA-256 (used for Civitai lookup)
 # ---------------------------------------------------------------------------
@@ -200,13 +280,15 @@ def _download_file(url, dest):
 # Core metadata resolver
 # ---------------------------------------------------------------------------
 
-def get_lora_meta(lora_filename, allow_remote=True):
+def get_lora_meta(lora_filename, allow_remote=True, use_lm=True):
     """
     Returns { trigger_words, has_preview, preview_path, model_name } for a LoRA.
 
     allow_remote=False  → local-only (metadata.json + sibling files + safetensors
     header). NEVER hashes the file or calls Civitai — safe for bulk scans.
     allow_remote=True   → may fall back to SHA-256 + Civitai for missing data.
+    use_lm=False        → skip the comfyui-lora-manager cache lookup (a same-server
+                          HTTP call); set for bulk scans to avoid a request storm.
 
     Results are cached in lora_meta_cache.json.
     """
@@ -218,7 +300,8 @@ def get_lora_meta(lora_filename, allow_remote=True):
 
     cached = _meta_cache.get(lora_filename)
     if (cached and cached.get("resolved") and cached.get("v") == CACHE_VERSION
-            and (cached.get("remote_done") or not allow_remote)):
+            and (cached.get("remote_done") or not allow_remote)
+            and (cached.get("lm_done") or not use_lm)):
         return cached
 
     lora_path = folder_paths.get_full_path("loras", lora_filename)
@@ -249,7 +332,7 @@ def get_lora_meta(lora_filename, allow_remote=True):
         if isinstance(civ, dict):
             tw = civ.get("trainedWords") or []
             if isinstance(tw, list) and tw:
-                meta["trigger_words"] = [str(w).strip() for w in tw if str(w).strip()]
+                meta["trigger_words"] = _split_trigger_words(tw)
             # Civitai model page link (from sidecar)
             if civ.get("modelId"):
                 _m = civ.get("model") or {}
@@ -294,6 +377,23 @@ def get_lora_meta(lora_filename, allow_remote=True):
                     meta["sha256"] = h
                     break
 
+    # 3.5 comfyui-lora-manager cache — local (same-server) lookup that fills
+    #     trigger words / preview from LM's DB when the model ships no sidecar.
+    #     Runs even in local-only mode: it never hashes the file or hits Civitai.
+    #     Skipped for bulk scans (use_lm=False) to avoid a same-server request storm.
+    lm_missing = (not meta["trigger_words"]) or (not meta["has_preview"])
+    if use_lm and lm_missing:
+        lm_cache = _lm_cache_lookup("loras", lora_filename)
+        if lm_cache:
+            if not meta["trigger_words"] and lm_cache["trained_words"]:
+                meta["trigger_words"] = lm_cache["trained_words"]
+            if not meta["has_preview"] and lm_cache["preview_url"]:
+                meta["has_preview"] = True  # served via /dirtybirds/lora-preview LM fallback
+        lm_missing = (not meta["trigger_words"]) or (not meta["has_preview"])
+    # lm_done: True once LM has been consulted, or there's nothing left to gain.
+    # A later use_lm call re-checks only when this is False (mirrors remote_done).
+    meta["lm_done"] = bool(use_lm) or (not lm_missing)
+
     # 4. Civitai lookup (last resort) — ONLY when remote is allowed.
     #    This is the expensive path: full-file SHA-256 + network call.
     #    Skipped entirely for bulk/local-only scans to keep them instant.
@@ -310,7 +410,7 @@ def get_lora_meta(lora_filename, allow_remote=True):
         data = _civitai_by_hash(sha256)
         if data:
             if not meta["trigger_words"]:
-                meta["trigger_words"] = data.get("trainedWords", [])
+                meta["trigger_words"] = _split_trigger_words(data.get("trainedWords"))
             if not meta["civitai_url"]:
                 _model = data.get("model") or {}
                 meta["civitai_url"] = _civitai_url(
@@ -347,19 +447,22 @@ def get_lora_meta(lora_filename, allow_remote=True):
 
 _EMB_CACHE_PREFIX = "emb::"
 
-def get_embedding_meta(emb_filename, allow_remote=True):
+def get_embedding_meta(emb_filename, allow_remote=True, use_lm=True):
     """
     Returns { trigger_words, has_preview, preview_path, model_name } for a
     textual-inversion embedding. Same resolution chain as LoRAs (sibling preview
     files → safetensors header → Civitai by SHA-256), cached under an "emb::"
     namespace so it never collides with LoRA entries of the same filename.
+
+    use_lm=False skips the comfyui-lora-manager cache lookup (for bulk scans).
     """
     global _meta_cache
 
     cache_key = _EMB_CACHE_PREFIX + emb_filename
     cached = _meta_cache.get(cache_key)
     if (cached and cached.get("resolved") and cached.get("v") == CACHE_VERSION
-            and (cached.get("remote_done") or not allow_remote)):
+            and (cached.get("remote_done") or not allow_remote)
+            and (cached.get("lm_done") or not use_lm)):
         return cached
 
     emb_path = folder_paths.get_full_path("embeddings", emb_filename)
@@ -388,7 +491,7 @@ def get_embedding_meta(emb_filename, allow_remote=True):
         if isinstance(civ, dict):
             tw = civ.get("trainedWords") or []
             if isinstance(tw, list) and tw:
-                meta["trigger_words"] = [str(w).strip() for w in tw if str(w).strip()]
+                meta["trigger_words"] = _split_trigger_words(tw)
             if civ.get("modelId"):
                 _m = civ.get("model") or {}
                 meta["civitai_url"] = _civitai_url(
@@ -421,6 +524,19 @@ def get_embedding_meta(emb_filename, allow_remote=True):
                 meta["sha256"] = h
                 break
 
+    # 3.5 comfyui-lora-manager cache — local fallback for trigger words / preview.
+    #     Skipped for bulk scans (use_lm=False) to avoid a same-server request storm.
+    lm_missing = (not meta["trigger_words"]) or (not meta["has_preview"])
+    if use_lm and lm_missing:
+        lm_cache = _lm_cache_lookup("embeddings", emb_filename)
+        if lm_cache:
+            if not meta["trigger_words"] and lm_cache["trained_words"]:
+                meta["trigger_words"] = lm_cache["trained_words"]
+            if not meta["has_preview"] and lm_cache["preview_url"]:
+                meta["has_preview"] = True  # served via /dirtybirds/embedding-preview LM fallback
+        lm_missing = (not meta["trigger_words"]) or (not meta["has_preview"])
+    meta["lm_done"] = bool(use_lm) or (not lm_missing)
+
     # 4. Civitai lookup (last resort) — full-file SHA-256 + network call
     missing = (not meta["has_preview"]) or (not meta["civitai_url"])
     if allow_remote and missing:
@@ -429,7 +545,7 @@ def get_embedding_meta(emb_filename, allow_remote=True):
         data = _civitai_by_hash(sha256)
         if data:
             if not meta["trigger_words"]:
-                meta["trigger_words"] = data.get("trainedWords", [])
+                meta["trigger_words"] = _split_trigger_words(data.get("trainedWords"))
             if not meta["civitai_url"]:
                 _model = data.get("model") or {}
                 meta["civitai_url"] = _civitai_url(
@@ -494,7 +610,7 @@ async def api_get_loras_meta_bulk(request):
         result = {}
         for name in folder_paths.get_filename_list("loras"):
             try:
-                m = get_lora_meta(name, allow_remote=False)   # local-only: never hash/network
+                m = get_lora_meta(name, allow_remote=False, use_lm=False)  # local-only, no LM storm
                 result[name] = {
                     "model_name":  m.get("model_name", ""),
                     "has_preview": m.get("has_preview", False),
@@ -514,7 +630,7 @@ async def api_get_loras_meta_bulk(request):
 async def api_lora_preview(request):
     name = request.rel_url.query.get("name", "").strip()
     # Resolve bare LoRA-Manager names (no subfolder/extension) to the real file.
-    return _lm_preview_redirect("loras", resolve_lora_filename(name))
+    return await _serve_model_preview("loras", resolve_lora_filename(name))
 
 
 # ---------------------------------------------------------------------------
@@ -540,28 +656,27 @@ def _find_model_sibling_preview(folder_type, name):
     return None
 
 
-def _lm_preview_redirect(folder_type, name):
-    """Resolve an asset's sibling preview (cheap, local-only — no hashing or
-    network) and 302-redirect to comfyui-lora-manager's universal preview
-    endpoint, which serves images and videos (Windows-safe) for all asset types.
-
-    Using LoRA Manager's single /api/lm/previews endpoint keeps one preview
-    mechanism across checkpoints / loras / embeddings and avoids the per-request
-    SHA-256 + Civitai work that previously saturated the server.
+async def _serve_model_preview(folder_type, name):
+    """Serve a model's preview. Prefers a local sibling file (streamed directly,
+    with range support), then falls back to comfyui-lora-manager's cached preview
+    (302-redirect to /api/lm/previews) for models with no local sidecar.
     """
     if not name:
         return web.Response(status=400)
+    # 1. Local sibling file — stream the bytes (self-contained, no dependency).
     preview_path = _find_model_sibling_preview(folder_type, name)
-    if not preview_path or not os.path.exists(preview_path):
-        return web.Response(status=404)
-    # Stream the file directly (images + videos, with range support) instead of
-    # 302-redirecting the browser <img>/<video> to LoRA Manager's
-    # /api/lm/previews. The redirect added a fragile second hop and a hard
-    # dependency on LM serving the asset; serving the bytes here keeps previews
-    # self-contained and reliable.
-    return web.FileResponse(os.path.abspath(preview_path), headers={
-        "Cache-Control": "public, max-age=86400",
-    })
+    if preview_path and os.path.exists(preview_path):
+        return web.FileResponse(os.path.abspath(preview_path), headers={
+            "Cache-Control": "public, max-age=86400",
+        })
+    # 2. LoRA Manager cache — 302 to its preview URL. Run the (blocking) lookup
+    #    off the event loop so a slow LM query never stalls other requests.
+    if folder_type in _LM_PREFIXES:
+        loop = asyncio.get_event_loop()
+        lm_cache = await loop.run_in_executor(None, _lm_cache_lookup, folder_type, name)
+        if lm_cache and lm_cache.get("preview_url"):
+            raise web.HTTPFound(lm_cache["preview_url"])
+    return web.Response(status=404)
 
 
 @PromptServer.instance.routes.get("/dirtybirds/model-preview")
@@ -570,7 +685,7 @@ async def api_model_preview(request):
     name = request.rel_url.query.get("name", "").strip()
     if folder_type not in ("checkpoints", "vae"):
         return web.Response(status=400)
-    return _lm_preview_redirect(folder_type, name)
+    return await _serve_model_preview(folder_type, name)
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +715,7 @@ async def api_get_embeddings_meta_bulk(request):
         result = {}
         for name in folder_paths.get_filename_list("embeddings"):
             try:
-                m = get_embedding_meta(name, allow_remote=False)  # local-only
+                m = get_embedding_meta(name, allow_remote=False, use_lm=False)  # local-only, no LM storm
                 result[name] = {
                     "model_name":  m.get("model_name", ""),
                     "has_preview": m.get("has_preview", False),
@@ -619,7 +734,7 @@ async def api_get_embeddings_meta_bulk(request):
 @PromptServer.instance.routes.get("/dirtybirds/embedding-preview")
 async def api_embedding_preview(request):
     name = request.rel_url.query.get("name", "").strip()
-    return _lm_preview_redirect("embeddings", name)
+    return await _serve_model_preview("embeddings", name)
 
 
 # ---------------------------------------------------------------------------

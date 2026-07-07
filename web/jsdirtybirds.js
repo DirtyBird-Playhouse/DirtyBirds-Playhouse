@@ -197,14 +197,14 @@ const NODE_WIDTH = 500;
 // their row cap scroll internally (.db-generation-lora-list /
 // .db-generation-trigger-list) instead of growing the section unbounded.
 const PANEL_BASE_HEIGHT = 320; // Generation block + Embeddings/LoRAs collapsed headers
-const EMBED_CARD_BASE_H = 92;   // enable + picker + weight field, no preview
-const EMBED_PREVIEW_H = 90;     // added once if either slot reserves a preview
+const EMBED_CARD_BASE_H = 86;   // enable + picker + weight box, no preview (incl. top accent)
+const EMBED_PREVIEW_H = 74;     // added once if either slot reserves a 64px preview
 const LORA_SECTION_BASE_H = 75; // "Selected"/"Trigger Words" labels + add-row chrome
-const LORA_ROW_H = 54;
-const LORA_ROW_CAP = 4;         // beyond this the list scrolls instead of growing (4 * 54 = 216px, matches CSS max-height)
+const LORA_ROW_H = 110;         // thumb(64) + weights row + padding/gap, measured
+const LORA_ROW_CAP = 4;         // beyond this the list scrolls instead of growing (4 * 110 = 440px, matches CSS max-height)
 const TRIGGER_ROW_H = 26;
 const TRIGGER_ROW_CAP = 6;      // 6 * 26 = 156px, matches CSS max-height
-const UI_VERSION = 6;
+const UI_VERSION = 8;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 const findWidget = (node, name) => node.widgets?.find((widget) => widget.name === name);
@@ -529,7 +529,7 @@ function setupGenerationNode(node) {
     const name = widgets.ckpt_name?.value || "";
     preview.replaceChildren(previewEmpty);
     if (!name) return;
-    const url = `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}&v=${Date.now()}`;
+    const url = `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}`;
     loadMedia(preview, url, () => preview.replaceChildren(previewEmpty));
   }
 
@@ -567,9 +567,14 @@ function setupGenerationNode(node) {
       updateEmbeddingPreview(card, name);
       applyLayout();
     });
-    const strengthValue = el("output", "db-generation-value", "1.00");
-    const strength = rangeControl(0, 2, 0.05, (value) => {
-      strengthValue.textContent = value.toFixed(2);
+    // Numeric weight box (mirrors the LoRA rows' Model/CLIP inputs) instead of a
+    // slider. Embeddings carry a single scalar strength, so there's one box.
+    const strength = el("input", "db-generation-number");
+    strength.type = "number"; strength.min = "0"; strength.max = "2"; strength.step = "0.05";
+    strength.title = "Embedding weight";
+    strength.addEventListener("change", () => {
+      const value = clamp(strength.value, 0, 2);
+      strength.value = String(value);
       setWidget(widget, writeEmbedding(picker.value === "(none)" ? "" : picker.value, value, enabled.checked), node);
     });
     enabled.addEventListener("change", () => {
@@ -577,13 +582,14 @@ function setupGenerationNode(node) {
       card.classList.toggle("is-disabled", !enabled.checked);
     });
     controls.append(enabled, picker);
+    const weights = el("div", "db-generation-embed-weights");
+    weights.append(el("span", "db-generation-weight-label", "Weight"), strength);
     const preview = el("div", "db-generation-embed-preview");
     preview.hidden = true;
-    card.append(el("span", "db-generation-card-label", label), controls, field("Weight", strength, strengthValue), preview);
+    card.append(el("span", "db-generation-card-label", label), controls, weights, preview);
     card._picker = picker;
     card._enabled = enabled;
     card._strength = strength;
-    card._strengthValue = strengthValue;
     card._preview = preview;
     return card;
   }
@@ -601,6 +607,8 @@ function setupGenerationNode(node) {
   }
   const posEmbedding = makeEmbeddingSlot("Positive", widgets.pos_embedding);
   const negEmbedding = makeEmbeddingSlot("Negative", widgets.neg_embedding);
+  posEmbedding.classList.add("db-emb-pos");
+  negEmbedding.classList.add("db-emb-neg");
   embeddingGrid.append(posEmbedding, negEmbedding);
 
   function readEmbedding(raw) {
@@ -625,7 +633,6 @@ function setupGenerationNode(node) {
     card._picker.value = parsed.name || "(none)";
     card._enabled.checked = parsed.active;
     card._strength.value = String(parsed.strength);
-    card._strengthValue.textContent = parsed.strength.toFixed(2);
     card.classList.toggle("is-disabled", !parsed.active);
     updateEmbeddingPreview(card, parsed.name);
   }
@@ -653,6 +660,9 @@ function setupGenerationNode(node) {
   );
   loraAddRow.append(loraAddBtn);
   const loraList = el("div", "db-generation-lora-list");
+  // Lazy-loads each LoRA thumb on scroll and pauses off-screen video previews,
+  // so a long stack of animated (.mp4) previews doesn't decode+loop all at once.
+  let loraThumbObserver = null;
   const triggers = el("div", "db-generation-trigger-list");
   const loraColumns = el("div", "db-generation-lora-columns");
   const selectedColumn = el("div", "db-generation-lora-column");
@@ -684,6 +694,19 @@ function setupGenerationNode(node) {
   }
 
   function renderLoras() {
+    loraThumbObserver?.disconnect();
+    loraThumbObserver = typeof IntersectionObserver === "function"
+      ? new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target._dbLoadPreview?.();               // load once, on demand
+              entry.target.querySelector("video")?.play?.().catch(() => {});
+            } else {
+              entry.target.querySelector("video")?.pause?.(); // stop decoding off-screen
+            }
+          }
+        }, { root: loraList, rootMargin: "120px" })
+      : null;
     loraList.replaceChildren();
     triggers.replaceChildren();
     for (const item of loras) {
@@ -692,7 +715,16 @@ function setupGenerationNode(node) {
       const weights = el("div", "db-generation-lora-weights");
       const thumb = el("div", "db-generation-lora-thumb");
       thumb.hidden = true;
-      loadMedia(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`, undefined, () => { thumb.hidden = false; });
+      thumb._dbLoadPreview = () => {
+        if (thumb.dataset.loaded) return;
+        thumb.dataset.loaded = "true";
+        loadMedia(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`,
+          // No local preview for this LoRA — show a placeholder instead of an
+          // empty 64px gap in the reserved thumb column.
+          () => { thumb.hidden = false; thumb.classList.add("db-generation-lora-thumb-empty"); },
+          () => { thumb.hidden = false; });
+      };
+      if (loraThumbObserver) loraThumbObserver.observe(thumb); else thumb._dbLoadPreview();
       const active = el("input");
       active.type = "checkbox";
       active.checked = item.active !== false;
