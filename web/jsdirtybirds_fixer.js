@@ -7,10 +7,42 @@ import {
 
 ensureStylesheet();
 
+const RESTORE_METHOD_DEFAULT = "Diffusion (Inpaint)";
+const RESTORE_METHODS = ["Diffusion (Inpaint)", "GFPGAN", "CodeFormer"];
+const CODEFORMER_FIDELITY_DEFAULT = 0.5;
+
+function normalizeNumberWidget(node, name, fallback) {
+  const widget = node.widgets?.find((w) => w.name === name);
+  if (!widget) return;
+  const read = () => {
+    const value = Number(widget.value);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  widget.value = read();
+  widget.serializeValue = read;
+}
+
+function normalizeFixerWidgets(node) {
+  const widget = node.widgets?.find((w) => w.name === "restore_method");
+  if (widget) {
+    const values = widget.options?.values || RESTORE_METHODS;
+    const fallback = values.includes(RESTORE_METHOD_DEFAULT) ? RESTORE_METHOD_DEFAULT : values[0];
+    if (!values.includes(widget.value)) widget.value = fallback;
+    widget.serializeValue = () => values.includes(widget.value) ? widget.value : fallback;
+  }
+  normalizeNumberWidget(node, "codeformer_fidelity", CODEFORMER_FIDELITY_DEFAULT);
+}
+
 app.registerExtension({
   name: "DirtyBirds.Fixer",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsFixer") return;
+    const originalConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = originalConfigure?.apply(this, arguments);
+      requestAnimationFrame(() => normalizeFixerWidgets(this));
+      return result;
+    };
     // The Fixer owns its preview UI. Prevent ComfyUI's native image canvas from
     // drawing the full output underneath/alongside the face comparison widget.
     const drawBackground = nodeType.prototype.onDrawBackground;
@@ -32,6 +64,7 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       original?.apply(this, arguments);
       const node = this;
+      normalizeFixerWidgets(node);
       node.color = DB_COLOR; node.bgcolor = DB_BGCOLOR;
       const MIN_W = 390; node.size[0] = Math.max(node.size[0] || 0, MIN_W);
       const els = [], controls = {};

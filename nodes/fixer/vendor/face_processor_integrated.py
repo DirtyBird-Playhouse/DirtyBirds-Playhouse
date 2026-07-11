@@ -80,6 +80,11 @@ class ForbiddenVisionFaceProcessorIntegrated:
                 "enable_lightness_rescue": ("BOOLEAN", {"default": True, "tooltip": "If the generated face is darker than original, brighten it."}),
                 "enable_final_refinement": ("BOOLEAN", {"default": True, "tooltip": "Runs a quick 0.05 denoise pass at the end. Cleans artifacts and improves skin texture with sensitive models and higher denoise. Highly recommended."}),
                 "offload_models_to_cpu": ("BOOLEAN", {"default": True, "tooltip": "Move face detection/segmentation/corrector models from VRAM to RAM after processing. Frees GPU memory for other nodes (e.g. checkpoint swaps in queued workflows). Disable if you're chaining many face passes and want to skip the small reload overhead."}),
+
+                # Appended last so existing saved Fixer workflows keep their
+                # widget order (inserting mid-list shifts every stored value).
+                "restore_method": (["Diffusion (Inpaint)", "GFPGAN", "CodeFormer"], {"default": "Diffusion (Inpaint)", "tooltip": "How each detected face is restored. Diffusion runs the inpaint sampler (uses the prompt). GFPGAN/CodeFormer are dedicated face-restore GANs that replace the sampler on each crop — fast, prompt-independent. Compositing/color-correction stays shared."}),
+                "codeformer_fidelity": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "CodeFormer only. 0 = maximum quality (may drift from the original), 1 = maximum fidelity to the input face."}),
             },
             "optional": {
                 "image": ("IMAGE", {"tooltip": "Optional image input. If latent is also provided, latent will be used."}),
@@ -551,7 +556,8 @@ class ForbiddenVisionFaceProcessorIntegrated:
             if processed_crop.ndim == 3: return processed_crop.unsqueeze(0), False
             return processed_crop, False
 
-    def process_face_complete(self, model, vae, positive, negative, 
+    def process_face_complete(self, model, vae, positive, negative,
+                        restore_method, codeformer_fidelity,
                         steps, cfg_scale, sampler, scheduler, denoise_strength, seed,
                         face_selection, detection_confidence, manual_rotation, processing_resolution, enable_pre_upscale, upscaler_model, crop_padding,
                         face_positive_prompt, replace_positive_prompt, face_negative_prompt, replace_negative_prompt, exclusions,
@@ -753,38 +759,48 @@ class ForbiddenVisionFaceProcessorIntegrated:
                 else:
                     restore_info['manual_rotation'] = "None"
                 
-                processed_latent = self.run_inpaint_sampling(
-                    cropped_face, sampler_mask_batch, model, vae, current_positive, current_negative,
-                    steps, cfg_scale, sampler, scheduler, denoise_strength, seed + i,
-                    sampling_mask_blur_size, sampling_mask_blur_strength,
-                    enable_differential_diffusion
-                )
-                
-                from .utils import normalize_vae_decode_output
-                with torch.no_grad():
-                    processed_face_batch = normalize_vae_decode_output(vae.decode(processed_latent["samples"]))
-                
-                lightness_triggered = False
-                if enable_lightness_rescue:
-                    processed_face_batch, lightness_triggered = self.check_and_perform_lightness_correction(
-                        cropped_face, processed_face_batch, sampler_mask_batch, restore_info
+                if restore_method != "Diffusion (Inpaint)":
+                    # GAN face restore (GFPGAN / CodeFormer): replaces the inpaint
+                    # sampler on this crop. The sampler-driven lightness rescue and
+                    # final refinement passes don't apply; compositing and color
+                    # correction downstream stay shared with the diffusion path.
+                    from .face_restore import FaceRestoreManager
+                    processed_face_batch = FaceRestoreManager.get_instance().restore(
+                        cropped_face, restore_method, codeformer_fidelity
+                    )
+                else:
+                    processed_latent = self.run_inpaint_sampling(
+                        cropped_face, sampler_mask_batch, model, vae, current_positive, current_negative,
+                        steps, cfg_scale, sampler, scheduler, denoise_strength, seed + i,
+                        sampling_mask_blur_size, sampling_mask_blur_strength,
+                        enable_differential_diffusion
                     )
 
-                if enable_final_refinement or lightness_triggered:
-                    refinement_strength = 0.05
-                    refinement_latent = self.run_inpaint_sampling(
-                        processed_face_batch, sampler_mask_batch, 
-                        model, vae, current_positive, current_negative,
-                        steps=2, cfg_scale=1.0, 
-                        sampler=sampler, scheduler=scheduler,
-                        denoise_strength=refinement_strength, seed=seed + i + 1,
-                        sampling_mask_blur_size=sampling_mask_blur_size,
-                        sampling_mask_blur_strength=sampling_mask_blur_strength
-                    )
-                    
                     from .utils import normalize_vae_decode_output
                     with torch.no_grad():
-                        processed_face_batch = normalize_vae_decode_output(vae.decode(refinement_latent["samples"]))
+                        processed_face_batch = normalize_vae_decode_output(vae.decode(processed_latent["samples"]))
+
+                    lightness_triggered = False
+                    if enable_lightness_rescue:
+                        processed_face_batch, lightness_triggered = self.check_and_perform_lightness_correction(
+                            cropped_face, processed_face_batch, sampler_mask_batch, restore_info
+                        )
+
+                    if enable_final_refinement or lightness_triggered:
+                        refinement_strength = 0.05
+                        refinement_latent = self.run_inpaint_sampling(
+                            processed_face_batch, sampler_mask_batch,
+                            model, vae, current_positive, current_negative,
+                            steps=2, cfg_scale=1.0,
+                            sampler=sampler, scheduler=scheduler,
+                            denoise_strength=refinement_strength, seed=seed + i + 1,
+                            sampling_mask_blur_size=sampling_mask_blur_size,
+                            sampling_mask_blur_strength=sampling_mask_blur_strength
+                        )
+
+                        from .utils import normalize_vae_decode_output
+                        with torch.no_grad():
+                            processed_face_batch = normalize_vae_decode_output(vae.decode(refinement_latent["samples"]))
 
                 manual_rot = restore_info.get('manual_rotation', "None")
                 if manual_rot != "None":
@@ -825,6 +841,11 @@ class ForbiddenVisionFaceProcessorIntegrated:
                     self.face_detector.model_manager.offload_to_cpu()
                 except Exception as e:
                     print(f"ForbiddenVision: Offload failed (non-fatal): {e}")
+                try:
+                    from .face_restore import FaceRestoreManager
+                    FaceRestoreManager.get_instance().offload_to_cpu()
+                except Exception as e:
+                    print(f"ForbiddenVision: Face-restore offload failed (non-fatal): {e}")
     
     def apply_manual_rotation(self, image_np, rotation_option):
         if rotation_option == "None":

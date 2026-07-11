@@ -9,7 +9,7 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 
 
-def _font(size=40):
+def _font(size=56):
     try:
         return ImageFont.truetype("DejaVuSans.ttf", size)
     except OSError:
@@ -33,7 +33,7 @@ def _wrap(draw, text, font, max_width):
     return lines
 
 
-def add_text_overlay(images, text, font_size=40):
+def add_text_overlay(images, text, font_size=56):
     """Burn a translucent black bottom bar with white text into every image."""
     if not str(text or "").strip():
         return images

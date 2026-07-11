@@ -9,6 +9,7 @@ import sys
 import types
 
 import pytest
+import torch
 
 
 MODULE_PATH = Path(__file__).parents[1] / "nodes" / "fixer" / "__init__.py"
@@ -93,6 +94,8 @@ def test_generated_image_matches_direct_source_image_wiring():
         "enable_lightness_rescue": True,
         "enable_final_refinement": True,
         "offload_models_to_cpu": True,
+        "restore_method": "Diffusion (Inpaint)",
+        "codeformer_fidelity": 0.5,
         **settings,
     }
     assert capture.call == expected
@@ -122,6 +125,61 @@ def test_processing_resolution_tracks_input_image():
     adapter.fix(make_pipe(images=Image()), steps=10)
 
     assert capture.call["processing_resolution"] == 1344
+
+
+def test_selected_image_batch_is_processed_one_image_at_a_time():
+    class BatchCaptureFixer:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def process_face_complete(self, **kwargs):
+            image = kwargs["image"]
+            self.batch_sizes.append(image.shape[0])
+            comparison = torch.cat([image, image], dim=2)
+            return image, image, comparison, torch.zeros(image.shape[:3])
+
+    images = torch.rand(2, 32, 48, 3)
+    adapter = FIXER.DirtyBirdsFixer()
+    capture = BatchCaptureFixer()
+    adapter._implementation = capture
+
+    output = adapter.fix(make_pipe(images=images), steps=10)
+
+    assert capture.batch_sizes == [1, 1]
+    assert output[1].shape == images.shape
+    assert torch.equal(output[1], images)
+
+
+@pytest.mark.parametrize("restore_method", ["", None, "Old Saved Value"])
+def test_invalid_restore_method_falls_back_to_diffusion(restore_method):
+    adapter = FIXER.DirtyBirdsFixer()
+    capture = CaptureFixer()
+    adapter._implementation = capture
+
+    adapter.fix(make_pipe(), steps=10, restore_method=restore_method)
+
+    assert capture.call["restore_method"] == "Diffusion (Inpaint)"
+
+
+@pytest.mark.parametrize("codeformer_fidelity", ["", None, "not numeric"])
+def test_invalid_codeformer_fidelity_falls_back_to_default(codeformer_fidelity):
+    adapter = FIXER.DirtyBirdsFixer()
+    capture = CaptureFixer()
+    adapter._implementation = capture
+
+    adapter.fix(make_pipe(), steps=10, codeformer_fidelity=codeformer_fidelity)
+
+    assert capture.call["codeformer_fidelity"] == 0.5
+
+
+def test_codeformer_fidelity_is_forwarded_as_float():
+    adapter = FIXER.DirtyBirdsFixer()
+    capture = CaptureFixer()
+    adapter._implementation = capture
+
+    adapter.fix(make_pipe(), steps=10, codeformer_fidelity="0.75")
+
+    assert capture.call["codeformer_fidelity"] == 0.75
 
 
 @pytest.mark.parametrize("missing", ["model", "vae", "positive", "negative"])

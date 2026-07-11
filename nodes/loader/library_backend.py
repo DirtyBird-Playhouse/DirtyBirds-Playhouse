@@ -106,6 +106,21 @@ def _read_lora_manager_metadata(lora_path):
         return {}
 
 
+# Model file extensions LoRA Manager may (or may not) include on a sent name.
+# We strip ONLY these — never os.path.splitext, which mis-parses a version dot in
+# an extensionless name (e.g. "…pony V1.0-1f66" -> stem "…pony V1", ".0-1f66"),
+# breaking resolution for every LoRA whose name contains a dot.
+_MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".sft", ".gguf")
+
+
+def _strip_model_ext(text):
+    low = text.lower()
+    for ext in _MODEL_EXTS:
+        if low.endswith(ext):
+            return text[: -len(ext)]
+    return text
+
+
 def resolve_lora_filename(name):
     """Map a possibly-bare LoRA name to its canonical filename-list entry.
 
@@ -118,25 +133,43 @@ def resolve_lora_filename(name):
     """
     if not name:
         return name
+    def match(files):
+        if name in files:
+            return name
+        norm = _strip_model_ext(name.replace("\\", "/")).lower()
+        norm_noext = norm
+        base_noext = os.path.basename(norm_noext)
+        # 1) Same relative path, ignoring extension.
+        for filename in files:
+            normalized = filename.replace("\\", "/").lower()
+            if os.path.splitext(normalized)[0] == norm_noext:
+                return filename
+        # 2) Unique basename match (handles the bare-name case from LoRA Manager).
+        matches = [
+            filename for filename in files
+            if os.path.splitext(os.path.basename(filename.replace("\\", "/")))[0].lower() == base_noext
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     try:
         files = folder_paths.get_filename_list("loras")
     except Exception:
         return name
-    if name in files:
-        return name
-    norm = name.replace("\\", "/").lower()
-    norm_noext = os.path.splitext(norm)[0]
-    base_noext = os.path.basename(norm_noext)
-    # 1) Same relative path, ignoring extension.
-    for f in files:
-        fn = f.replace("\\", "/").lower()
-        if os.path.splitext(fn)[0] == norm_noext:
-            return f
-    # 2) Unique basename match (handles the bare-name case from LoRA Manager).
-    matches = [f for f in files
-               if os.path.splitext(os.path.basename(f.replace("\\", "/")))[0].lower() == base_noext]
-    if len(matches) == 1:
-        return matches[0]
+    resolved = match(files)
+    if resolved:
+        return resolved
+
+    # LoRA Manager can notice a newly added/moved model before ComfyUI's cached
+    # filename list does. Force one fresh scan on a miss so its bare display name
+    # can still resolve to e.g. ``Test\\model-name.safetensors`` immediately.
+    try:
+        fresh_result = folder_paths.get_filename_list_("loras")
+        resolved = match(fresh_result[0])
+        if resolved:
+            folder_paths.filename_list_cache["loras"] = fresh_result
+            return resolved
+    except Exception as exc:
+        logger.debug("[DirtyBirds] LoRA refresh scan failed for %s: %s", name, exc)
     return name
 
 

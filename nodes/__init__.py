@@ -1,80 +1,61 @@
 """DirtyBirds Playhouse node aggregator.
 
-Imports and merges NODE_CLASS_MAPPINGS from all node packages.
-Imports side-effect module (folders) for route registration. (The booru tag
-fetcher is a widget of the prompt/Dirty Talk node and registers its route from
-there.)
+Imports and merges NODE_CLASS_MAPPINGS from every node package, then imports the
+side-effect ``folders`` module for route registration. (The booru tag fetcher is
+a widget of the prompt/Dirty Talk node and registers its route from there.)
+
+Each package is imported defensively: if one fails to load — most likely because
+an optional heavy dependency is missing (e.g. the Fixer's OpenCV/ultralytics/timm
+stack) — it is skipped with a warning instead of taking the whole pack down. That
+prevents the "no supported nodes" failure where a single broken import hides all
+eleven nodes.
 """
 
-from .loader import (
-    NODE_CLASS_MAPPINGS as _LOADER_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _LOADER_NAMES,
-)
-from .prompt import (
-    NODE_CLASS_MAPPINGS as _PROMPT_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _PROMPT_NAMES,
-)
-from .image import (
-    NODE_CLASS_MAPPINGS as _IMAGE_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _IMAGE_NAMES,
-)
-from .sampler import (
-    NODE_CLASS_MAPPINGS as _SAMPLER_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _SAMPLER_NAMES,
-)
-from .muse import (
-    NODE_CLASS_MAPPINGS as _MUSE_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _MUSE_NAMES,
-)
-from .pipe import (
-    NODE_CLASS_MAPPINGS as _PIPE_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _PIPE_NAMES,
-)
-from .wardrobe import (
-    NODE_CLASS_MAPPINGS as _WARDROBE_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _WARDROBE_NAMES,
-)
-from .saveprompt import (
-    NODE_CLASS_MAPPINGS as _SAVEPROMPT_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _SAVEPROMPT_NAMES,
-)
-from .fixer import (
-    NODE_CLASS_MAPPINGS as _FIXER_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _FIXER_NAMES,
-)
-from .inpaint import (
-    NODE_CLASS_MAPPINGS as _INPAINT_CLASSES,
-    NODE_DISPLAY_NAME_MAPPINGS as _INPAINT_NAMES,
+import importlib
+import logging
+
+logger = logging.getLogger(__name__)
+
+NODE_CLASS_MAPPINGS = {}
+NODE_DISPLAY_NAME_MAPPINGS = {}
+# V3 (comfy_api.latest) node classes, collected from packages that have migrated.
+# Registered via the package-root ``comfy_entrypoint`` alongside the V1 mappings.
+V3_NODES = []
+
+# Node packages, in menu/registration order. Each exposes NODE_CLASS_MAPPINGS
+# and NODE_DISPLAY_NAME_MAPPINGS.
+_NODE_PACKAGES = (
+    "loader",
+    "prompt",
+    "image",
+    "sampler",
+    "muse",
+    "pipe",
+    "wardrobe",
+    "saveprompt",
+    "fixer",
+    "inpaint",
 )
 
-# Imported for side effects: route registration
-from . import folders  # noqa: F401
+for _name in _NODE_PACKAGES:
+    try:
+        _module = importlib.import_module(f".{_name}", __name__)
+    except Exception as exc:  # noqa: BLE001 - one bad package must not break the rest
+        logger.warning(
+            "[DirtyBirds] node package %r failed to load and was skipped: %s",
+            _name,
+            exc,
+        )
+        continue
+    NODE_CLASS_MAPPINGS.update(getattr(_module, "NODE_CLASS_MAPPINGS", {}))
+    NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
+    V3_NODES.extend(getattr(_module, "V3_NODES", []))
 
-# Merge all node mappings
-NODE_CLASS_MAPPINGS = {
-    **_LOADER_CLASSES,
-    **_PROMPT_CLASSES,
-    **_IMAGE_CLASSES,
-    **_SAMPLER_CLASSES,
-    **_MUSE_CLASSES,
-    **_PIPE_CLASSES,
-    **_WARDROBE_CLASSES,
-    **_SAVEPROMPT_CLASSES,
-    **_FIXER_CLASSES,
-    **_INPAINT_CLASSES,
-}
+# Imported for side effects: HTTP route registration. Guarded so a route-import
+# failure likewise cannot prevent the nodes above from registering.
+try:
+    from . import folders  # noqa: F401
+except Exception as exc:  # noqa: BLE001
+    logger.warning("[DirtyBirds] folders route registration failed: %s", exc)
 
-NODE_DISPLAY_NAME_MAPPINGS = {
-    **_LOADER_NAMES,
-    **_PROMPT_NAMES,
-    **_IMAGE_NAMES,
-    **_SAMPLER_NAMES,
-    **_MUSE_NAMES,
-    **_PIPE_NAMES,
-    **_WARDROBE_NAMES,
-    **_SAVEPROMPT_NAMES,
-    **_FIXER_NAMES,
-    **_INPAINT_NAMES,
-}
-
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "V3_NODES"]

@@ -452,6 +452,13 @@
   color: #5aadff;
   background: #1a2a3a;
 }
+/* Active tool: persistent highlight so an on-state (e.g. Cycler with lines)
+   reads at a glance, using the shared accent. */
+.db-lib-btn.db-active {
+  border-color: #5aadff;
+  color: #5aadff;
+  background: #1a2a3a;
+}
 
 /* ── Shared text input (token palette) ───────────────────── */
 .db-text-input {
@@ -2516,21 +2523,45 @@
 }
 .db-generation-panel * { box-sizing: border-box; }
 .db-generation-section { border-top: 0; margin-top: 4px; }
+/* Set the compact settings block apart from the optional sections with a real
+   divider rule above Embeddings / LoRAs, so the panel reads as grouped blocks
+   rather than one continuous stack of controls. */
+.db-generation-embeddings,
+.db-generation-loras { border-top: 1px solid #2b2f34; margin-top: 9px; padding-top: 3px; }
+/* Reserve electric blue for active / selected states. Section headings and the
+   inline CKPT/RES/VAE tags read in a quiet slate so the selected control (the
+   active workflow toggle, seed mode, picker card) is what draws the eye. */
+.db-generation-panel .db-sep-text {
+  color: #8b97a1; text-shadow: none; letter-spacing: 2px;
+}
+.db-generation-panel .db-sep-line { background: #2b3036; }
+/* The section title is calm slate, but its expand/collapse affordance keeps a
+   blue accent so it still reads as interactive against the quieter heading. */
+.db-generation-panel .db-collapsible-label { cursor: pointer; }
+.db-generation-panel .db-collapsible-caret,
+.db-generation-panel .db-collapsible-helper { color: #5aaee5; }
+.db-generation-panel .db-collapsible-label:hover .db-sep-text { color: #b6c1cb; }
+.db-generation-panel .db-collapsible-label:hover .db-collapsible-caret,
+.db-generation-panel .db-collapsible-label:hover .db-collapsible-helper { color: #8fceff; }
 /* Sections reuse the same centered "═ TITLE ═" heading every DirtyBirds node
    uses (db-section-label / db-collapsible-label from db_shared.js) as a plain
    block child, not its own DOM widget — give it an explicit height here since
    nothing sizes it via a widget box. */
 .db-generation-panel .db-section-label { min-height: 28px; height: auto; padding: 4px 0; }
-/* This node's titles read cleaner as plain centered text, no flanking rule
-   lines — scoped to this panel only so other nodes keep the lined heading. */
-.db-generation-panel .db-section-label .db-sep-line { display: none; }
+/* Flanking rule lines in section titles ("──── TITLE ────"), matching the
+   heading style every other DirtyBirds node uses. */
+.db-generation-panel .db-section-label .db-sep-line { display: block; }
 .db-generation-section-body { display: flex; flex-direction: column; gap: 7px; padding: 5px 0 10px; }
 .db-generation-section-body[hidden] { display: none; }
-.db-generation-segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.db-generation-segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .db-generation-workspace {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
   gap: 10px; align-items: start; width: 100%;
 }
+/* Vertical separator between the two columns (mirrors .db-generation-lora-columns). */
+.db-generation-workspace::before { content: ""; grid-column: 2; grid-row: 1; align-self: stretch; background: #30353a; }
+.db-generation-workspace > .db-generation-column:first-child { grid-column: 1; }
+.db-generation-workspace > .db-generation-column:last-child { grid-column: 3; }
 .db-generation-column { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .db-generation-button,
 .db-generation-select,
@@ -2549,7 +2580,7 @@
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
   gap: 7px; width: 100%; min-width: 0; padding: 4px 8px; text-align: left;
 }
-.db-generation-control-tag { color: #5aaee5; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.db-generation-control-tag { color: #7f8b96; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
 .db-generation-control-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-generation-control-caret { color: #76838b; }
 .db-generation-model-button.is-disabled { opacity: .38; pointer-events: none; }
@@ -2565,7 +2596,11 @@
 }
 .db-generation-value { text-align: right; color: #aeb7bd; font-variant-numeric: tabular-nums; }
 .db-generation-range { width: 100%; accent-color: #51aef0; }
-.db-generation-field.is-disabled { opacity: .38; }
+/* Disabled field (e.g. Denoise outside Image → Image): dim the control clearly
+   but keep the label + value readable so it reads as "inactive", not "broken". */
+.db-generation-field.is-disabled .db-generation-field-label,
+.db-generation-field.is-disabled .db-generation-value { color: #6d767c; }
+.db-generation-field.is-disabled .db-generation-range { opacity: .4; }
 /* One "medium" size for every model preview in the Loader panel — checkpoint,
    embedding, LoRA thumbs, and picker cards all read from this single knob so
    the previews stay visually uniform. Retune here, nowhere else. */
@@ -2583,12 +2618,35 @@
   color: #e0bd62; background: #2b2518;
 }
 .db-generation-warning[hidden] { display: none; }
-.db-generation-seed-row {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; align-items: center;
+/* Seed mode is one segmented control — connected cells, a single obvious
+   selected cell — rather than three separate buttons. Full panel width, with
+   the "Seed" label stacked above so the three cells have room. */
+.db-generation-seed-row { display: flex; flex-direction: column; gap: 5px; }
+.db-generation-segment {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid #383b40; border-radius: 7px; overflow: hidden; background: #202125;
 }
-.db-generation-seed-row > .db-generation-field-label { grid-column: 1 / -1; }
-.db-generation-seed-row .db-generation-button { min-width: 0; padding-inline: 4px; }
-.db-generation-two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.db-generation-segment .db-generation-segment-btn {
+  min-height: 26px; min-width: 0; padding: 4px;
+  border: 0; border-radius: 0; background: transparent;
+  color: #97a1a8; font-weight: 600; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.12s, color 0.12s;
+}
+.db-generation-segment .db-generation-segment-btn + .db-generation-segment-btn {
+  border-left: 1px solid #383b40;
+}
+.db-generation-segment .db-generation-segment-btn:hover:not(:disabled) {
+  color: #d4dade; background: #262a2f;
+}
+.db-generation-segment .db-generation-segment-btn.is-active {
+  color: #fff; background: #223546; box-shadow: inset 0 0 0 1px #3a9de0;
+}
+.db-generation-segment .db-generation-segment-btn:disabled { opacity: 0.4; cursor: default; }
+.db-generation-two-column { display: grid; grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr); gap: 9px; }
+.db-generation-two-column::before { content: ""; grid-column: 2; grid-row: 1; align-self: stretch; background: #30353a; }
+.db-generation-two-column > *:first-child { grid-column: 1; }
+.db-generation-two-column > *:last-child { grid-column: 3; }
 .db-generation-card { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .db-generation-card.is-disabled { opacity: .5; }
 .db-generation-embedding-controls { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 5px; align-items: center; }

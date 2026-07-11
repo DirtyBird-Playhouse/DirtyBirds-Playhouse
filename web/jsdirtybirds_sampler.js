@@ -41,11 +41,14 @@ function _viewURL(img) {
 }
 
 async function postPick(token, selection) {
-  await api.fetchApi(PICK_ROUTE, {
+  const response = await api.fetchApi(PICK_ROUTE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, selection }),
   });
+  if (!response?.ok) throw new Error(`Picker reply failed (${response?.status ?? "no response"})`);
+  const result = await response.json();
+  if (!result?.ok) throw new Error("Picker reply was not accepted by the active sampler");
 }
 
 async function finishPick(selection) {

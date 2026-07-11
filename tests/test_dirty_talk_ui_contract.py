@@ -136,7 +136,7 @@ def test_generation_setup_has_truthful_grouping_and_stable_resizing():
     # Section height is a formula over known state (item counts, whether a
     # preview is reserved), not a flat per-section constant, so short sections
     # don't reserve dead space and long lists don't clip — they scroll instead.
-    assert 'const PANEL_BASE_HEIGHT = 320' in loader
+    assert 'const PANEL_BASE_HEIGHT = 340' in loader
     assert "const SECTION_HEIGHTS = { embeddings: 142, loras: 290, advanced: 86 }" not in loader
     assert "function embeddingsHeight()" in loader
     assert "function lorasHeight()" in loader
@@ -246,9 +246,13 @@ def test_generation_setup_disabled_controls_explain_themselves():
 def test_generation_setup_seed_buttons_use_truthful_modes():
     loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
 
-    assert 'button("Fixed", () => setSeedMode("fixed"))' in loader
-    assert 'button("Random", () => setSeedMode("random"))' in loader
+    # Fixed / Random / Last render as one segmented control (each cell carries
+    # the shared "db-generation-segment-btn" class), still driving the truthful
+    # fixed/random seed modes rather than fake "⚄ Each/New" labels.
+    assert 'button("Fixed", () => setSeedMode("fixed"), "db-generation-segment-btn")' in loader
+    assert 'button("Random", () => setSeedMode("random"), "db-generation-segment-btn")' in loader
     assert 'button("Last", () =>' in loader
+    assert 'db-generation-segment' in loader
     assert 'fixedSeed.classList.toggle("is-active", value !== "random")' in loader
     assert 'randomSeed.classList.toggle("is-active", value === "random")' in loader
     assert 'button("⚄ Each"' not in loader
@@ -276,10 +280,20 @@ def test_sampler_output_controls_are_grouped_at_the_bottom():
     assert "w.computeSize    = () => [0, 0]" not in sampler
 
 
+def test_sampler_picker_only_closes_after_multi_selection_is_accepted():
+    sampler = (ROOT / "web" / "jsdirtybirds_sampler.js").read_text(encoding="utf-8")
+
+    assert "body: JSON.stringify({ token, selection })" in sampler
+    assert "const result = await response.json()" in sampler
+    assert "if (!result?.ok) throw new Error" in sampler
+
+
 def test_generation_setup_has_no_external_custom_node_dependency():
     loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
     backend = (ROOT / "nodes" / "loader" / "__init__.py").read_text(encoding="utf-8")
     library_backend = (ROOT / "nodes" / "loader" / "library_backend.py").read_text(encoding="utf-8")
+    assert 'folder_paths.get_filename_list_("loras")' in library_backend
+    assert 'folder_paths.filename_list_cache["loras"]' in library_backend
     # LoRA Manager integration is intentional and OPTIONAL: the loader monkey-
     # patches LoRA Manager's registry only if it is installed and listens for its
     # "lora_code_update" event, degrading silently when it is absent. So a
