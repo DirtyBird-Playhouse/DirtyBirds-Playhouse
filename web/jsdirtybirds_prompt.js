@@ -291,6 +291,9 @@ app.registerExtension({
         const line = item?.line ?? "?";
         loadBtn.innerHTML = `<span>📥</span><span class="db-load-prompt-source">${escapeHTML(file)}#${line}</span>`;
         loadBtn.title = `${item?.file || "prompt file"}:${line}`;
+        // Highlight while a prompt source is loaded so its on-state reads at a
+        // glance, matching the Cycler button's active treatment.
+        loadBtn.classList.add("db-active");
       }
 
       function closePromptFlyout() {
@@ -693,6 +696,9 @@ app.registerExtension({
         const count = cyclerLines(cyclerTextWidget?.value || "").filter((line) => line.trim()).length;
         cyclerBtn.textContent = count ? `Cycler · ${count}` : "Cycler";
         cyclerBtn.title = count ? `${count} active cycler line${count === 1 ? "" : "s"}` : "Add prompt lines to cycle";
+        // Highlight the button while the tool is active (has cycler lines) so
+        // its on-state is visible even before opening the flyout.
+        cyclerBtn.classList.toggle("db-active", count > 0);
         toyboxSection.setTitle(count ? `Prompt Tools · Cycler: ${count}` : "Prompt Tools");
       }
       function openCyclerFlyout() {

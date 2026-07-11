@@ -196,7 +196,7 @@ const NODE_WIDTH = 500;
 // feed its own height back into ComfyUI and grow on every draw. Lists beyond
 // their row cap scroll internally (.db-generation-lora-list /
 // .db-generation-trigger-list) instead of growing the section unbounded.
-const PANEL_BASE_HEIGHT = 320; // Generation block + Embeddings/LoRAs collapsed headers
+const PANEL_BASE_HEIGHT = 340; // Generation block (checkpoint + settings + full-width seed) + collapsed headers
 const EMBED_CARD_BASE_H = 86;   // enable + picker + weight box, no preview (incl. top accent)
 const EMBED_PREVIEW_H = 74;     // added once if either slot reserves a 64px preview
 const LORA_SECTION_BASE_H = 75; // "Selected"/"Trigger Words" labels + add-row chrome
@@ -204,7 +204,7 @@ const LORA_ROW_H = 110;         // thumb(64) + weights row + padding/gap, measur
 const LORA_ROW_CAP = 4;         // beyond this the list scrolls instead of growing (4 * 110 = 440px, matches CSS max-height)
 const TRIGGER_ROW_H = 26;
 const TRIGGER_ROW_CAP = 6;      // 6 * 26 = 156px, matches CSS max-height
-const UI_VERSION = 8;
+const UI_VERSION = 9;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 const findWidget = (node, name) => node.widgets?.find((widget) => widget.name === name);
@@ -310,7 +310,7 @@ function setupGenerationNode(node) {
     // positive/negative become forceInput sockets, but ComfyUI retains their
     // backing widgets. They must cancel their widget-row spacing too.
     "positive", "negative", "workflow", "ckpt_name", "dimension", "loras_data", "trigger_words_data",
-    "batch_size", "seed", "denoise", "seed_mode", "pos_embedding", "neg_embedding",
+    "batch_size", "seed", "denoise", "seed_mode", "clip_skip", "vae_name", "pos_embedding", "neg_embedding",
   ];
   for (const name of backingNames) {
     if (widgets[name]) hideWidgetShared(node, name);
@@ -431,6 +431,10 @@ function setupGenerationNode(node) {
   const previewEmpty = el("span", "db-generation-preview-empty", "No checkpoint preview");
   preview.append(previewEmpty);
 
+  // CLIP skip and VAE override are intentionally not surfaced in the UI — the
+  // backing widgets stay hidden at their defaults (clip_skip=1, Baked VAE), so
+  // the model column is just the checkpoint selector + its preview.
+
   const resolution = button("", () => {
     const current = widgets.dimension?.value || "__random__";
     showResolutionPicker(dimensions, current, (value) => {
@@ -472,15 +476,20 @@ function setupGenerationNode(node) {
   });
   const i2iWarning = el("div", "db-generation-warning", "Connect an image to use Image → Image.");
 
+  // Seed mode reads as one segmented control (Fixed / Random / Last). It spans
+  // the full panel width below both columns so the three labels have room to
+  // breathe instead of being crushed into the narrow settings column.
   const seedRow = el("div", "db-generation-seed-row");
   seedRow.append(el("span", "db-generation-field-label", "Seed"));
-  const fixedSeed = button("Fixed", () => setSeedMode("fixed"));
-  const randomSeed = button("Random", () => setSeedMode("random"));
+  const seedSegment = el("div", "db-generation-segment");
+  const fixedSeed = button("Fixed", () => setSeedMode("fixed"), "db-generation-segment-btn");
+  const randomSeed = button("Random", () => setSeedMode("random"), "db-generation-segment-btn");
   const lastSeed = button("Last", () => {
     if (node._dbLastSeed != null) setWidget(widgets.seed, node._dbLastSeed, node);
     setSeedMode("fixed");
-  });
-  seedRow.append(fixedSeed, randomSeed, lastSeed);
+  }, "db-generation-segment-btn");
+  seedSegment.append(fixedSeed, randomSeed, lastSeed);
+  seedRow.append(seedSegment);
 
   const generationColumns = el("div", "db-generation-workspace");
   const modelColumn = el("div", "db-generation-column db-generation-model-column");
@@ -490,10 +499,9 @@ function setupGenerationNode(node) {
     resolution,
     field("Batch", batch, batchValue),
     field("Denoise", denoise, denoiseValue),
-    seedRow,
   );
   generationColumns.append(modelColumn, settingsColumn);
-  generationBody.append(workflow, generationColumns, i2iWarning);
+  generationBody.append(workflow, generationColumns, seedRow, i2iWarning);
 
   function refreshWorkflowState() {
     const value = widgets.workflow?.value || "Text2Image";
@@ -714,17 +722,22 @@ function setupGenerationNode(node) {
       const top = el("div", "db-generation-lora-row-top");
       const weights = el("div", "db-generation-lora-weights");
       const thumb = el("div", "db-generation-lora-thumb");
-      thumb.hidden = true;
+      // Keep the thumb box present (not hidden). A display:none element has no
+      // layout box, so an IntersectionObserver never reports it as intersecting —
+      // which would leave the preview gated on a callback that can never fire.
       thumb._dbLoadPreview = () => {
         if (thumb.dataset.loaded) return;
         thumb.dataset.loaded = "true";
         loadMedia(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`,
           // No local preview for this LoRA — show a placeholder instead of an
-          // empty 64px gap in the reserved thumb column.
-          () => { thumb.hidden = false; thumb.classList.add("db-generation-lora-thumb-empty"); },
-          () => { thumb.hidden = false; });
+          // empty gap in the reserved thumb column.
+          () => { thumb.classList.add("db-generation-lora-thumb-empty"); });
       };
-      if (loraThumbObserver) loraThumbObserver.observe(thumb); else thumb._dbLoadPreview();
+      // Observe for video play/pause of off-screen previews, but load eagerly:
+      // canvas-transformed DOM widgets don't yield reliable intersection
+      // callbacks, and the visible list is capped at a few rows.
+      if (loraThumbObserver) loraThumbObserver.observe(thumb);
+      thumb._dbLoadPreview();
       const active = el("input");
       active.type = "checkbox";
       active.checked = item.active !== false;
