@@ -1,0 +1,31 @@
+# DirtyBirds-Playhouse — Python dependencies
+#
+# A stock ComfyUI install already provides: torch, torchvision, numpy, Pillow,
+# aiohttp, safetensors, tqdm, kornia, and pyyaml — those are intentionally NOT
+# repeated here. Only packages missing from a base ComfyUI are pinned below.
+#
+# Everything here is used by "The Fixer" face-restore node (Forbidden Vision,
+# vendored under nodes/fixer/vendor). If you never place that node, these are
+# optional: the pack now degrades gracefully and simply skips the Fixer when
+# its dependencies are absent, so the other nodes still load.
+
+# --- The Fixer: computer-vision stack ---
+segmentation-models-pytorch
+ultralytics>=8.3.162
+opencv-python-headless
+scikit-image
+timm
+onnxruntime
+
+# --- The Fixer: GAN face restore (GFPGAN / CodeFormer) via spandrel ---
+# spandrel itself ships with ComfyUI. GFPGAN loads from its main registry;
+# CodeFormer needs this extra-arch package (pure spandrel arch, no basicsr).
+spandrel_extra_arches
+
+# facexlib provides FaceRestoreHelper: 5-point landmark detection + alignment
+# to the canonical 512 template and inverse-warp paste-back, so GFPGAN /
+# CodeFormer restore angled faces without distorting eyes/mouth.
+facexlib
+
+# --- The Fixer / Library: model downloads from the Hugging Face Hub ---
+huggingface_hub

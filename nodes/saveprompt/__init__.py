@@ -263,4 +263,4 @@ class DirtyBirdsSavePrompt:
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsSavePrompt": DirtyBirdsSavePrompt}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "💾 The Archive · Save Image & Prompt"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsSavePrompt": "💾 Save Image & Prompt"}

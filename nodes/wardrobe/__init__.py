@@ -66,4 +66,4 @@ class DirtyBirdsWardrobe:
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsWardrobe": DirtyBirdsWardrobe}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "👗 The Wardrobe · Trigger Words"}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "👗 Trigger Words"}

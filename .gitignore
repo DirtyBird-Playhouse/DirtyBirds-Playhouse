@@ -36,3 +36,9 @@ master.yaml
 
 # Loader settings — can hold a Civitai API token, never commit
 dirtybirds_settings.json
+
+# ComfyUI generated outputs — local only
+C:/Users/mpick/My_AI_Tools/Comfyui/ComfyUI/output/
+
+# pytest local temp (see pytest.ini)
+.pytest_tmp/

@@ -11,12 +11,33 @@ import comfy.utils
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
 from .library_backend import get_lora_meta, resolve_lora_filename  # noqa: F401
 from .dimension_store import load_dimensions, normalize_runtime_dimensions, save_dimensions as persist_dimensions
+from .seed_util import resolve_seed
 
 logger = logging.getLogger(__name__)
 
 _CHECKPOINT_CACHE = {}
+_VAE_CACHE = {}
 
 BAKED_VAE = "Baked VAE"
+
+
+def _load_vae(vae_name):
+    """Load a standalone VAE by filename (cached). Returns None on failure so the
+    caller can fall back to the checkpoint's baked VAE."""
+    try:
+        vae_path = folder_paths.get_full_path("vae", vae_name)
+        if not vae_path or not os.path.exists(vae_path):
+            logger.warning("[DirtyBirds] VAE not found, using baked: %s", vae_name)
+            return None
+        if vae_path in _VAE_CACHE:
+            return _VAE_CACHE[vae_path]
+        import comfy.sd
+        vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
+        _VAE_CACHE[vae_path] = vae
+        return vae
+    except Exception as e:
+        logger.warning("[DirtyBirds] Failed to load VAE %s, using baked: %s", vae_name, e)
+        return None
 _DEFAULT_DIMENSIONS_PATH = os.path.join(os.path.dirname(__file__), "dimensions.json")
 
 
@@ -135,6 +156,11 @@ class DirtyBirdsLoader:
                 "denoise":     ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 # Seed mode — JS flyout toggles fixed vs. re-roll-every-run.
                 "seed_mode":   (["fixed", "random"], {"default": "fixed"}),
+                # CLIP skip — stop N layers early (2 is typical for Pony/Illustrious).
+                # Appended last so existing saved workflows keep their widget order.
+                "clip_skip":   ("INT", {"default": 1, "min": 1, "max": 12, "step": 1}),
+                # VAE override — BAKED_VAE keeps the checkpoint's own VAE.
+                "vae_name": ([BAKED_VAE, ""], {"default": BAKED_VAE}),
             },
             "optional": {
                 "image":        ("IMAGE",),
@@ -161,12 +187,22 @@ class DirtyBirdsLoader:
 
     def process(self, workflow, ckpt_name, positive="", negative="",
                 dimension="__random__", loras_data="[]", trigger_words_data="[]", batch_size=1,
-                seed=0, denoise=1.0, seed_mode="fixed",
+                seed=0, denoise=1.0, seed_mode="fixed", clip_skip=1, vae_name=BAKED_VAE,
                 image=None, lora_stack=None, pos_embedding="", neg_embedding=""):
         # Prompt Builder's public output stays a normal STRING. The current
         # cycler line rides on its in-process string subclass, so the loader
         # needs no separate cycler socket.
         cycler_text = getattr(positive, "db_cycler_text", "")
+
+        # Seed mode. In "random" the sampling seed is re-rolled every run so each
+        # generation differs (IS_CHANGED already forces re-execution); in "fixed"
+        # the widget value is used verbatim for reproducibility. The chosen seed
+        # rides the pipe to the sampler and is echoed back as db_seed_used so the
+        # UI's "Last seed" recall shows the value that was actually used.
+        resolved_seed = resolve_seed(seed, seed_mode)
+        if resolved_seed != seed:
+            logger.info("[DirtyBirds] Random seed selected: %s", resolved_seed)
+        seed = resolved_seed
 
         # ── Checkpoint ──────────────────────────────────────────────────────
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
@@ -176,7 +212,12 @@ class DirtyBirdsLoader:
             model, clip, vae = load_checkpoint_guess_config(ckpt_path)[:3]
             _CHECKPOINT_CACHE[ckpt_path] = (model, clip, vae)
 
-        # VAE always comes from the checkpoint (baked); there is no VAE input.
+        # ── VAE override ────────────────────────────────────────────────────
+        # Default keeps the checkpoint's baked VAE; otherwise load the chosen one.
+        if vae_name and vae_name != BAKED_VAE:
+            override_vae = _load_vae(vae_name)
+            if override_vae is not None:
+                vae = override_vae
 
         # Re-roll the seed every run when seed_mode is "random".
         if seed_mode == "random":
@@ -237,6 +278,13 @@ class DirtyBirdsLoader:
             logger.info("[DirtyBirds] Applying %d LoRA(s): %d inline + %d via lora_stack",
                         len(combined_stack), inline_count, len(combined_stack) - inline_count)
             model, clip = _apply_lora_stack(model, clip, combined_stack)
+
+        # ── CLIP skip ────────────────────────────────────────────────────────
+        # Stop N layers early (clip_skip=2 → last layer -2). Clone first so the
+        # cached checkpoint CLIP is never mutated. clip_skip=1 is a no-op.
+        if clip_skip and int(clip_skip) > 1:
+            clip = clip.clone()
+            clip.clip_layer(-int(clip_skip))
 
         # ── Trigger words (appended to positive before encoding) ─────────────
         try:
@@ -354,6 +402,8 @@ class DirtyBirdsLoader:
             # Loader settings – read by pre-sampling / sampler nodes
             "loader_settings": {
                 "ckpt_name":          ckpt_name,
+                "clip_skip":          int(clip_skip),
+                "vae_name":           vae_name,
                 "lora_name":          None,
                 "lora_stack":         combined_stack,
                 "positive":           positive,

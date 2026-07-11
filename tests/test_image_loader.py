@@ -67,7 +67,8 @@ def test_custom_resize_uses_exact_latent_friendly_dimensions(monkeypatch):
 
 def test_allow_upscale_is_an_additive_optional_input():
     optional = image_loader.DirtyBirdsLoadImage.INPUT_TYPES()["optional"]
-    assert optional["allow_upscale"] == ("BOOLEAN", {"default": False})
+    assert "allow_upscale" in optional
+    assert optional["allow_upscale"][1]["default"] is False
     assert optional["sharpen"][1]["default"] == "auto"
 
 

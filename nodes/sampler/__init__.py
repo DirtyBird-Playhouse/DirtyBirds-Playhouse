@@ -9,6 +9,7 @@ Outputs latent + decoded image with live preview in the node.
 import time
 import uuid
 import logging
+import threading
 
 import numpy as np
 import torch
@@ -39,43 +40,46 @@ ROUTE = "/dirtybirds/sampler-pick"
 
 # On timeout we keep ALL images rather than dropping the generation (no timeout
 # UI is exposed; this is a safety net only).
-PICK_TIMEOUT = 600
+PICK_TIMEOUT = 30
 
 
 class _PickState:
-    """Single in-flight pick request, matched by a per-run token."""
+    """Token-keyed pick requests, safe when more than one prompt is active."""
 
-    _token = None
-    _selection = None
+    _PENDING = object()
+    _requests = {}
+    _lock = threading.Lock()
 
     @classmethod
     def start(cls, token):
-        cls._token = token
-        cls._selection = None
+        with cls._lock:
+            cls._requests[str(token)] = cls._PENDING
 
     @classmethod
-    def waiting(cls):
-        return cls._token is not None and cls._selection is None
+    def waiting(cls, token):
+        with cls._lock:
+            return cls._requests.get(str(token)) is cls._PENDING
 
     @classmethod
     def deliver(cls, token, selection):
-        if cls._token is not None and str(token) == str(cls._token):
+        key = str(token)
+        with cls._lock:
+            if cls._requests.get(key) is not cls._PENDING:
+                return False
             clean = []
             for item in selection or []:
                 try:
                     clean.append(int(item))
                 except (TypeError, ValueError):
                     continue
-            cls._selection = clean
+            cls._requests[key] = clean
             return True
-        return False
 
     @classmethod
-    def take(cls):
-        sel = cls._selection
-        cls._token = None
-        cls._selection = None
-        return sel
+    def take(cls, token):
+        with cls._lock:
+            sel = cls._requests.pop(str(token), cls._PENDING)
+        return None if sel is cls._PENDING else sel
 
 
 @PromptServer.instance.routes.post(ROUTE)
@@ -100,7 +104,7 @@ def _wait_for_pick(token, payload, timeout):
     PromptServer.instance.send_sync(EVENT, payload)
 
     end = time.monotonic() + max(1, int(timeout))
-    while time.monotonic() < end and _PickState.waiting():
+    while time.monotonic() < end and _PickState.waiting(token):
         # Honour the Cancel/Interrupt button so a blocked graph can be stopped.
         throw_exception_if_processing_interrupted()
         PromptServer.instance.send_sync(
@@ -108,7 +112,7 @@ def _wait_for_pick(token, payload, timeout):
         )
         time.sleep(0.5)
 
-    sel = _PickState.take()
+    sel = _PickState.take(token)
     if sel is None:
         PromptServer.instance.send_sync(EVENT, {"token": token, "timeout": True})
     return sel
@@ -288,5 +292,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DirtyBirdsSampler": "🎬 The Audition · Sampler & Picker",
+    "DirtyBirdsSampler": "🎬 Sampler & Picker",
 }
