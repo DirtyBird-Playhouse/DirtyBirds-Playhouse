@@ -18,7 +18,6 @@ app.registerExtension({
       onNodeCreated?.apply(this, arguments);
       this.color = DB_COLOR;
       this.bgcolor = DB_BGCOLOR;
-      this.size[0] = Math.max(this.size[0] || 0, 320);
     };
   },
 });

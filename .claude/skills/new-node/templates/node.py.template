@@ -1,0 +1,49 @@
+"""
+DirtyBirds Playhouse — {{TITLE}}.
+
+{{WHY_THIS_NODE_EXISTS}}
+
+Replace this docstring with the *reason* the node exists and any behaviour a
+reader would otherwise get wrong — not a description of the code below.
+"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class {{CLASS_NAME}}:
+    """{{ONE_LINE_SUMMARY}}"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                # "db_pipe": ("DIRTYBIRDS_PIPE",),
+                # "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0,
+                #                        "step": 0.05}),
+            },
+            "optional": {},
+        }
+
+    RETURN_TYPES = ("DIRTYBIRDS_PIPE",)
+    RETURN_NAMES = ("db_pipe",)
+    FUNCTION = "{{FUNCTION_NAME}}"
+    CATEGORY = "DirtyBirds"
+
+    def {{FUNCTION_NAME}}(self):
+        # Import anything heavy or optional (cv2, ultralytics, timm, torch-adjacent
+        # extras) HERE, not at module top level: a top-level ImportError makes the
+        # aggregator skip this whole package and the node disappears from the menu.
+        raise NotImplementedError
+
+        # Must return a tuple, matching RETURN_TYPES in order and length.
+        # return (result,)
+
+
+NODE_CLASS_MAPPINGS = {
+    "{{CLASS_NAME}}": {{CLASS_NAME}},
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "{{CLASS_NAME}}": "{{MENU_LABEL}}",
+}

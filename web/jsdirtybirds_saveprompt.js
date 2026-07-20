@@ -7,7 +7,7 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget, makeCollapsibleSectionLabel } from "./db_shared.js";
+import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget, makeCollapsibleSectionLabel, makeButton, makeTextarea, makeInput } from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -55,7 +55,7 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
   const title = document.createElement("span");
   title.className = "db-flyout-title";
   title.textContent = "Prompt Folder";
-  const closeBtn = document.createElement("button");
+  const closeBtn = makeButton();
   closeBtn.className = "db-flyout-close";
   closeBtn.textContent = "x";
   header.append(title, closeBtn);
@@ -67,7 +67,7 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
   const actions = document.createElement("div");
   actions.className = "db-url-tools-row";
   actions.style.cssText = "padding:0 10px 8px;";
-  const useFolderBtn = document.createElement("button");
+  const useFolderBtn = makeButton();
   useFolderBtn.className = "db-lib-btn db-lora-add-open-btn";
   useFolderBtn.textContent = "Use Folder";
   actions.append(useFolderBtn);
@@ -152,6 +152,9 @@ app.registerExtension({
       }
       const imgs = message?.images;
       if (Array.isArray(imgs)) this._dbArchivePaintImages?.(imgs);
+      // A run just delivered a result -> reveal it (the panel is collapsed by
+      // default, which otherwise makes a successful save look like it did nothing).
+      if (Array.isArray(prompts) || Array.isArray(imgs)) this._dbArchiveReveal?.();
     };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -160,7 +163,6 @@ app.registerExtension({
       const node = this;
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 420);
 
       const staleWidgets = new Set(["db_script_panel", "db_save_title", "db_save_prefix", "db_save_file"]);
       if (Array.isArray(node.widgets)) {
@@ -180,7 +182,7 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-archive-panel";
 
-      const promptBox = document.createElement("textarea");
+      const promptBox = makeTextarea();
       promptBox.className = "db-script-textarea db-archive-markdown";
       promptBox.readOnly = true;
       promptBox.spellcheck = false;
@@ -216,7 +218,7 @@ app.registerExtension({
         const lbl = document.createElement("span");
         lbl.className = "db-slider-label";
         lbl.textContent = labelText;
-        const input = document.createElement("input");
+        const input = makeInput();
         input.type = "text";
         input.className = "db-text-input";
         input.placeholder = placeholder || "";
@@ -239,11 +241,11 @@ app.registerExtension({
       const folderLabel = document.createElement("span");
       folderLabel.className = "db-slider-label";
       folderLabel.textContent = "Folder";
-      const folderInput = document.createElement("input");
+      const folderInput = makeInput();
       folderInput.type = "text";
       folderInput.className = "db-text-input";
       folderInput.value = initialPromptPath.folder;
-      const browseBtn = document.createElement("button");
+      const browseBtn = makeButton();
       browseBtn.className = "db-lib-btn db-lora-add-open-btn";
       browseBtn.textContent = "Browse";
       browseBtn.style.flex = "0 0 72px";
@@ -256,14 +258,14 @@ app.registerExtension({
       const fileLabel = document.createElement("span");
       fileLabel.className = "db-slider-label";
       fileLabel.textContent = "Prompt file";
-      const fileInput = document.createElement("input");
+      const fileInput = makeInput();
       fileInput.type = "text";
       fileInput.className = "db-text-input";
       fileInput.placeholder = "my_prompts.txt";
       fileInput.value = initialPromptPath.filename;
       fileRow.append(fileLabel, fileInput);
 
-      const savePromptBtn = document.createElement("button");
+      const savePromptBtn = makeButton();
       savePromptBtn.className = "db-lib-btn db-lora-add-open-btn db-archive-save-btn";
       savePromptBtn.textContent = "Save Prompt";
       const status = document.createElement("div");
@@ -352,6 +354,10 @@ app.registerExtension({
         syncPanelH();
       };
 
+      node._dbArchiveReveal = () => {
+        if (!previewSection.isExpanded()) previewSection.setExpanded(true);
+      };
+
       node._dbArchivePaintImages = (imgs) => {
         imagePanel.innerHTML = "";
         if (!imgs || !imgs.length) {
@@ -392,7 +398,6 @@ app.registerExtension({
 
       const origResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < 420) size[0] = 420;
         origResize?.call(this, size);
         syncPanelH();
       };

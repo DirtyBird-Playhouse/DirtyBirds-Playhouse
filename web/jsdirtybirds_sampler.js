@@ -13,6 +13,8 @@ import { api } from "../../../scripts/api.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, hideWidget as hideWidgetShared,
   makeSectionLabel, nodeInnerW,
+  makeButton, makeSegment, makeTwoColumn,
+  makeInput, openPickerModal,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -77,154 +79,28 @@ function sendPick() {
 function cancelPick() { if (_pick) finishPick([]); }
 
 // ── Image picker popup ──────────────────────────────────────────────────────
+// Built on the shared modal (openPickerModal). The Sampler owns the selection
+// Set (node._dbSel) so its inline pick-row and the modal stay in sync via the
+// onToggle -> _dbRepaintInline callback.
 function closeFullScreen() {
-  if (_fs?.overlay && document.fullscreenElement === _fs.overlay) {
-    document.exitFullscreen?.().catch?.(() => {});
-  }
-  _fs?.overlay?.remove();
-  if (_fs?.relayout) window.removeEventListener("resize", _fs.relayout);
-  document.removeEventListener("keydown", _fsKeydown);
+  _fs?.close();
   _fs = null;
-}
-function _fsKeydown(e) {
-  if (!_fs || !_pick) return;
-  const sel = _pick.node._dbSel;
-  if (e.key === "Escape") { e.preventDefault(); cancelPick(); }
-  else if (e.key === "Enter") { e.preventDefault(); sendPick(); }
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
-    e.preventDefault();
-    const all = sel.size < _fs.cards.length;
-    _fs.cards.forEach((c, i) => {
-      if (all) sel.add(i); else sel.delete(i);
-      c.classList.toggle("db-lp-selected", sel.has(i));
-    });
-    _pick.node._dbRepaintInline?.();
-    _fs.updateStatus();
-  }
 }
 function openPickerPopup() {
   if (!_pick?.node) return;
   closeFullScreen();
   const node = _pick.node;
-  const images = node._dbImages || [];
-  const sel = node._dbSel;
-  let relayout = () => {};
-
-  const overlay = document.createElement("div");
-  overlay.className = "db-flyout-overlay db-sampler-picker-overlay";
-  const panel = document.createElement("div");
-  panel.className = "db-lora-flyout db-sampler-picker-panel";
-
-  const header = document.createElement("div");
-  header.className = "db-flyout-header";
-  const title = document.createElement("span");
-  title.className = "db-flyout-title";
-  title.textContent = "🎯 Pick images";
-  const countdown = document.createElement("span");
-  countdown.className = "db-flyout-title";
-  countdown.style.opacity = "0.6";
-  header.append(title, countdown);
-  panel.appendChild(header);
-
-  const grid = document.createElement("div");
-  grid.className = "db-lp-grid";
-  const cards = [];
-  const imageEls = [];
-  images.forEach((img, i) => {
-    const card = document.createElement("div");
-    card.className = "db-lp-card";
-    card.style.cursor = "pointer";
-    if (sel.has(i)) card.classList.add("db-lp-selected");
-    const wrap = document.createElement("div");
-    wrap.className = "db-lp-img-wrap";
-    const thumb = document.createElement("img");
-    thumb.className = "db-lp-thumb";
-    const reveal = () => {
-      thumb.classList.add("db-lp-thumb-loaded");
-      relayout();
-    };
-    thumb.addEventListener("load", reveal);
-    thumb.addEventListener("error", () => { reveal(); thumb.style.opacity = "1"; });
-    thumb.src = _viewURL(img);
-    if (thumb.complete && thumb.naturalWidth > 0) reveal();
-    const badge = document.createElement("div");
-    badge.className = "db-lp-cat-badge";
-    badge.textContent = "#" + i;
-    wrap.append(thumb, badge);
-    card.appendChild(wrap);
-    card.addEventListener("click", () => {
-      if (sel.has(i)) { sel.delete(i); card.classList.remove("db-lp-selected"); }
-      else { sel.add(i); card.classList.add("db-lp-selected"); }
-      node._dbRepaintInline?.();
-      updateStatus();
-    });
-    grid.appendChild(card);
-    cards.push(card);
-    imageEls.push(thumb);
+  _fs = openPickerModal({
+    images: node._dbImages || [],
+    selection: node._dbSel,
+    title: "🎯 Pick images",
+    viewURL: _viewURL,
+    sendLabel: "Send selection",
+    cancelLabel: "Cancel run",
+    onToggle: () => node._dbRepaintInline?.(),
+    onSend: sendPick,
+    onCancel: cancelPick,
   });
-  panel.appendChild(grid);
-
-  const footer = document.createElement("div");
-  footer.className = "db-lp-pills";
-  footer.style.cssText += "justify-content:space-between;align-items:center;";
-  const statusEl = document.createElement("span");
-  statusEl.style.cssText = "font-size:11px;color:#888;";
-  const btns = document.createElement("div");
-  btns.style.cssText = "display:flex;gap:8px;";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "db-lora-add-open-btn";
-  cancelBtn.style.cssText = "width:auto;padding:6px 14px;";
-  cancelBtn.textContent = "Cancel run";
-  cancelBtn.addEventListener("click", cancelPick);
-  const sendBtn = document.createElement("button");
-  sendBtn.className = "db-lora-add-open-btn";
-  sendBtn.style.cssText = "width:auto;padding:6px 16px;";
-  sendBtn.textContent = "Send selection";
-  sendBtn.addEventListener("click", sendPick);
-  btns.append(cancelBtn, sendBtn);
-  footer.append(statusEl, btns);
-  panel.appendChild(footer);
-
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
-
-  function imageSize() {
-    const first = images[0] || {};
-    const natural = imageEls.find((img) => img.naturalWidth > 0);
-    return {
-      width: Number(first.width || natural?.naturalWidth || 1),
-      height: Number(first.height || natural?.naturalHeight || 1),
-    };
-  }
-  relayout = () => {
-    const box = grid.getBoundingClientRect();
-    if (!box.width || !box.height || !images.length) return;
-    const { width: imgW, height: imgH } = imageSize();
-    let bestPerRow = 1;
-    let bestScale = 0;
-    for (let perRow = 1; perRow <= images.length; perRow++) {
-      const rows = Math.ceil(images.length / perRow);
-      const scale = Math.min(box.width / (imgW * perRow), box.height / (imgH * rows));
-      if (scale > bestScale) {
-        bestScale = scale;
-        bestPerRow = perRow;
-      }
-    }
-    const rows = Math.ceil(images.length / bestPerRow);
-    grid.style.gridTemplateColumns = `repeat(${bestPerRow}, minmax(0, 1fr))`;
-    grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
-  };
-
-  function updateStatus() {
-    statusEl.textContent = sel.size
-      ? `${sel.size} selected · Enter to send`
-      : "Click images to keep · Esc cancels · Ctrl+A all";
-  }
-  updateStatus();
-  requestAnimationFrame(relayout);
-  window.addEventListener("resize", relayout);
-  document.addEventListener("keydown", _fsKeydown);
-  _fs = { overlay, countdownEl: countdown, statusEl, cards, updateStatus, relayout };
 }
 
 api.addEventListener(PICK_EVENT, (e) => {
@@ -248,7 +124,7 @@ api.addEventListener(PICK_EVENT, (e) => {
     const m = Math.floor(d.tick / 60), s = d.tick % 60;
     const txt = `${m}:${String(s).padStart(2, "0")}`;
     _pick.node?._dbTick?.(txt);
-    if (_fs) _fs.countdownEl.textContent = txt;
+    _fs?.setCountdown(txt);
   }
 });
 
@@ -268,7 +144,7 @@ function showListFlyout(title, names, current, onPick) {
 
   const header   = document.createElement("div"); header.className = "db-flyout-header";
   const titleEl  = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+  const closeBtn = makeButton("✕", null, "db-flyout-close");
   header.append(titleEl, closeBtn); panel.appendChild(header);
 
   const list = document.createElement("div"); list.className = "db-flyout-list";
@@ -316,8 +192,6 @@ app.registerExtension({
       const node = this;
       node.color   = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      const DB_MIN_W = 360;
-      node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
 
       const staleWidgets = new Set(["db_dtlabel", "db_dtpanel", "db_save_btn"]);
       if (Array.isArray(node.widgets)) {
@@ -363,7 +237,7 @@ app.registerExtension({
         const row = document.createElement("div");
         row.className = "db-slider-row"; row.style.justifyContent = "space-between";
         const lbl = document.createElement("span"); lbl.className = "db-slider-label"; lbl.textContent = label;
-        const sl  = document.createElement("input"); sl.type = "range"; sl.className = "db-sel-slider";
+        const sl  = makeInput("range", "", "db-sel-slider");
         sl.min = String(min); sl.max = String(max); sl.step = String(step); sl.style.flex = "1";
         const val = document.createElement("span"); val.className = "db-sel-val";
         function paint() { const v = getVal(); sl.value = String(v); val.textContent = fmt(v); }
@@ -381,6 +255,7 @@ app.registerExtension({
       const noiseWidget     = hideWidget("noise_mode");
       const batchModeWidget = hideWidget("batch_mode");
       const overlayWidget   = hideWidget("overlay_enabled");
+      const pickTimeoutWidget = hideWidget("pick_timeout");
 
       // ── 1. THE METHOD — buttons left | splitter | sliders right ───────────
       addTitle("db_methodlabel", "The Method");
@@ -400,7 +275,7 @@ app.registerExtension({
       const noise = (() => {
         const row = document.createElement("div");
         row.className = "db-slider-row";
-        const seg = document.createElement("div"); seg.className = "db-seg"; seg.style.flex = "1";
+        const seg = makeSegment(); seg.style.flex = "1";
         const opts = NOISE_MODES.map(mode => {
           const o = document.createElement("div");
           o.className = "db-seg-opt"; o.textContent = NOISE_LABELS[mode]; o.dataset.mode = mode;
@@ -424,8 +299,7 @@ app.registerExtension({
         (v) => { if (cfgWidget) cfgWidget.value = v; },
         (v) => Number(v).toFixed(1));
 
-      const cols = document.createElement("div");
-      cols.className = "db-talent-columns";
+      const cols = makeTwoColumn("db-talent-columns");
       // A fixed three-track grid keeps the Method panel genuinely two-column.
       // Flex allowed the slider column's intrinsic content to steal width from
       // the sampler column at narrower saved node sizes.
@@ -435,7 +309,7 @@ app.registerExtension({
       // bottom section so it is not mistaken for part of the sampling method.
       const leftCol = document.createElement("div"); leftCol.className = "db-talent-loras";
       leftCol.style.cssText = "display:flex;flex-direction:column;gap:6px;min-width:0;";
-      const batchBtn = document.createElement("button");
+      const batchBtn = makeButton();
       batchBtn.className = "db-lib-btn db-lora-add-open-btn";
       batchBtn.style.cssText = "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
       let _batchOn = !!batchModeWidget?.value;
@@ -443,7 +317,7 @@ app.registerExtension({
         batchBtn.textContent = _batchOn ? "Pick Image: OFF" : "Pick Image: ON";
         batchBtn.dataset.tone = _batchOn ? "fixed" : "random";
       }
-      const overlayBtn = document.createElement("button");
+      const overlayBtn = makeButton();
       overlayBtn.className = "db-lib-btn db-lora-add-open-btn";
       overlayBtn.style.cssText = "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
       function paintOverlay() {
@@ -550,6 +424,16 @@ app.registerExtension({
       });
       widthEls.push(outputControls);
 
+      // Picker timeout — how long a blocking pick waits before keeping all images.
+      const pickTimeout = makeSlider("Pick Timeout", 5, 600, 5,
+        () => parseInt(pickTimeoutWidget?.value ?? 30, 10) || 30,
+        (v) => { if (pickTimeoutWidget) pickTimeoutWidget.value = Math.round(v); },
+        (v) => `${Math.round(v)}s`);
+      node.addDOMWidget("db_pick_timeout", "customhtml", pickTimeout.row, {
+        serialize: false, height: 26, getMinHeight: () => 26,
+      });
+      widthEls.push(pickTimeout.row);
+
       function syncImgH() {
         requestAnimationFrame(() => {
           const h = Math.max(96, imgPanel.scrollHeight || 96);
@@ -577,15 +461,15 @@ app.registerExtension({
       pickRow.style.display = "none";
       const pBtns = document.createElement("div");
       pBtns.className = "db-pick-btns";
-      const pSend = document.createElement("button");
+      const pSend = makeButton();
       pSend.className = "db-lib-btn db-lora-add-open-btn";
       pSend.style.cssText += "width:auto;padding:3px 14px;font-size:10px;flex:0 0 auto;";
       pSend.textContent = "Send";
-      const pCancel = document.createElement("button");
+      const pCancel = makeButton();
       pCancel.className = "db-lib-btn db-lora-add-open-btn";
       pCancel.style.cssText += "width:auto;padding:3px 12px;font-size:10px;flex:0 0 auto;";
       pCancel.textContent = "Cancel";
-      const pFull = document.createElement("button");
+      const pFull = makeButton();
       pFull.className = "db-lib-btn db-lora-add-open-btn";
       pFull.style.cssText += "width:auto;padding:3px 12px;font-size:10px;flex:0 0 auto;";
       pFull.textContent = "⛶ Full screen";
@@ -732,7 +616,6 @@ app.registerExtension({
       }
       const _origResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < DB_MIN_W) size[0] = DB_MIN_W;
         _origResize?.call(this, size);
         applyWidths();
       };
@@ -741,7 +624,7 @@ app.registerExtension({
       requestAnimationFrame(() => requestAnimationFrame(() => {
         applyWidths();
         samplerBtn.refresh(); schedulerBtn.refresh();
-        noise.paint(); steps.paint(); cfg.paint();
+        noise.paint(); steps.paint(); cfg.paint(); pickTimeout.paint();
         // Workflows persist the node's previous expanded preview height. Once
         // the empty UI has been rebuilt, collapse back to its natural widget
         // height; image/picker rendering will grow it again when needed.

@@ -781,9 +781,9 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: min(920px, 92vw);
-  height: min(720px, 88vh);
-  max-height: 88vh;
+  width: min(1320px, 96vw);
+  height: min(900px, 92vh);
+  max-height: 92vh;
 }
 .db-lora-flyout.db-sampler-picker-panel .db-flyout-header,
 .db-lora-flyout.db-sampler-picker-panel .db-lp-pills {
@@ -2519,7 +2519,7 @@
 .db-generation-panel {
   width: 100%; max-width: none; padding: 8px 10px 12px; box-sizing: border-box;
   color: #d4d8dc; background: var(--db-node-bg, #131313); overflow: hidden;
-  font: 12px/1.3 Arial, sans-serif;
+  font: 12px/1.3 Inter, Arial, sans-serif;
 }
 .db-generation-panel * { box-sizing: border-box; }
 .db-generation-section { border-top: 0; margin-top: 4px; }
@@ -2528,21 +2528,10 @@
    rather than one continuous stack of controls. */
 .db-generation-embeddings,
 .db-generation-loras { border-top: 1px solid #2b2f34; margin-top: 9px; padding-top: 3px; }
-/* Reserve electric blue for active / selected states. Section headings and the
-   inline CKPT/RES/VAE tags read in a quiet slate so the selected control (the
-   active workflow toggle, seed mode, picker card) is what draws the eye. */
-.db-generation-panel .db-sep-text {
-  color: #8b97a1; text-shadow: none; letter-spacing: 2px;
-}
-.db-generation-panel .db-sep-line { background: #2b3036; }
-/* The section title is calm slate, but its expand/collapse affordance keeps a
-   blue accent so it still reads as interactive against the quieter heading. */
+/* Section headings use the shared electric-blue Inter style (db-sep-text /
+   db-collapsible-label from db_shared.js) with no per-node color override, so
+   every DirtyBirds node's headings read identically. */
 .db-generation-panel .db-collapsible-label { cursor: pointer; }
-.db-generation-panel .db-collapsible-caret,
-.db-generation-panel .db-collapsible-helper { color: #5aaee5; }
-.db-generation-panel .db-collapsible-label:hover .db-sep-text { color: #b6c1cb; }
-.db-generation-panel .db-collapsible-label:hover .db-collapsible-caret,
-.db-generation-panel .db-collapsible-label:hover .db-collapsible-helper { color: #8fceff; }
 /* Sections reuse the same centered "═ TITLE ═" heading every DirtyBirds node
    uses (db-section-label / db-collapsible-label from db_shared.js) as a plain
    block child, not its own DOM widget — give it an explicit height here since
@@ -2748,3 +2737,116 @@
 .db-generation-resolution-edit-row { display: grid; grid-template-columns: minmax(100px, 1fr) 90px 90px 30px; gap: 6px; }
 .db-generation-edit-input { min-width: 0; padding: 6px; border: 1px solid #393d42; border-radius: 5px; color: #ddd; background: #202226; }
 .db-generation-editor-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 0 10px 10px; }
+/* ── DirtyBirds shared design system ────────────────────────────────────────
+   Every custom DOM widget is marked db-control-surface by db_shared.js. These
+   tokens and final-layer rules keep typography and controls identical across
+   nodes; individual node CSS should describe layout only. */
+:root {
+  --db-font: Inter, Arial, sans-serif;
+  --db-text-size: 11px;
+  --db-small-size: 10px;
+  --db-text: #d4d8dc;
+  --db-muted: #8b97a1;
+  --db-accent: #5aadff;
+  --db-accent-bg: #15324a;
+  --db-surface: #191a1d;
+  --db-control: #25272b;
+  --db-border: #343840;
+  --db-danger: #e06c6c;
+  --db-success: #5acc8a;
+  --db-radius: 6px;
+  --db-control-height: 26px;
+  --db-panel-padding: 10px;
+  --db-row-gap: 6px;
+  --db-section-gap: 10px;
+  --db-column-gap: 10px;
+  --db-preview-max-height: 240px;
+}
+
+.db-control-surface,
+.db-control-surface * {
+  font-family: var(--db-font) !important;
+  box-sizing: border-box;
+}
+.db-control-surface {
+  color: var(--db-text);
+  font-size: var(--db-text-size);
+  container-type: inline-size;
+}
+.db-control-surface button,
+.db-control-surface select,
+.db-control-surface input:not([type="range"]):not([type="checkbox"]),
+.db-control-surface .db-lib-btn,
+.db-control-surface .db-seg-opt,
+.db-control-surface .db-res-select,
+.db-control-surface .db-sel-row {
+  min-height: var(--db-control-height);
+  border: 1px solid var(--db-border) !important;
+  border-radius: var(--db-radius) !important;
+  background: var(--db-control) !important;
+  color: var(--db-text) !important;
+  font-size: var(--db-small-size) !important;
+  line-height: 1.2 !important;
+}
+.db-control-surface button:hover,
+.db-control-surface .db-lib-btn:hover,
+.db-control-surface .db-seg-opt:hover {
+  border-color: var(--db-accent) !important;
+  color: #fff !important;
+}
+.db-control-surface .db-seg-opt.db-seg-active,
+.db-control-surface .db-active,
+.db-control-surface .is-active {
+  border-color: var(--db-accent) !important;
+  background: var(--db-accent-bg) !important;
+  color: #fff !important;
+}
+.db-control-surface textarea,
+.db-control-surface .comfy-multiline-input {
+  border: 1px solid var(--db-border) !important;
+  border-radius: var(--db-radius) !important;
+  background: var(--db-surface) !important;
+  color: var(--db-text) !important;
+  font-size: var(--db-text-size) !important;
+  line-height: 1.35 !important;
+}
+.db-control-surface input[type="range"] { accent-color: var(--db-accent); }
+.db-control-surface .db-slider-label,
+.db-control-surface .db-talent-col-header,
+.db-control-surface .db-generation-card-label {
+  color: var(--db-muted) !important;
+  font-size: var(--db-small-size) !important;
+  letter-spacing: .08em;
+}
+.db-control-surface button:disabled,
+.db-control-surface input:disabled,
+.db-control-surface .db-disabled {
+  opacity: .45 !important;
+  cursor: not-allowed !important;
+}
+
+/* Shared structural rhythm. Node scripts choose content; the design system
+   owns spacing, column behavior and preview bounds. */
+.db-control-surface .db-talent-columns,
+.db-control-surface .db-generation-columns,
+.db-control-surface .db-two-column {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  gap: var(--db-column-gap) !important;
+  align-items: start;
+}
+/* LoRA columns keep the 3-track layout (Selected | 1px separator | Trigger Words)
+   its markup expects; the 2-track override above collapsed the labels together. */
+.db-control-surface .db-generation-lora-columns {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr) !important;
+  gap: var(--db-column-gap) !important;
+  align-items: start;
+}
+.db-control-surface .db-slider-row,
+.db-control-surface .db-generation-row,
+.db-control-surface .db-control-row { min-height: var(--db-control-height); }
+.db-control-surface .db-section-label { margin-block: var(--db-section-gap) 4px; }
+.db-control-surface .db-talent-columns > .db-talent-divider { display: none !important; }
+.db-control-surface img,
+.db-control-surface video { max-height: var(--db-preview-max-height); object-fit: contain; }

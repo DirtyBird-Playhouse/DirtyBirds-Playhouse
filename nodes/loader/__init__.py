@@ -9,7 +9,7 @@ from comfy.sd import load_checkpoint_guess_config, load_lora_for_models
 import comfy.utils
 
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
-from .library_backend import get_lora_meta, resolve_lora_filename  # noqa: F401
+from .library_backend import resolve_lora_filename  # noqa: F401 (also registers routes)
 from .dimension_store import load_dimensions, normalize_runtime_dimensions, save_dimensions as persist_dimensions
 from .seed_util import resolve_seed
 
@@ -219,11 +219,6 @@ class DirtyBirdsLoader:
             if override_vae is not None:
                 vae = override_vae
 
-        # Re-roll the seed every run when seed_mode is "random".
-        if seed_mode == "random":
-            import random
-            seed = random.randint(0, 0xffffffffffffffff)
-
         device = model.load_device
         dtype  = model.model_dtype()
 
@@ -236,12 +231,14 @@ class DirtyBirdsLoader:
             logger.warning("[DirtyBirds] Malformed loras_data JSON, skipping: %s", e)
             inline_entries = []
 
+        active_inline_loras = set()
         for entry in inline_entries:
             if not entry.get("active", True):
                 continue
             name = entry.get("name", "").strip()
             if not name:
                 continue
+            active_inline_loras.add(name)
             # LoRA Manager sends bare names (no subfolder/extension); resolve
             # to the canonical filename so get_full_path finds the file.
             name = resolve_lora_filename(name)
@@ -296,6 +293,10 @@ class DirtyBirdsLoader:
         trigger_terms = []
         for entry in tw_entries:
             if not entry.get("active", True):
+                continue
+            # Saved workflows can retain trigger-word chips after their LoRA
+            # has been removed. Never let that stale UI state alter prompts.
+            if entry.get("lora") not in active_inline_loras:
                 continue
             text = entry.get("text", "").strip()
             if text:

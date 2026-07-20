@@ -30,7 +30,6 @@ app.registerExtension({
       const node = this;
       node.color   = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 220);
       addTitle(node, "db_pipe_title", title);
     };
   },

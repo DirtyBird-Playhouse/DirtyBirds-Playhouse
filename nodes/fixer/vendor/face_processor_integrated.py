@@ -761,12 +761,16 @@ class ForbiddenVisionFaceProcessorIntegrated:
                 
                 if restore_method != "Diffusion (Inpaint)":
                     # GAN face restore (GFPGAN / CodeFormer): replaces the inpaint
-                    # sampler on this crop. The sampler-driven lightness rescue and
-                    # final refinement passes don't apply; compositing and color
-                    # correction downstream stay shared with the diffusion path.
+                    # sampler on this crop. Landmark alignment is required because
+                    # these models expect a canonical 512px face; the helper warps
+                    # the result back into this crop before shared compositing.
+                    # The sampler-driven lightness rescue and final refinement
+                    # passes don't apply; compositing and color correction downstream
+                    # stay shared with the diffusion path.
                     from .face_restore import FaceRestoreManager
                     processed_face_batch = FaceRestoreManager.get_instance().restore(
-                        cropped_face, restore_method, codeformer_fidelity
+                        cropped_face, restore_method, codeformer_fidelity,
+                        align=True,
                     )
                 else:
                     processed_latent = self.run_inpaint_sampling(
@@ -819,9 +823,17 @@ class ForbiddenVisionFaceProcessorIntegrated:
                 print("ERROR: All face processing failed. Returning original image.")
                 return self.create_safe_fallback_outputs(original_image, processing_resolution)
 
+            # Color-statistics matching is useful for diffusion inpainting, but
+            # it can over-saturate a GAN-restored, landmark-aligned face.
+            # Keep it for the diffusion path and preserve CodeFormer/GFPGAN's
+            # own color output instead.
+            apply_color_correction = (
+                enable_color_correction
+                and restore_method == "Diffusion (Inpaint)"
+            )
             final_image = self.combine_all_faces_to_final_image(
-                processing_image, all_processed_faces, all_restore_info, 
-                blend_softness, enable_color_correction, 1.0
+                processing_image, all_processed_faces, all_restore_info,
+                blend_softness, apply_color_correction, 1.0
             )
             
             processed_face_output = self.create_combined_face_output(all_processed_faces, processing_resolution)

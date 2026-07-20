@@ -13,6 +13,7 @@ import { api } from "../../../scripts/api.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel,
   hideWidget as hideWidgetShared, makeCollapsibleSectionLabel,
+  makeButton, makeTextarea, makeSegment,
 } from "./db_shared.js";
 import {
   REFRESH, escapeHTML, promptToMarkdown, renderMarkdownText, showOptionsFlyout,
@@ -84,8 +85,6 @@ app.registerExtension({
       removeLegacyCyclerOutput(node);
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      const DB_MIN_W = 420;
-      node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
       // Keep the body large enough for its controls. ComfyUI owns DOM-widget
       // height allocation; the panel does not run its own resize loop.
       const DB_PANEL_MIN_H = 342;
@@ -95,7 +94,6 @@ app.registerExtension({
       // Old workflows may serialize a stale minimum from a previous DOM
       // layout. Preserving it would permanently clamp the rebuilt node tall.
       node.min_height = DB_MIN_H;
-      node.min_width = Math.max(node.min_width || 0, DB_MIN_W);
       node.size[1] = Math.max(node.size[1] || 0, DB_MIN_H);
       node.resizable = true;
 
@@ -176,6 +174,8 @@ app.registerExtension({
       const seedWidget = hideWidget("seed");
       const rerollWidget = hideWidget("reroll_each_run");
       hideWidget("control_after_generate");
+      // Dress-state combo: hide the raw widget; a styled <select> below drives it.
+      const dressWidget = hideWidget("dress_state");
       let paintSeedMode = () => { };
 
       function randomSeedValue() {
@@ -264,7 +264,7 @@ app.registerExtension({
         });
       }
 
-      const btn = document.createElement("button");
+      const btn = makeButton();
       btn.className = "db-lib-btn db-lora-add-open-btn";
       btn.textContent = "🎲  Wildcards";
       btn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -316,7 +316,7 @@ app.registerExtension({
         const titleEl = document.createElement("span");
         titleEl.className = "db-flyout-title";
         titleEl.textContent = title;
-        const closeBtn = document.createElement("button");
+        const closeBtn = makeButton();
         closeBtn.className = "db-flyout-close";
         closeBtn.textContent = "✕";
         header.append(titleEl, closeBtn);
@@ -351,11 +351,11 @@ app.registerExtension({
         if (onDelete) {
           const actions = document.createElement("div");
           actions.className = "db-prompt-file-actions";
-          const insertBtn = document.createElement("button");
+          const insertBtn = makeButton();
           insertBtn.className = "db-prompt-file-action";
           insertBtn.textContent = "Insert";
           insertBtn.addEventListener("click", (e) => { e.stopPropagation(); onInsert(item); });
-          const deleteBtn = document.createElement("button");
+          const deleteBtn = makeButton();
           deleteBtn.className = "db-prompt-file-action db-prompt-file-delete";
           deleteBtn.textContent = "Delete";
           deleteBtn.addEventListener("click", async (e) => {
@@ -454,7 +454,7 @@ app.registerExtension({
         }
       }
 
-      loadBtn = document.createElement("button");
+      loadBtn = makeButton();
       loadBtn.className = "db-lib-btn db-lora-add-open-btn";
       loadBtn.textContent = "📥  Load Prompt";
       loadBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -470,7 +470,7 @@ app.registerExtension({
 
       // ── Compact single-panel UI ─────────────────────────────────────────
       function makePromptTextarea(widget, tone) {
-        const ta = document.createElement("textarea");
+        const ta = makeTextarea();
         ta.className = `db-script-textarea ${tone === "negative" ? "db-script-negative" : "db-script-positive"}`;
         ta.placeholder = tone === "negative" ? "negative" : "positive";
         ta.value = widget?.value || "";
@@ -586,7 +586,7 @@ app.registerExtension({
         node.properties = node.properties || {};
         if (Number(node.properties.db_prompt_layout_version || 0) >= layoutVersion) return;
         node.setSize([
-          Math.max(DB_MIN_W, node.size?.[0] || DB_MIN_W),
+          node.size?.[0] || 0,
           DB_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),
         ]);
         node.properties.db_prompt_layout_version = layoutVersion;
@@ -607,7 +607,7 @@ app.registerExtension({
         return String(peepShow.imgs?.[0]?.src || "").trim();
       }
 
-      const booruBtn = document.createElement("button");
+      const booruBtn = makeButton();
       booruBtn.className = "db-lib-btn db-lora-add-open-btn";
       booruBtn.textContent = "Booru";
       booruBtn.addEventListener("click", async () => {
@@ -634,7 +634,7 @@ app.registerExtension({
         panel.style.top = (rect.bottom + 6) + "px";
         const header = document.createElement("div"); header.className = "db-flyout-header";
         const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-        const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+        const closeBtn = makeButton("✕", null, "db-flyout-close");
         header.append(titleEl, closeBtn);
         const statusEl = document.createElement("div");
         statusEl.className = "db-url-tools-status";
@@ -650,7 +650,7 @@ app.registerExtension({
         };
       }
 
-      const captionBtn = document.createElement("button");
+      const captionBtn = makeButton();
       captionBtn.className = "db-lib-btn db-lora-add-open-btn";
       captionBtn.textContent = "Caption";
       captionBtn.addEventListener("click", async () => {
@@ -690,7 +690,7 @@ app.registerExtension({
       };
       requestAnimationFrame(() => requestAnimationFrame(paintImageToolAvailability));
 
-      const cyclerBtn = document.createElement("button");
+      const cyclerBtn = makeButton();
       cyclerBtn.className = "db-lib-btn db-lora-add-open-btn";
       function paintCyclerButton() {
         const count = cyclerLines(cyclerTextWidget?.value || "").filter((line) => line.trim()).length;
@@ -714,11 +714,11 @@ app.registerExtension({
         const title = document.createElement("span");
         title.className = "db-flyout-title";
         title.textContent = "The Cycler";
-        const closeBtn = document.createElement("button");
+        const closeBtn = makeButton();
         closeBtn.className = "db-flyout-close";
         closeBtn.textContent = "✕";
         header.append(title, closeBtn);
-        const editor = document.createElement("textarea");
+        const editor = makeTextarea();
         editor.className = "db-script-textarea db-script-positive";
         editor.placeholder = "one prompt addition per line";
         editor.value = cyclerTextWidget?.value || "";
@@ -727,7 +727,7 @@ app.registerExtension({
         const footer = document.createElement("div");
         footer.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:0 10px 10px;color:#6f7b84;font-size:9px;";
         const count = document.createElement("span");
-        const done = document.createElement("button");
+        const done = makeButton();
         done.className = "db-lib-btn db-lora-add-open-btn";
         done.textContent = "Done";
         function sync() {
@@ -846,7 +846,46 @@ app.registerExtension({
       wildcardCol.append(wildcardHead, btn);
       primaryRow.append(seedCol, primaryDivider, wildcardCol);
 
-      panel.append(scriptLabel, posTA, negTA, primaryRow, toyboxSection.label, toyboxGrid, previewLabel, previewSplit);
+      // ── Dress State selector → drives the hidden dress_state combo ───────
+      // Populated from the combo's own options (auto-built from the wildcards:
+      // (off), random, then each state under clothing/tops/). Picking a value
+      // makes the backend prepend [[reg=...]] so __Templates/Scene__ resolves.
+      const dressRow = document.createElement("div");
+      dressRow.className = "db-prompt-primary-row";
+      const dressCol = document.createElement("div");
+      dressCol.className = "db-prompt-primary-col";
+      dressCol.style.flex = "1";
+      const dressHead = document.createElement("div");
+      dressHead.className = "db-talent-col-header";
+      dressHead.textContent = "Dress State";
+      const dressSel = document.createElement("select");
+      dressSel.className = "db-dress-select";
+      dressSel.style.cssText =
+        "width:100%;box-sizing:border-box;background:#1e1e1e;color:#ddd;" +
+        "border:1px solid #3a3a3a;border-radius:4px;padding:3px 6px;font-size:11px;";
+      const dressOptions = dressWidget?.options?.values || ["(off)"];
+      for (const val of dressOptions) {
+        const opt = document.createElement("option");
+        opt.value = val; opt.textContent = val;
+        dressSel.appendChild(opt);
+      }
+      // Heal a stale/empty value (e.g. from an older saved graph) to a valid
+      // option, and write it back so it serializes cleanly and passes validation.
+      let dressCur = dressWidget?.value;
+      if (!dressOptions.includes(dressCur)) {
+        dressCur = "(off)";
+        if (dressWidget) dressWidget.value = dressCur;
+      }
+      dressSel.value = dressCur;
+      dressSel.title = "Pick a dress state; the outfit stays coherent each roll";
+      dressSel.addEventListener("change", () => {
+        if (dressWidget) dressWidget.value = dressSel.value;
+        node.setDirtyCanvas(true);
+      });
+      dressCol.append(dressHead, dressSel);
+      dressRow.append(dressCol);
+
+      panel.append(scriptLabel, posTA, negTA, primaryRow, dressRow, toyboxSection.label, toyboxGrid, previewLabel, previewSplit);
       node._dbRenderPromptMarkdown(posWidget?.value || "", negWidget?.value || "", true);
       paintSeedMode();
       scriptPanelWidget = node.addDOMWidget("db_script_panel", "customhtml", panel, {

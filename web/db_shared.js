@@ -11,6 +11,7 @@
 // the in-node accent (#5aadff) used by section headers and active controls.
 export const DB_COLOR   = "#15324a";
 export const DB_BGCOLOR = "#131313";
+export const DIRTYBIRDS_NODE_WIDTH = 360;
 
 // ── Stylesheet (idempotent) ───────────────────────────────────────────────────
 export function ensureStylesheet() {
@@ -307,10 +308,253 @@ export function bindWidthSync(node, els, minW) {
   requestAnimationFrame(() => requestAnimationFrame(applyWidths));
   const origResize = node.onResize;
   node.onResize = function (size) { origResize?.call(this, size); applyWidths(); };
+  installContentSizeGuard(node, { minWidth: minW });
+}
+
+// ── Shared control constructors ──────────────────────────────────────────────
+// Node modules own behavior and content; these factories own element type,
+// common class names and event wiring so controls cannot visually drift.
+export function makeButton(text = "", onClick = null, className = "db-lib-btn") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = text;
+  if (onClick) button.addEventListener("click", onClick);
+  return button;
+}
+
+export function makeTextarea(value = "", placeholder = "", className = "comfy-multiline-input") {
+  const textarea = document.createElement("textarea");
+  textarea.className = className;
+  textarea.value = value;
+  textarea.placeholder = placeholder;
+  textarea.spellcheck = false;
+  return textarea;
+}
+
+export function makeInput(type = "text", value = "", className = "db-text-input") {
+  const input = document.createElement("input");
+  input.type = type;
+  input.className = className;
+  if (value !== undefined && value !== null) input.value = value;
+  return input;
+}
+
+export function makeSelect(className = "db-select") {
+  const select = document.createElement("select");
+  select.className = className;
+  return select;
+}
+
+export function makeSegment() {
+  const segment = document.createElement("div");
+  segment.className = "db-seg";
+  return segment;
+}
+
+export function makeTwoColumn(className = "db-two-column") {
+  const columns = document.createElement("div");
+  columns.className = className;
+  return columns;
+}
+
+// Keep every custom-DOM node at least as tall as its visible widgets while
+// preserving any extra height chosen by the user. Safe to call more than once.
+export function installContentSizeGuard(node, { minWidth = 0 } = {}) {
+  if (!node) return;
+  if (node._dbContentSizeGuard) {
+    node._dbContentSizeGuard.minWidth = Math.max(
+      node._dbContentSizeGuard.minWidth || 0, minWidth || 0);
+    node._dbFitContent?.();
+    return;
+  }
+  const guard = node._dbContentSizeGuard = { minWidth: Math.max(0, minWidth || 0) };
+  let scheduled = false;
+  const fit = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      scheduled = false;
+      const oldMin = Number(node.min_height) || 0;
+      node.min_height = 0;
+      const measured = node.computeSize?.() || node.size || [guard.minWidth, oldMin];
+      const required = Math.max(1, Number(measured[1]) || 0);
+      node.min_height = required;
+      const width = Math.max(guard.minWidth, Number(node.size?.[0]) || guard.minWidth);
+      const height = Math.max(required, Number(node.size?.[1]) || required);
+      if (width !== node.size?.[0] || height !== node.size?.[1]) node.setSize?.([width, height]);
+      node.setDirtyCanvas?.(true, true);
+    }));
+  };
+  node._dbFitContent = fit;
+  const originalResize = node.onResize;
+  node.onResize = function (size) {
+    size[0] = Math.max(guard.minWidth, size[0]);
+    size[1] = Math.max(Number(node.min_height) || 0, size[1]);
+    originalResize?.call(this, size);
+  };
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(fit) : null;
+  (node.widgets || []).forEach((widget) => {
+    if (!widget.element) return;
+    widget.element.classList?.add("db-control-surface");
+    observer?.observe(widget.element);
+  });
+  node._dbContentSizeObserver = observer;
+  fit();
 }
 
 // ── Safely resize a DOM widget ────────────────────────────────────────────────
 export function setWidgetHeight(widget, height) {
   if (!widget) return;
   widget.computedHeight = Math.max(0, height || 0);
+}
+
+// ── Shared image-picker modal ────────────────────────────────────────────────
+// The one full-screen picker used by every DirtyBirds in-node pick handshake
+// (Sampler, Fixer "All (Compare)", …). A node that is executing can't grow its
+// inline DOM widgets, so the pick UI must live in an overlay on <body> — an
+// inline grid gets clipped mid-run. This is a pure view: the caller owns the
+// selection Set and the websocket reply; this builds/repaints the modal and
+// reports clicks. Each card's badge is `img.label` when present (e.g. the
+// Fixer's method name) else `#index`.
+//
+// Returns { overlay, cards, close, setStatus, setCountdown, repaint }.
+export function openPickerModal({
+  images = [], selection, title = "Pick images", viewURL,
+  sendLabel = "Keep selected", cancelLabel = "Cancel",
+  onToggle, onSend, onCancel,
+}) {
+  const sel = selection || new Set();
+  const url = viewURL || ((img) => `/view?filename=${encodeURIComponent(img.filename || "")}` +
+    `&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${encodeURIComponent(img.type || "temp")}`);
+  let relayout = () => {};
+
+  const overlay = document.createElement("div");
+  overlay.className = "db-flyout-overlay db-sampler-picker-overlay";
+  const panel = document.createElement("div");
+  panel.className = "db-lora-flyout db-sampler-picker-panel";
+
+  const header = document.createElement("div");
+  header.className = "db-flyout-header";
+  const titleEl = document.createElement("span");
+  titleEl.className = "db-flyout-title";
+  titleEl.textContent = title;
+  const countdown = document.createElement("span");
+  countdown.className = "db-flyout-title";
+  countdown.style.opacity = "0.6";
+  header.append(titleEl, countdown);
+  panel.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "db-lp-grid";
+  const cards = [];
+  const imageEls = [];
+  images.forEach((img, i) => {
+    const card = document.createElement("div");
+    card.className = "db-lp-card";
+    card.style.cursor = "pointer";
+    if (sel.has(i)) card.classList.add("db-lp-selected");
+    const wrap = document.createElement("div");
+    wrap.className = "db-lp-img-wrap";
+    const thumb = document.createElement("img");
+    thumb.className = "db-lp-thumb";
+    const reveal = () => { thumb.classList.add("db-lp-thumb-loaded"); relayout(); };
+    thumb.addEventListener("load", reveal);
+    thumb.addEventListener("error", () => { reveal(); thumb.style.opacity = "1"; });
+    thumb.src = url(img);
+    if (thumb.complete && thumb.naturalWidth > 0) reveal();
+    const badge = document.createElement("div");
+    badge.className = "db-lp-cat-badge";
+    badge.textContent = img.label || ("#" + i);
+    wrap.append(thumb, badge);
+    card.appendChild(wrap);
+    card.addEventListener("click", () => {
+      if (sel.has(i)) { sel.delete(i); card.classList.remove("db-lp-selected"); }
+      else { sel.add(i); card.classList.add("db-lp-selected"); }
+      onToggle?.(i);
+      updateStatus();
+    });
+    grid.appendChild(card);
+    cards.push(card);
+    imageEls.push(thumb);
+  });
+  panel.appendChild(grid);
+
+  const footer = document.createElement("div");
+  footer.className = "db-lp-pills";
+  footer.style.cssText += "justify-content:space-between;align-items:center;";
+  const statusEl = document.createElement("span");
+  statusEl.style.cssText = "font-size:11px;color:#888;";
+  const btns = document.createElement("div");
+  btns.style.cssText = "display:flex;gap:8px;";
+  const cancelBtn = makeButton(cancelLabel, () => onCancel?.(), "db-lora-add-open-btn");
+  cancelBtn.style.cssText = "width:auto;padding:6px 14px;";
+  const sendBtn = makeButton(sendLabel, () => onSend?.(), "db-lora-add-open-btn");
+  sendBtn.style.cssText = "width:auto;padding:6px 16px;";
+  btns.append(cancelBtn, sendBtn);
+  footer.append(statusEl, btns);
+  panel.appendChild(footer);
+
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  const imageSize = () => {
+    const first = images[0] || {};
+    const natural = imageEls.find((img) => img.naturalWidth > 0);
+    return {
+      width: Number(first.width || natural?.naturalWidth || 1),
+      height: Number(first.height || natural?.naturalHeight || 1),
+    };
+  };
+  relayout = () => {
+    const box = grid.getBoundingClientRect();
+    if (!box.width || !box.height || !images.length) return;
+    const { width: imgW, height: imgH } = imageSize();
+    let bestPerRow = 1, bestScale = 0;
+    for (let perRow = 1; perRow <= images.length; perRow++) {
+      const rows = Math.ceil(images.length / perRow);
+      const scale = Math.min(box.width / (imgW * perRow), box.height / (imgH * rows));
+      if (scale > bestScale) { bestScale = scale; bestPerRow = perRow; }
+    }
+    const rows = Math.ceil(images.length / bestPerRow);
+    grid.style.gridTemplateColumns = `repeat(${bestPerRow}, minmax(0, 1fr))`;
+    grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  };
+
+  const updateStatus = () => {
+    statusEl.textContent = sel.size
+      ? `${sel.size} selected · Enter to keep`
+      : "Click images to keep · Esc cancels · Ctrl+A all";
+  };
+  const repaint = () => cards.forEach((c, i) => c.classList.toggle("db-lp-selected", sel.has(i)));
+
+  const keydown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); onCancel?.(); }
+    else if (e.key === "Enter") { e.preventDefault(); onSend?.(); }
+    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      const selectAll = sel.size < cards.length;
+      cards.forEach((_, i) => { if (selectAll) sel.add(i); else sel.delete(i); });
+      cards.forEach((_, i) => onToggle?.(i));
+      repaint();
+      updateStatus();
+    }
+  };
+
+  const close = () => {
+    overlay.remove();
+    window.removeEventListener("resize", relayout);
+    document.removeEventListener("keydown", keydown);
+  };
+
+  updateStatus();
+  requestAnimationFrame(relayout);
+  window.addEventListener("resize", relayout);
+  document.addEventListener("keydown", keydown);
+
+  return {
+    overlay, cards, close, repaint, relayout,
+    setStatus: (t) => { statusEl.textContent = t; },
+    setCountdown: (t) => { countdown.textContent = t; },
+  };
 }

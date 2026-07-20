@@ -14,6 +14,8 @@ import {
   makeSlider,
   hideWidget,
   nodeInnerW,
+  makeButton,
+  makeInput,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -76,7 +78,6 @@ app.registerExtension({
       const node = this;
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(node.size[0] || 0, 300);
 
       const staleWidgets = new Set(["db_image_tools_panel"]);
       if (Array.isArray(node.widgets)) {
@@ -144,13 +145,13 @@ app.registerExtension({
       const sourceRow = document.createElement("div");
       sourceRow.className = "db-image-actions";
       sourceRow.style.gridTemplateColumns = "minmax(0, 1fr)";
-      const uploadBtn = document.createElement("button");
+      const uploadBtn = makeButton();
       uploadBtn.className = "db-lib-btn db-lora-add-open-btn";
       uploadBtn.textContent = "Load Image";
       sourceRow.append(uploadBtn);
 
       // ── URL input ─────────────────────────────────────────────────────────
-      const urlInput = document.createElement("input");
+      const urlInput = makeInput();
       urlInput.type = "text";
       urlInput.className = "db-text-input";
       urlInput.placeholder = "image URL or local path";
@@ -216,7 +217,7 @@ app.registerExtension({
       const urlWrap = document.createElement("div");
       urlWrap.style.cssText = "position:relative;width:100%;box-sizing:border-box;";
       urlInput.style.paddingRight = "22px";
-      const urlClear = document.createElement("button");
+      const urlClear = makeButton();
       urlClear.type = "button";
       urlClear.textContent = "✕";
       urlClear.title = "Clear";
@@ -241,7 +242,7 @@ app.registerExtension({
       urlWrap.append(urlInput, urlClear);
       syncUrlClear();
 
-      const fileInput = document.createElement("input");
+      const fileInput = makeInput();
       fileInput.type = "file";
       fileInput.accept = "image/png,image/jpeg,image/jpg,image/webp,image/gif";
       fileInput.style.display = "none";
@@ -326,7 +327,7 @@ app.registerExtension({
 
       // ── Resize toggle + max-size slider ───────────────────────────────────
       const resizeLabel = makeSectionLabel("Resize");
-      const resizeToggle = document.createElement("button");
+      const resizeToggle = makeButton();
       resizeToggle.className = "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
       resizeToggle.style.cssText += "height:26px;min-height:26px;padding:0 8px;width:100%;";
       const { row: resizeMaxRow, paint: paintResizeMax } = makeSlider(
@@ -397,7 +398,7 @@ app.registerExtension({
       const sharpenCol = document.createElement("div");
       sharpenCol.className = "db-image-tools-col";
       const sharpenLabel = makeSectionLabel("Sharpen");
-      const sharpenButton = document.createElement("button");
+      const sharpenButton = makeButton();
       sharpenButton.className = "db-lib-btn db-lora-add-open-btn db-image-sharpen-toggle";
       const sharpenModes = ["off", "auto", "low", "medium", "high"];
       function paintSharpen() {
@@ -473,7 +474,6 @@ app.registerExtension({
 
       const origResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < 300) size[0] = 300;
         origResize?.call(this, size);
         syncPanelH();
       };

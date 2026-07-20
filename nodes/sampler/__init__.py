@@ -157,6 +157,8 @@ class DirtyBirdsSampler:
                 "noise_mode":     (["cpu", "both", "gpu"], {"default": "both"}),
                 "batch_mode":     ("BOOLEAN", {"default": False}),
                 "overlay_enabled": ("BOOLEAN", {"default": False}),
+                # How long the interactive picker blocks before keeping everything.
+                "pick_timeout":   ("INT", {"default": PICK_TIMEOUT, "min": 5, "max": 600, "step": 5}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -173,7 +175,8 @@ class DirtyBirdsSampler:
         return float("nan")
 
     def sample(self, pipe, sampler_name, scheduler, steps, cfg, noise_mode="both",
-               batch_mode=False, overlay_enabled=False, unique_id=None):
+               batch_mode=False, overlay_enabled=False, pick_timeout=PICK_TIMEOUT,
+               unique_id=None):
         model = pipe["model"]
         positive = pipe["positive"]
         negative = pipe["negative"]
@@ -261,7 +264,7 @@ class DirtyBirdsSampler:
         selection = _wait_for_pick(
             token,
             {"images": previews, "count": batch, "node_id": str(unique_id)},
-            PICK_TIMEOUT,
+            max(5, int(pick_timeout)),
         )
         if selection is None:  # timed out -> keep everything
             selection = list(range(batch))

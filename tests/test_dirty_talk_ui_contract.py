@@ -237,6 +237,96 @@ def test_generation_setup_lora_trigger_words_are_renameable_inline():
     assert 'if (value) item.text = value' in loader
 
 
+def test_generation_setup_prunes_orphaned_lora_trigger_words_on_load():
+    loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
+    assert "const selectedLoraNames = new Set" in loader
+    assert "selectedLoraNames.has(item?.lora)" in loader
+
+
+def test_generation_setup_rereads_loras_after_saved_widgets_restore():
+    loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
+    sync = loader.split("function syncFromWidgets()", 1)[1].split("}", 1)[0]
+    assert "syncLoraStateFromWidgets();" in sync
+
+
+def test_fixer_picker_routes_missing_legacy_node_id_to_the_only_fixer():
+    fixer = (ROOT / "web" / "jsdirtybirds_fixer.js").read_text(encoding="utf-8")
+    assert 'd.node_id !== "None"' in fixer
+    assert "fixers.length === 1" in fixer
+
+
+def test_fixer_all_compare_selects_all_three_methods_by_default():
+    fixer = (ROOT / "web" / "jsdirtybirds_fixer.js").read_text(encoding="utf-8")
+    # Keep-all default: every method starts selected in the shared picker modal.
+    assert "const sel = new Set(cards.map((_, i) => i));" in fixer
+
+
+def test_fixer_delegates_content_height_to_shared_guard():
+    fixer = (ROOT / "web" / "jsdirtybirds_fixer.js").read_text(encoding="utf-8")
+    assert "function fitNodeToContent" not in fixer
+    assert 'im.addEventListener("load",()=>node._dbFitContent?.()' in fixer
+
+
+def test_every_dirtybirds_node_installs_shared_content_size_guard():
+    guard = (ROOT / "web" / "jsdirtybirds_sizeguard.js").read_text(encoding="utf-8")
+    shared = (ROOT / "web" / "db_shared.js").read_text(encoding="utf-8")
+    assert 'startsWith("DirtyBirds")' in guard
+    assert "installContentSizeGuard(this" in guard
+    assert "export function installContentSizeGuard" in shared
+    assert "height = Math.max(required" in shared
+    assert "DIRTYBIRDS_NODE_WIDTH" in guard
+    assert "MIN_WIDTHS" not in guard
+    assert "export const DIRTYBIRDS_NODE_WIDTH = 360" in shared
+
+
+def test_every_custom_widget_receives_the_shared_design_system():
+    shared = (ROOT / "web" / "db_shared.js").read_text(encoding="utf-8")
+    css = (ROOT / "web" / "css" / "style.css").read_text(encoding="utf-8")
+    assert 'classList?.add("db-control-surface")' in shared
+    assert "--db-font:" in css
+    assert ".db-control-surface button" in css
+    assert '.db-control-surface input[type="range"]' in css
+    assert "--db-column-gap:" in css
+    assert "--db-preview-max-height:" in css
+    assert "@container (max-width:" not in css
+
+
+def test_node_modules_use_shared_form_components():
+    offenders = []
+    for path in (ROOT / "web").glob("jsdirtybirds*.js"):
+        if path.name == "jsdirtybirds_prompt_helpers.js":
+            # Helpers are part of the node UI surface and follow the same rule.
+            pass
+        source = path.read_text(encoding="utf-8")
+        if 'document.createElement("button")' in source:
+            offenders.append(f"{path.name}:button")
+        if 'document.createElement("textarea")' in source:
+            offenders.append(f"{path.name}:textarea")
+        if 'document.createElement("input")' in source:
+            offenders.append(f"{path.name}:input")
+        if 'document.createElement("select")' in source:
+            offenders.append(f"{path.name}:select")
+    assert not offenders, f"controls bypass shared components: {offenders}"
+
+
+def test_prompt_builder_has_no_local_node_width():
+    prompt = (ROOT / "web" / "jsdirtybirds_prompt.js").read_text(encoding="utf-8")
+    assert "DB_MIN_W" not in prompt
+    assert "node.min_width" not in prompt
+
+
+def test_node_modules_have_no_local_width_authority():
+    offenders = []
+    for path in (ROOT / "web").glob("jsdirtybirds*.js"):
+        if path.name == "jsdirtybirds_sizeguard.js":
+            continue
+        source = path.read_text(encoding="utf-8")
+        for marker in ("node.min_width", "DB_MIN_W", "MIN_W =", "size[0] <"):
+            if marker in source:
+                offenders.append(f"{path.name}:{marker}")
+    assert not offenders, f"local node width sizing found: {offenders}"
+
+
 def test_generation_setup_disabled_controls_explain_themselves():
     loader = (ROOT / "web" / "jsdirtybirds.js").read_text(encoding="utf-8")
     assert 'denoise.title = isI2I ? "" : "Denoise only applies in Image → Image mode"' in loader

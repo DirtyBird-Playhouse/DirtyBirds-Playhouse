@@ -10,6 +10,8 @@ import { app } from "../../../scripts/app.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, makeSectionLabel, fetchJSON, nodeInnerW,
   hideWidget as hideWidgetShared, makeCollapsibleSectionLabel,
+  makeButton, makeTextarea,
+  makeInput,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -31,7 +33,7 @@ function showPromptFlyout(title, prompts, current, onPick) {
   const titleEl = document.createElement("span");
   titleEl.className = "db-flyout-title";
   titleEl.textContent = title;
-  const closeBtn = document.createElement("button");
+  const closeBtn = makeButton();
   closeBtn.className = "db-flyout-close";
   closeBtn.textContent = "✕";
   header.append(titleEl, closeBtn);
@@ -144,7 +146,7 @@ app.registerExtension({
       const titleEl = makeSectionLabel("Prompt Enhance");
       const titleRow = document.createElement("div");
       titleRow.className = "db-muse-title-row";
-      const power = document.createElement("button");
+      const power = makeButton();
       power.type = "button";
       power.className = "db-muse-power";
       const powerKnob = document.createElement("span");
@@ -189,7 +191,7 @@ app.registerExtension({
       sourceStatus.style.cursor = "pointer";
       const sourcePreview = document.createElement("div");
       sourcePreview.className = "db-muse-source-preview";
-      const instructionArea = document.createElement("textarea");
+      const instructionArea = makeTextarea();
       instructionArea.className = "db-script-textarea db-muse-textarea";
       instructionArea.placeholder = "prompt writing request";
       instructionArea.value = instructionWidget?.value || "";
@@ -199,7 +201,7 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       });
 
-      const responseBox = document.createElement("textarea");
+      const responseBox = makeTextarea();
       responseBox.className = "db-script-textarea db-muse-response";
       responseBox.placeholder = "run the node to see the LM response";
       responseBox.spellcheck = false;
@@ -215,10 +217,10 @@ app.registerExtension({
         },
       });
 
-      const sendBtn = document.createElement("button");
+      const sendBtn = makeButton();
       sendBtn.className = "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
       sendBtn.textContent = "Apply to Prompt Builder";
-      const generateBtn = document.createElement("button");
+      const generateBtn = makeButton();
       generateBtn.className = "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
       generateBtn.textContent = "Enhance Prompt";
 
@@ -231,7 +233,7 @@ app.registerExtension({
         ["replace", "Replace"],
         ["append", "Append"],
       ].map(([value, label]) => {
-        const button = document.createElement("button");
+        const button = makeButton();
         button.type = "button";
         button.className = "db-lib-btn db-muse-mode-btn";
         button.textContent = label;
@@ -561,7 +563,7 @@ app.registerExtension({
         const lbl = document.createElement("span");
         lbl.className = "db-slider-label";
         lbl.textContent = label;
-        const slider = document.createElement("input");
+        const slider = makeInput();
         slider.type = "range";
         slider.className = "db-sel-slider";
         slider.min = String(min);
@@ -590,7 +592,7 @@ app.registerExtension({
         const lbl = document.createElement("span");
         lbl.className = "db-slider-label";
         lbl.textContent = label;
-        const input = document.createElement("input");
+        const input = makeInput();
         input.type = "number";
         input.className = "db-text-input db-muse-token-input";
         input.min = String(min);
@@ -618,7 +620,6 @@ app.registerExtension({
 
       const origResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < 420) size[0] = 420;
         origResize?.call(this, size);
         syncPanelH();
       };

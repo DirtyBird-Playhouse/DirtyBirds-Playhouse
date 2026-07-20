@@ -12,6 +12,8 @@ import { app } from "../../../scripts/app.js";
 import {
   DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON,
   hideWidget, showListFlyout, bindWidthSync, setWidgetHeight,
+  makeButton,
+  makeInput,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -29,8 +31,6 @@ app.registerExtension({
       const node = this;
       node.color   = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      const DB_MIN_W = 320;
-      node.size[0] = Math.max(node.size[0] || 0, DB_MIN_W);
 
       const dataW = hideWidget(node, "trigger_words_data");
       let chips = [];
@@ -41,7 +41,7 @@ app.registerExtension({
       // Header already reads "The Wardrobe" — no redundant in-node title.
 
       // ── Add-LoRA button ──────────────────────────────────────────────────────
-      const addBtn = document.createElement("button");
+      const addBtn = makeButton();
       addBtn.className = "db-lib-btn db-lora-add-open-btn";
       addBtn.textContent = "👗  Add Outfit (LoRA)";
       addBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -132,7 +132,7 @@ app.registerExtension({
             e.stopPropagation();
             if (chip.classList.contains("db-tw-editing")) return;
             chip.classList.add("db-tw-editing");
-            const input = document.createElement("input");
+            const input = makeInput();
             input.className = "db-tw-input"; input.value = entry.text;
             input.style.width = Math.max(40, entry.text.length * 7) + "px";
             chip.innerHTML = ""; chip.appendChild(input);
@@ -183,7 +183,7 @@ app.registerExtension({
       });
 
       // ── Send active trigger words to Dirty Talk positive prompt ────────────
-      const sendBtn = document.createElement("button");
+      const sendBtn = makeButton();
       sendBtn.className = "db-lib-btn db-lora-add-open-btn";
       sendBtn.textContent = "Send to Prompt Builder";
       sendBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
@@ -231,7 +231,7 @@ app.registerExtension({
       });
 
       // ── Width sync + restore ────────────────────────────────────────────────
-      bindWidthSync(node, widthEls, DB_MIN_W);
+      bindWidthSync(node, widthEls);
       requestAnimationFrame(() => requestAnimationFrame(renderChips));
     };
   },

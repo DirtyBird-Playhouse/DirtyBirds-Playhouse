@@ -190,7 +190,6 @@ function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
   panel.append(list);
 }
 
-const NODE_WIDTH = 500;
 // Section heights are computed from known state (item counts, whether a
 // preview is reserved) rather than measured DOM height, so layout can never
 // feed its own height back into ComfyUI and grow on every draw. Lists beyond
@@ -324,6 +323,22 @@ function setupGenerationNode(node) {
   };
   let loras = parseJSON(widgets.loras_data?.value);
   let triggerWords = parseJSON(widgets.trigger_words_data?.value);
+  function syncLoraStateFromWidgets() {
+    // onNodeCreated sees defaults; onConfigure runs after saved widget values
+    // are restored. Re-read both backing fields so the visible panel always
+    // represents the data that ComfyUI will queue.
+    loras = parseJSON(widgets.loras_data?.value);
+    triggerWords = parseJSON(widgets.trigger_words_data?.value);
+    // A trigger word is owned by a selected LoRA and must not survive without
+    // that parent.
+    const selectedLoraNames = new Set(loras.map((item) => item?.name).filter(Boolean));
+    const currentTriggerWords = triggerWords.filter((item) => selectedLoraNames.has(item?.lora));
+    if (currentTriggerWords.length !== triggerWords.length) {
+      triggerWords = currentTriggerWords;
+      if (widgets.trigger_words_data) widgets.trigger_words_data.value = JSON.stringify(triggerWords);
+    }
+  }
+  syncLoraStateFromWidgets();
 
   const panel = el("div", "db-generation-panel");
   panel.style.setProperty("--db-node-bg", DB_BGCOLOR);
@@ -382,14 +397,13 @@ function setupGenerationNode(node) {
     node.properties.db_generation_ui_version = UI_VERSION;
     const panelHeight = currentPanelHeight();
     const panelDelta = panelHeight - previousPanelHeight;
-    const currentWidth = node.size?.[0] || NODE_WIDTH;
+    const currentWidth = node.size?.[0] || 0;
     const currentHeight = node.size?.[1] || 0;
-    const targetWidth = Math.max(NODE_WIDTH, currentWidth);
+    const targetWidth = currentWidth;
     panelWidget.computedHeight = panelHeight;
     panel.style.height = `${panelHeight}px`;
     syncPanelWidth(node);
     const minimumHeight = naturalNodeHeight(panelHeight);
-    node.min_width = NODE_WIDTH;
     node.min_height = minimumHeight;
 
     let targetHeight = normalizeSavedHeight ? minimumHeight : Math.max(minimumHeight, currentHeight);
@@ -856,6 +870,7 @@ function setupGenerationNode(node) {
   }
 
   function syncFromWidgets() {
+    syncLoraStateFromWidgets();
     batch.value = String(widgets.batch_size?.value ?? 1);
     batchValue.textContent = batch.value;
     denoise.value = String(widgets.denoise?.value ?? 1);

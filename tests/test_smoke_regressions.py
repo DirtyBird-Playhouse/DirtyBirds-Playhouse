@@ -57,6 +57,24 @@ def test_random_mode_varies_between_runs():
     assert len(seeds) > 1, "random seed mode produced a constant seed"
 
 
+def test_loader_resolves_random_seed_only_once():
+    """Keep the loader's displayed/returned seed identical to the sampled seed."""
+    loader_source = (REPO_ROOT / "nodes" / "loader" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    process_source = loader_source.split("def process(self,", 1)[1]
+    assert process_source.count("resolve_seed(seed, seed_mode)") == 1
+    assert 'if seed_mode == "random":' not in process_source
+
+
+def test_loader_ignores_trigger_words_without_an_active_lora():
+    loader_source = (REPO_ROOT / "nodes" / "loader" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "active_inline_loras.add(name)" in loader_source
+    assert 'if entry.get("lora") not in active_inline_loras:' in loader_source
+
+
 # --------------------------------------------------------------------------- #
 # 2. Fixer CodeFormer extra-arch registration tolerates a prior registration
 # --------------------------------------------------------------------------- #

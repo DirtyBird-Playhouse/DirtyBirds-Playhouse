@@ -239,12 +239,14 @@ class FaceRestoreManager:
         the GAN. Returns [1,3,512,512] in [0,1] on the model device."""
         if method == "CodeFormer":
             out = self._run_codeformer(descriptor, x512, codeformer_fidelity)
+        elif method == "GFPGAN":
+            out = self._run_gfpgan(descriptor, x512)
         else:
             out = descriptor(x512)
         return out.clamp(0.0, 1.0)
 
     @torch.no_grad()
-    def restore(self, face_bhwc, method, codeformer_fidelity=0.5):
+    def restore(self, face_bhwc, method, codeformer_fidelity=0.5, align=True):
         """Restore a face crop. ``face_bhwc`` is [B,H,W,3] in [0,1]; returns the
         same layout/size. Each image is landmark-aligned before the GAN and the
         result is warped back into place; if no face landmarks are found the
@@ -257,7 +259,11 @@ class FaceRestoreManager:
             return face_bhwc
 
         device = model_management.get_torch_device()
-        helper = self._get_helper()
+        # The integrated Fixer already supplies a detected, cropped face. Its
+        # caller disables this second landmark detector to avoid doing another
+        # RetinaFace pass for every comparison method. Keep alignment available
+        # for callers that provide an arbitrary, uncropped image.
+        helper = self._get_helper() if align else None
 
         outputs = []
         for b in range(int(face_bhwc.shape[0])):
@@ -335,20 +341,43 @@ class FaceRestoreManager:
     @staticmethod
     def _run_codeformer(descriptor, x512, fidelity):
         """CodeFormer's fidelity weight isn't exposed on descriptor.__call__, so
-        drive the underlying model directly, falling back to the plain call."""
+        drive the underlying model directly, falling back to the plain call.
+
+        The native CodeFormer model uses ``[-1, 1]`` RGB tensors, whereas the
+        Spandrel descriptor API (and this manager) uses ``[0, 1]``. ReActor's
+        native path performs this conversion; doing it here prevents the raw
+        model from shifting color and saturation."""
         fidelity = float(max(0.0, min(1.0, fidelity)))
         model = descriptor.model
+        native_input = x512.mul(2.0).sub(1.0)
         # spandrel_extra_arches CodeFormer.forward is (x, weight=0.5, **kwargs).
         try:
-            result = model(x512, weight=fidelity)
+            result = model(native_input, weight=fidelity)
         except TypeError:
             try:
-                result = model(x512, fidelity)
+                result = model(native_input, fidelity)
             except Exception:
                 return descriptor(x512)
         if isinstance(result, (tuple, list)):
             result = result[0]
-        return result
+        return result.add(1.0).mul(0.5)
+
+    @staticmethod
+    def _run_gfpgan(descriptor, x512):
+        """Run GFPGAN using its native ``[-1, 1]`` tensor convention.
+
+        Like CodeFormer, GFPGAN's raw model is trained on normalized tensors,
+        but the Spandrel descriptor call does not apply that normalization.
+        Convert at this boundary so the restored result retains natural color.
+        """
+        native_input = x512.mul(2.0).sub(1.0)
+        try:
+            result = descriptor.model(native_input)
+        except Exception:
+            return descriptor(x512)
+        if isinstance(result, (tuple, list)):
+            result = result[0]
+        return result.add(1.0).mul(0.5)
 
     def offload_to_cpu(self):
         for method, descriptor in self._descriptors.items():

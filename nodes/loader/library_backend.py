@@ -325,8 +325,6 @@ def get_lora_meta(lora_filename, allow_remote=True, use_lm=True):
 
     Results are cached in lora_meta_cache.json.
     """
-    global _meta_cache
-
     # Normalize bare LoRA-Manager names (no subfolder / extension) to the
     # canonical filename so the sidecar + get_full_path lookups resolve.
     lora_filename = resolve_lora_filename(lora_filename)
@@ -489,8 +487,6 @@ def get_embedding_meta(emb_filename, allow_remote=True, use_lm=True):
 
     use_lm=False skips the comfyui-lora-manager cache lookup (for bulk scans).
     """
-    global _meta_cache
-
     cache_key = _EMB_CACHE_PREFIX + emb_filename
     cached = _meta_cache.get(cache_key)
     if (cached and cached.get("resolved") and cached.get("v") == CACHE_VERSION

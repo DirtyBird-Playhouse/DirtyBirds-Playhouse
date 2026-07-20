@@ -7,7 +7,7 @@
  * Prompt Builder extension so that file can focus on the node UI.
  */
 
-import { fetchJSON } from "./db_shared.js";
+import { fetchJSON, makeButton } from "./db_shared.js";
 
 export const REFRESH = "🔄  Refresh list";
 
@@ -40,7 +40,7 @@ export function showOptionsFlyout(title, options, current, onPick) {
 
   const header = document.createElement("div"); header.className = "db-flyout-header";
   const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
-  const closeBtn = document.createElement("button"); closeBtn.className = "db-flyout-close"; closeBtn.textContent = "✕";
+  const closeBtn = makeButton("✕", null, "db-flyout-close");
   header.append(titleEl, closeBtn); panel.appendChild(header);
 
   const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);

@@ -1,0 +1,40 @@
+"""Tests for the {{TITLE}} node.
+
+Loads the module directly from its file path so the test needs neither a ComfyUI
+checkout nor the rest of the pack — same pattern as test_pipe_roundtrip.py. If
+the node imports torch or comfy at module level, use tests/_comfy_env.py's
+ensure_comfy() and skip cleanly when it returns None.
+"""
+
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name, relative_path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+mod = _load("dirtybirds_{{PACKAGE}}", "nodes/{{PACKAGE}}/__init__.py")
+
+
+def test_schema_declares_required_block():
+    schema = mod.{{CLASS_NAME}}.INPUT_TYPES()
+    assert "required" in schema
+
+
+def test_function_entrypoint_exists():
+    node = mod.{{CLASS_NAME}}
+    assert callable(getattr(node, node.FUNCTION, None))
+
+
+def test_returns_match_declared_types():
+    # Replace with a real call once the node does something.
+    node = mod.{{CLASS_NAME}}()
+    result = getattr(node, mod.{{CLASS_NAME}}.FUNCTION)()
+    assert isinstance(result, tuple)
+    assert len(result) == len(mod.{{CLASS_NAME}}.RETURN_TYPES)

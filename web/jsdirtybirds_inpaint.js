@@ -9,6 +9,9 @@ import {
   makeSectionLabel,
   makeSlider,
   nodeInnerW,
+  makeButton,
+  makeTextarea,
+  makeInput, makeSelect,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -28,7 +31,6 @@ app.registerExtension({
       const node = this;
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = Math.max(520, node.size[0] || 0);
 
       const widgets = Object.fromEntries(
         [
@@ -41,7 +43,7 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-inpaint-panel";
 
-      const sourceButton = document.createElement("button");
+      const sourceButton = makeButton();
       sourceButton.className = "db-lib-btn db-lora-add-open-btn";
       sourceButton.textContent = "Receive from Image Loader";
       const status = document.createElement("div");
@@ -82,7 +84,7 @@ app.registerExtension({
         const caption = document.createElement("span");
         caption.className = "db-inpaint-field-label";
         caption.textContent = label;
-        const select = document.createElement("select");
+        const select = makeSelect();
         select.className = "db-text-input db-inpaint-select";
         for (const value of widget?.options?.values || []) {
           const option = document.createElement("option");
@@ -108,7 +110,7 @@ app.registerExtension({
         ).row;
       }
 
-      const prompt = document.createElement("textarea");
+      const prompt = makeTextarea();
       prompt.className = "db-text-input db-inpaint-prompt";
       prompt.placeholder = "Describe the area to replace";
       prompt.value = String(widgets.segment_prompt?.value || "");
@@ -121,7 +123,7 @@ app.registerExtension({
       const seedLabel = document.createElement("span");
       seedLabel.className = "db-inpaint-field-label";
       seedLabel.textContent = "Seed";
-      const seedInput = document.createElement("input");
+      const seedInput = makeInput();
       seedInput.className = "db-text-input db-inpaint-number";
       seedInput.type = "number";
       seedInput.min = "0";
@@ -185,7 +187,6 @@ app.registerExtension({
       }
       const previousResize = node.onResize;
       node.onResize = function (size) {
-        if (size[0] < 520) size[0] = 520;
         previousResize?.call(this, size);
         syncWidth();
       };
