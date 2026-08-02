@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -56,8 +55,12 @@ def test_custom_resize_uses_exact_latent_friendly_dimensions(monkeypatch):
     monkeypatch.setattr(image_loader, "_open_source", lambda *_: source)
 
     image, _mask = image_loader.DirtyBirdsLoadImage().load(
-        image="ignored", resize=True, resize_mode="custom",
-        resize_width=800, resize_height=600, sharpen="off",
+        image="ignored",
+        resize=True,
+        resize_mode="custom",
+        resize_width=800,
+        resize_height=600,
+        sharpen="off",
     )
 
     # Outputs are just image + mask now; verify the resize via the image tensor
@@ -114,14 +117,18 @@ class _FakeResponse:
 def test_webpage_url_resolves_og_image(monkeypatch):
     image_bytes = io.BytesIO()
     Image.new("RGB", (32, 24), "red").save(image_bytes, format="PNG")
-    responses = iter([
-        _FakeResponse(
-            b'<html><meta property="og:image" content="/preview.png"></html>',
-            "text/html",
-            "https://example.test/page",
-        ),
-        _FakeResponse(image_bytes.getvalue(), "image/png", "https://example.test/preview.png"),
-    ])
+    responses = iter(
+        [
+            _FakeResponse(
+                b'<html><meta property="og:image" content="/preview.png"></html>',
+                "text/html",
+                "https://example.test/page",
+            ),
+            _FakeResponse(
+                image_bytes.getvalue(), "image/png", "https://example.test/preview.png"
+            ),
+        ]
+    )
     requested = []
 
     def fake_urlopen(request, timeout):
@@ -133,4 +140,7 @@ def test_webpage_url_resolves_og_image(monkeypatch):
     result = image_loader._open_source(None, "HTTPS://example.test/page")
 
     assert result.size == (32, 24)
-    assert requested == ["HTTPS://example.test/page", "https://example.test/preview.png"]
+    assert requested == [
+        "HTTPS://example.test/page",
+        "https://example.test/preview.png",
+    ]

@@ -17,6 +17,7 @@ from aiohttp import web
 from server import PromptServer
 
 from ..utils.paths import pack_root
+from .summary import generation_summary, summary_line
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +60,18 @@ async def api_saveprompt_browse(request):
                 except OSError:
                     continue
     except Exception as e:
-        return web.json_response({"error": str(e), "path": path, "dirs": [], "files": []}, status=400)
+        return web.json_response(
+            {"error": str(e), "path": path, "dirs": [], "files": []}, status=400
+        )
     parent = os.path.dirname(path) if os.path.dirname(path) != path else ""
-    return web.json_response({
-        "path": path,
-        "parent": parent,
-        "dirs": sorted(dirs, key=str.lower),
-        "files": sorted(files, key=str.lower),
-    })
+    return web.json_response(
+        {
+            "path": path,
+            "parent": parent,
+            "dirs": sorted(dirs, key=str.lower),
+            "files": sorted(files, key=str.lower),
+        }
+    )
 
 
 def _append_prompt(prompts_file, text):
@@ -87,8 +92,7 @@ def _collect_prompt_files(folder):
     return [
         os.path.join(folder, name)
         for name in sorted(os.listdir(folder))
-        if name.lower().endswith(".txt")
-        and os.path.isfile(os.path.join(folder, name))
+        if name.lower().endswith(".txt") and os.path.isfile(os.path.join(folder, name))
     ]
 
 
@@ -122,11 +126,13 @@ async def api_saved_prompts(request):
                         seen.add(line)
                         prompts.append(line)
                     if line:
-                        items.append({
-                            "file": os.path.basename(path),
-                            "line": idx,
-                            "text": line,
-                        })
+                        items.append(
+                            {
+                                "file": os.path.basename(path),
+                                "line": idx,
+                                "text": line,
+                            }
+                        )
         except Exception as e:
             logger.warning("[DirtyBirds] Could not read prompt file %s: %s", path, e)
     return web.json_response({"prompts": prompts, "items": items})
@@ -160,7 +166,9 @@ async def api_delete_saved_prompt(request):
     except Exception as e:
         logger.warning("[DirtyBirds] Delete saved prompt failed: %s", e)
         return web.json_response({"ok": False, "error": str(e)}, status=400)
-    return web.json_response({"ok": True, "file": os.path.basename(path), "line": line_no})
+    return web.json_response(
+        {"ok": True, "file": os.path.basename(path), "line": line_no}
+    )
 
 
 @PromptServer.instance.routes.post("/dirtybirds/archive-save-prompt")
@@ -200,8 +208,14 @@ class DirtyBirdsSavePrompt:
             "optional": {
                 "pipe": ("DIRTYBIRDS_PIPE",),
                 "images": ("IMAGE",),
-                "positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                "negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+                "positive": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
+                "negative": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -215,13 +229,23 @@ class DirtyBirdsSavePrompt:
     OUTPUT_NODE = True
     CATEGORY = "DirtyBirds"
 
-    def save(self, filename_prefix="DirtyBirds",
-             prompts_file=DEFAULT_PROMPTS_FILE, pipe=None, images=None,
-             positive=None, negative=None, prompt=None, extra_pnginfo=None):
+    def save(
+        self,
+        filename_prefix="DirtyBirds",
+        prompts_file=DEFAULT_PROMPTS_FILE,
+        pipe=None,
+        images=None,
+        positive=None,
+        negative=None,
+        prompt=None,
+        extra_pnginfo=None,
+    ):
         if images is None and pipe is not None:
             images = pipe.get("images")
         if images is None:
-            raise ValueError("No images provided -- connect an IMAGE input or a pipe with images.")
+            raise ValueError(
+                "No images provided -- connect an IMAGE input or a pipe with images."
+            )
         pos_out = positive or ""
         neg_out = negative or ""
         if pipe:
@@ -230,10 +254,13 @@ class DirtyBirdsSavePrompt:
                 pos_out = str(ls.get("positive", "") or "")
             if not neg_out:
                 neg_out = str(ls.get("negative", "") or "")
-        full_output_folder, filename, counter, subfolder, filename_prefix = \
+        summary = generation_summary(pipe)
+        settings_line = summary_line(summary)
+        full_output_folder, filename, counter, subfolder, filename_prefix = (
             folder_paths.get_save_image_path(
-                filename_prefix, self.output_dir,
-                images[0].shape[1], images[0].shape[0])
+                filename_prefix, self.output_dir, images[0].shape[1], images[0].shape[0]
+            )
+        )
 
         results = []
         for batch_number, image in enumerate(images):
@@ -251,15 +278,31 @@ class DirtyBirdsSavePrompt:
                 metadata.add_text("prompt_positive", pos_out)
             if neg_out:
                 metadata.add_text("prompt_negative", neg_out)
+            # Settings in two forms: machine-readable for tooling, and one plain
+            # line any image viewer's metadata panel can show at a glance.
+            if summary:
+                metadata.add_text("db_generation", json.dumps(summary))
+                metadata.add_text("db_settings", settings_line)
 
             file = f"{filename}_{counter:05}_.png"
-            img.save(os.path.join(full_output_folder, file),
-                     pnginfo=metadata, compress_level=4)
-            results.append({"filename": file, "subfolder": subfolder, "type": self.type})
+            img.save(
+                os.path.join(full_output_folder, file),
+                pnginfo=metadata,
+                compress_level=4,
+            )
+            results.append(
+                {"filename": file, "subfolder": subfolder, "type": self.type}
+            )
             counter += 1
 
-        return {"ui": {"images": results, "db_prompts_md": [pos_out, neg_out]},
-                "result": ()}
+        return {
+            "ui": {
+                "images": results,
+                "db_prompts_md": [pos_out, neg_out],
+                "db_settings_md": [settings_line],
+            },
+            "result": (),
+        }
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsSavePrompt": DirtyBirdsSavePrompt}

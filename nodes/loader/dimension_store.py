@@ -2,12 +2,52 @@
 
 import json
 import os
-
+import random as _random
 
 DEFAULT_DIMENSIONS = {"1024x1024": [1024, 1024]}
 MIN_DIMENSION = 64
 MAX_DIMENSION = 8192
 DIMENSION_STEP = 8
+
+# Sentinel widget values for the 🎲 Random picks. The shape-filtered variants
+# exist because an unfiltered roll mixes portrait and landscape, which rarely
+# suits the subject you're generating.
+RANDOM_ANY = "__random__"
+RANDOM_PORTRAIT = "__random_portrait__"
+RANDOM_LANDSCAPE = "__random_landscape__"
+RANDOM_SQUARE = "__random_square__"
+
+_RANDOM_SHAPES = {
+    RANDOM_ANY: lambda width, height: True,
+    RANDOM_PORTRAIT: lambda width, height: height > width,
+    RANDOM_LANDSCAPE: lambda width, height: width > height,
+    RANDOM_SQUARE: lambda width, height: width == height,
+}
+
+
+def is_random(dimension):
+    """True for any of the 🎲 Random sentinels."""
+    return str(dimension) in _RANDOM_SHAPES
+
+
+def pick_random_dimension(dimension, dimensions, rng=_random):
+    """Choose a preset label matching the sentinel's shape.
+
+    Falls back to the full preset list when the requested shape has no presets
+    (rather than failing), and to a safe square when there are none at all.
+    """
+    matches = _RANDOM_SHAPES.get(str(dimension))
+    presets = dimensions or {}
+    candidates = [
+        label
+        for label, value in presets.items()
+        if matches and len(value) == 2 and matches(int(value[0]), int(value[1]))
+    ]
+    if not candidates:
+        candidates = list(presets.keys())
+    if not candidates:
+        return next(iter(DEFAULT_DIMENSIONS))
+    return rng.choice(sorted(candidates))
 
 
 def _validate_axis(value, label):
@@ -71,12 +111,16 @@ def save_dimensions(data, user_path):
 
 def normalize_runtime_dimensions(width, height):
     """Keep legacy/raw workflow values safe for latent creation."""
+
     def normalize(value):
         try:
             numeric = int(value)
         except (TypeError, ValueError):
             numeric = 1024
         numeric = max(MIN_DIMENSION, min(MAX_DIMENSION, numeric))
-        return max(MIN_DIMENSION, min(MAX_DIMENSION, round(numeric / DIMENSION_STEP) * DIMENSION_STEP))
+        return max(
+            MIN_DIMENSION,
+            min(MAX_DIMENSION, round(numeric / DIMENSION_STEP) * DIMENSION_STEP),
+        )
 
     return normalize(width), normalize(height)

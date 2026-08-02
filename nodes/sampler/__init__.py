@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 EVENT = "dirtybirds-sampler-pick"
 ROUTE = "/dirtybirds/sampler-pick"
 
-# On timeout we keep ALL images rather than dropping the generation (no timeout
-# UI is exposed; this is a safety net only).
+# On timeout we send NO images and stop the graph cleanly, rather than passing
+# an unreviewed batch downstream.
 PICK_TIMEOUT = 30
 
 
@@ -125,13 +125,23 @@ def _prepare_noise(latent_image, seed, noise_inds, device):
     the GPU RNG stream (A1111-style) for a different noise grain."""
     generator = torch.Generator(device=device).manual_seed(int(seed))
     if noise_inds is None:
-        return torch.randn(latent_image.size(), dtype=torch.float32, layout=latent_image.layout,
-                           generator=generator, device=device).to(dtype=latent_image.dtype)
+        return torch.randn(
+            latent_image.size(),
+            dtype=torch.float32,
+            layout=latent_image.layout,
+            generator=generator,
+            device=device,
+        ).to(dtype=latent_image.dtype)
     unique_inds, inverse = np.unique(noise_inds, return_inverse=True)
     noises = []
     for i in range(unique_inds[-1] + 1):
-        noise = torch.randn([1] + list(latent_image.size())[1:], dtype=torch.float32,
-                            layout=latent_image.layout, generator=generator, device=device).to(dtype=latent_image.dtype)
+        noise = torch.randn(
+            [1] + list(latent_image.size())[1:],
+            dtype=torch.float32,
+            layout=latent_image.layout,
+            generator=generator,
+            device=device,
+        ).to(dtype=latent_image.dtype)
         if i in unique_inds:
             noises.append(noise)
     noises = [noises[i] for i in inverse]
@@ -145,20 +155,32 @@ class DirtyBirdsSampler:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipe":           ("DIRTYBIRDS_PIPE",),
-                "sampler_name":   (comfy.samplers.KSampler.SAMPLERS,),
-                "scheduler":      (comfy.samplers.KSampler.SCHEDULERS,),
-                "steps":          ("INT", {"default": 20, "min": 1, "max": 10000}),
-                "cfg":            ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "pipe": ("DIRTYBIRDS_PIPE",),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                "cfg": (
+                    "FLOAT",
+                    {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1},
+                ),
                 # Noise placement, driven by the JS slider:
                 #   cpu  = stock-KSampler parity (CPU RNG)
                 #   gpu  = A1111-style grain (GPU RNG)
                 #   both = run both and batch the results
-                "noise_mode":     (["cpu", "both", "gpu"], {"default": "both"}),
-                "batch_mode":     ("BOOLEAN", {"default": False}),
+                "noise_mode": (["cpu", "both", "gpu"], {"default": "both"}),
+                "batch_mode": ("BOOLEAN", {"default": False}),
                 "overlay_enabled": ("BOOLEAN", {"default": False}),
-                # How long the interactive picker blocks before keeping everything.
-                "pick_timeout":   ("INT", {"default": PICK_TIMEOUT, "min": 5, "max": 600, "step": 5}),
+                # How long the interactive picker blocks before sending no images.
+                "pick_timeout": (
+                    "INT",
+                    {"default": PICK_TIMEOUT, "min": 5, "max": 600, "step": 5},
+                ),
+            },
+            "optional": {
+                # Wire straight from Prompt Builder's cycler_line output. Optional
+                # so existing workflows still load; unwired simply means no
+                # caption, which is also what an empty cycler produces.
+                "cycler_line": ("STRING", {"default": "", "forceInput": True}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -174,9 +196,20 @@ class DirtyBirdsSampler:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
-    def sample(self, pipe, sampler_name, scheduler, steps, cfg, noise_mode="both",
-               batch_mode=False, overlay_enabled=False, pick_timeout=PICK_TIMEOUT,
-               unique_id=None):
+    def sample(
+        self,
+        pipe,
+        sampler_name,
+        scheduler,
+        steps,
+        cfg,
+        noise_mode="both",
+        batch_mode=False,
+        overlay_enabled=False,
+        pick_timeout=PICK_TIMEOUT,
+        cycler_line="",
+        unique_id=None,
+    ):
         model = pipe["model"]
         positive = pipe["positive"]
         negative = pipe["negative"]
@@ -196,11 +229,21 @@ class DirtyBirdsSampler:
             # Fresh callback per pass so the live preview tracks each run.
             callback = latent_preview.prepare_callback(model, steps)
             return comfy.sample.sample(
-                model, noise, steps, cfg, sampler_name, scheduler,
-                positive, negative, latent_image,
-                denoise=denoise, disable_noise=False,
-                noise_mask=noise_mask, callback=callback,
-                disable_pbar=disable_pbar, seed=seed,
+                model,
+                noise,
+                steps,
+                cfg,
+                sampler_name,
+                scheduler,
+                positive,
+                negative,
+                latent_image,
+                denoise=denoise,
+                disable_noise=False,
+                noise_mask=noise_mask,
+                callback=callback,
+                disable_pbar=disable_pbar,
+                seed=seed,
             )
 
         # Noise placement, selected by the JS slider:
@@ -218,7 +261,9 @@ class DirtyBirdsSampler:
         latent_parts, image_parts = [], []
         for which in order:
             if which == "gpu":
-                noise = _prepare_noise(latent_image, seed, batch_inds, model.load_device)
+                noise = _prepare_noise(
+                    latent_image, seed, batch_inds, model.load_device
+                )
             else:
                 noise = comfy.sample.prepare_noise(latent_image, seed, batch_inds)
             samples_pass = _run(noise)
@@ -233,11 +278,7 @@ class DirtyBirdsSampler:
         image = torch.cat(image_parts, dim=0)
         batch = image.shape[0]
 
-        cycler_text = str(
-            pipe.get("db_cycler_text")
-            or pipe.get("loader_settings", {}).get("db_cycler_text")
-            or ""
-        ).strip()
+        cycler_text = str(cycler_line or "").strip()
         overlay_active = bool(overlay_enabled and cycler_text)
         if overlay_active:
             image = add_text_overlay(image, cycler_text)
@@ -249,11 +290,22 @@ class DirtyBirdsSampler:
             preview["width"] = int(image.shape[2])
             preview["height"] = int(image.shape[1])
 
+        # Ride the sampler's own settings out on the pipe so the Archive node can
+        # record how the image was actually made (see its _generation_summary).
+        sampler_settings = {
+            "sampler_name": sampler_name,
+            "scheduler": scheduler,
+            "steps": int(steps),
+            "cfg": float(cfg),
+            "noise_mode": mode,
+        }
+
         if should_bypass_picker(batch_mode, overlay_enabled, cycler_text):
             # Batch mode: skip the interactive picker, pass everything through.
             latent_out["samples"] = samples
             pipe = dict(pipe)
             pipe["images"] = image
+            pipe["db_sampler_settings"] = sampler_settings
             return {
                 "ui": {"db_images": previews},
                 "result": (pipe, latent_out, image),
@@ -266,14 +318,17 @@ class DirtyBirdsSampler:
             {"images": previews, "count": batch, "node_id": str(unique_id)},
             max(5, int(pick_timeout)),
         )
-        if selection is None:  # timed out -> keep everything
-            selection = list(range(batch))
+        if selection is None:  # timed out -> send no images
+            selection = []
 
         # Clamp to valid, de-dup, keep order.
         seen = set()
-        selection = [i for i in selection if 0 <= i < batch and not (i in seen or seen.add(i))]
+        selection = [
+            i for i in selection if 0 <= i < batch and not (i in seen or seen.add(i))
+        ]
         if not selection:
-            # Nothing kept -> stop the graph cleanly rather than passing junk on.
+            # Nothing kept (timeout or empty pick) -> stop the graph cleanly
+            # rather than passing junk on.
             raise InterruptProcessingException()
 
         # Filter image + matching latents to the picks (kept aligned).
@@ -284,6 +339,7 @@ class DirtyBirdsSampler:
 
         pipe = dict(pipe)
         pipe["images"] = image
+        pipe["db_sampler_settings"] = sampler_settings
         return {
             "ui": {"db_images": picked_previews},
             "result": (pipe, latent_out, image),

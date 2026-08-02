@@ -22,10 +22,15 @@ pipe = _load("dirtybirds_pipe", "nodes/pipe/__init__.py")
 
 def _full_pipe():
     return {
-        "model": "M", "clip": "C", "vae": "V",
-        "positive": "pos", "negative": "neg",
-        "samples": "lat", "images": "img",
-        "seed": 7, "denoise": 0.5,
+        "model": "M",
+        "clip": "C",
+        "vae": "V",
+        "positive": "pos",
+        "negative": "neg",
+        "samples": "lat",
+        "images": "img",
+        "seed": 7,
+        "denoise": 0.5,
         "loader_settings": {"ckpt_name": "ckpt.safetensors", "lora_stack": []},
     }
 
@@ -44,9 +49,9 @@ def test_pack_then_unpack_roundtrips_every_socket():
 def test_pack_overrides_only_wired_sockets():
     base = _full_pipe()
     packed = pipe.DirtyBirdsPipeIn().pack(db_pipe=base, positive="NEW", seed=99)[0]
-    assert packed["positive"] == "NEW"       # wired -> overridden
+    assert packed["positive"] == "NEW"  # wired -> overridden
     assert packed["seed"] == 99
-    assert packed["negative"] == "neg"       # unwired -> kept
+    assert packed["negative"] == "neg"  # unwired -> kept
     assert packed["model"] == "M"
 
 
@@ -55,7 +60,7 @@ def test_pack_does_not_mutate_incoming_pipe():
     before = dict(base)
     before_settings = dict(base["loader_settings"])
     pipe.DirtyBirdsPipeIn().pack(db_pipe=base, positive="NEW")
-    assert base == before                    # top-level dict untouched
+    assert base == before  # top-level dict untouched
     assert base["loader_settings"] == before_settings  # settings not mutated
 
 
@@ -72,5 +77,5 @@ def test_unpack_tolerates_missing_seed_and_none_pipe():
     _, *rest, seed = pipe.DirtyBirdsPipeOut().unpack({})
     assert seed == 0
     out_none = pipe.DirtyBirdsPipeOut().unpack(None)
-    assert out_none[0] is None               # passthrough of the original arg
+    assert out_none[0] is None  # passthrough of the original arg
     assert out_none[-1] == 0

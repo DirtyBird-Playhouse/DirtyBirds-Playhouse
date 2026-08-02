@@ -7,7 +7,12 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, addTitle } from "./db_shared.js";
+import {
+  DB_COLOR,
+  DB_BGCOLOR,
+  ensureStylesheet,
+  addTitle,
+} from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -15,7 +20,7 @@ ensureStylesheet();
 // "Dress — Pipe In", so the label carries just the flavor line.
 const PIPE_NODES = {
   DirtyBirdsPipeOut: "Tap the Pipe",
-  DirtyBirdsPipeIn:  "Build the Pipe",
+  DirtyBirdsPipeIn: "Build the Pipe",
 };
 
 app.registerExtension({
@@ -28,7 +33,7 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
-      node.color   = DB_COLOR;
+      node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
       addTitle(node, "db_pipe_title", title);
     };

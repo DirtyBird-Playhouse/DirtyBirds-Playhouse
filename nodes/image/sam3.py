@@ -45,7 +45,10 @@ SAM3_CHECKPOINT = (
 # package's default lookup — that default resolves relative to whichever `sam3`
 # module Python loaded first (comfyui_sam3's or comfyui-rmbg's), and lands on a
 # path that may not exist. `assets/` lives in this node folder (alongside sam3.py).
-BPE_PATH = os.path.join(os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz")
+BPE_PATH = os.path.join(
+    os.path.dirname(__file__), "assets", "bpe_simple_vocab_16e6.txt.gz"
+)
+
 
 # The venv site-packages that holds comfyui_sam3's installed `sam3` package
 # (the one that matches sam3.pt). comfyui-rmbg ALSO ships a top-level `sam3`, so
@@ -59,6 +62,7 @@ def _resolve_sam3_site_packages():
     if override:
         return override
     import site
+
     candidates = []
     getter = getattr(site, "getsitepackages", None)
     if getter:
@@ -111,6 +115,7 @@ def _import_sam3_modules():
 # Checkpoint resolution
 # ---------------------------------------------------------------------------
 
+
 def _candidate_checkpoints():
     """Ordered list of places sam3.pt might live; first existing wins."""
     cands = []
@@ -161,9 +166,13 @@ def _find_checkpoint():
 # Model loading (cached)
 # ---------------------------------------------------------------------------
 
+
 def _load(device_str):
-    if (_SAM3["model"] is not None and _SAM3["processor"] is not None
-            and _SAM3["device"] == device_str):
+    if (
+        _SAM3["model"] is not None
+        and _SAM3["processor"] is not None
+        and _SAM3["device"] == device_str
+    ):
         return _SAM3["model"], _SAM3["processor"]
 
     try:
@@ -179,7 +188,8 @@ def _load(device_str):
     if not os.path.isfile(BPE_PATH):
         raise RuntimeError(
             "SAM3 tokenizer vocab is missing from the pack: %s. It should ship "
-            "with DirtyBirds (assets/bpe_simple_vocab_16e6.txt.gz)." % BPE_PATH)
+            "with DirtyBirds (assets/bpe_simple_vocab_16e6.txt.gz)." % BPE_PATH
+        )
     logger.info("[DirtyBirds] Loading SAM3 image model on %s from %s", device_str, ckpt)
     model = build_sam3_image_model(
         checkpoint_path=ckpt,
@@ -204,6 +214,7 @@ def _unload():
 # Inference
 # ---------------------------------------------------------------------------
 
+
 @torch.inference_mode()
 def segment(image_tensor, prompt, confidence, unload=False):
     """Segment the first frame of `image_tensor` by text `prompt`.
@@ -216,7 +227,7 @@ def segment(image_tensor, prompt, confidence, unload=False):
 
     _model, processor = _load(device_str)
 
-    frame = image_tensor[0]                       # [H, W, C] in [0, 1]
+    frame = image_tensor[0]  # [H, W, C] in [0, 1]
     h, w = int(frame.shape[0]), int(frame.shape[1])
     pil = Image.fromarray((frame.cpu().numpy() * 255).astype(np.uint8)[..., :3])
 
@@ -224,18 +235,23 @@ def segment(image_tensor, prompt, confidence, unload=False):
     processor.confidence_threshold = float(confidence)
     state = processor.set_text_prompt(prompt.strip() or "object", state)
 
-    masks = state.get("masks")                    # [N, 1, H, W] bool, or None
+    masks = state.get("masks")  # [N, 1, H, W] bool, or None
     if masks is None or masks.shape[0] == 0:
-        logger.warning("[DirtyBirds] SAM3: no objects matched '%s' at confidence %.2f",
-                       prompt, float(confidence))
+        logger.warning(
+            "[DirtyBirds] SAM3: no objects matched '%s' at confidence %.2f",
+            prompt,
+            float(confidence),
+        )
         mask_hw = torch.zeros((h, w), dtype=torch.float32)
     else:
         # Merge all detections into one mask (per-pixel max).
-        merged = masks.float().amax(dim=0)        # [1, H, W]
+        merged = masks.float().amax(dim=0)  # [1, H, W]
         mask_hw = merged[0].to(dtype=torch.float32, device="cpu")
 
-    out_mask = mask_hw.unsqueeze(0)               # [1, H, W]
-    cutout = (frame.cpu().to(torch.float32) * mask_hw.unsqueeze(-1)).unsqueeze(0)  # [1,H,W,C]
+    out_mask = mask_hw.unsqueeze(0)  # [1, H, W]
+    cutout = (frame.cpu().to(torch.float32) * mask_hw.unsqueeze(-1)).unsqueeze(
+        0
+    )  # [1,H,W,C]
 
     if unload:
         _unload()

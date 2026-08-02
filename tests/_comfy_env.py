@@ -47,7 +47,9 @@ def _install_server_stub():
             def factory(*_a, **_k):
                 def wrap(fn):
                     return fn
+
                 return wrap
+
             return factory
 
     class _Instance:
@@ -83,3 +85,38 @@ def ensure_comfy():
         return None
     _install_server_stub()
     return comfy
+
+
+# ── Loading a node package standalone ────────────────────────────────────────
+# Node packages import shared helpers from the parent package (``from .._compare
+# import ...``). Loading one flat, or as a top-level package, makes that raise
+# "attempted relative import beyond top-level package". So a stub parent is
+# registered first, with ``nodes/`` as its search path, and each package is
+# loaded as a child of it — the same shape ComfyUI imports them in.
+_PARENT = "dirtybirds_nodes"
+
+
+def load_node_package(name):
+    """Import ``nodes/<name>/__init__.py`` with its relative imports intact."""
+    import importlib.util
+
+    if _PARENT not in sys.modules:
+        parent = types.ModuleType(_PARENT)
+        parent.__path__ = [str(_REPO_ROOT / "nodes")]
+        sys.modules[_PARENT] = parent
+
+    package = _REPO_ROOT / "nodes" / name
+    full = f"{_PARENT}.{name}"
+    spec = importlib.util.spec_from_file_location(
+        full,
+        package / "__init__.py",
+        submodule_search_locations=[str(package)],
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[full] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(full, None)
+        raise
+    return module

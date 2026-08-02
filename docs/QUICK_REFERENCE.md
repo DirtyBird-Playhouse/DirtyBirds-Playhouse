@@ -14,12 +14,12 @@ Fast lookups for the DirtyBirds-Playhouse ComfyUI node suite. For navigation see
 
 ## Tensor / data contracts
 
-| Type | Shape / form |
-|------|--------------|
-| IMAGE | `torch.Tensor [B, H, W, C]`, float32, 0-1 |
-| MASK | `torch.Tensor [B, H, W]` |
-| LATENT | `{"samples": tensor}` |
-| CONDITIONING | list of `[tensor, dict]` pairs |
+| Type         | Shape / form                              |
+| ------------ | ----------------------------------------- |
+| IMAGE        | `torch.Tensor [B, H, W, C]`, float32, 0-1 |
+| MASK         | `torch.Tensor [B, H, W]`                  |
+| LATENT       | `{"samples": tensor}`                     |
+| CONDITIONING | list of `[tensor, dict]` pairs            |
 
 Respect the batch dim; never assume B=1. Honor the input device; don't hardcode
 `.cuda()`.
@@ -34,6 +34,7 @@ RETURN_NAMES = (...)             # optional
 FUNCTION = "run"
 CATEGORY = "DirtyBirds/..."
 ```
+
 Export `NODE_CLASS_MAPPINGS` + `NODE_DISPLAY_NAME_MAPPINGS`; merged in `__init__.py`.
 
 ## Web extension essentials
@@ -42,6 +43,7 @@ Export `NODE_CLASS_MAPPINGS` + `NODE_DISPLAY_NAME_MAPPINGS`; merged in `__init__
 import { app } from "../../scripts/app.js";
 app.registerExtension({ name, beforeRegisterNodeDef(nodeType, nodeData, app){...} });
 ```
+
 Shared helpers/palette: `web/db_shared.js`. No `window.prompt()`/`alert()` -
 inline DOM + status text.
 
@@ -54,14 +56,14 @@ inline DOM + status text.
 
 ## File locations
 
-| Need | Where |
-|------|-------|
-| Registration / entry | `__init__.py` |
-| Node backend | `dirtybirds_<module>.py` |
-| Per-node UI | `web/jsdirtybirds_<module>.js` |
-| Shared JS | `web/db_shared.js`, `web/jsdirtybirds.js` |
-| Wildcard engine | `dirtybirds_wildcard_engine.py` |
-| SAM3 model | `My_AI_Tools\models\sam3\sam3.pt` |
+| Need                 | Where                                     |
+| -------------------- | ----------------------------------------- |
+| Registration / entry | `__init__.py`                             |
+| Node backend         | `dirtybirds_<module>.py`                  |
+| Per-node UI          | `web/jsdirtybirds_<module>.js`            |
+| Shared JS            | `web/db_shared.js`, `web/jsdirtybirds.js` |
+| Wildcard engine      | `dirtybirds_wildcard_engine.py`           |
+| SAM3 model           | `My_AI_Tools\models\sam3\sam3.pt`         |
 
 ## Off-limits
 

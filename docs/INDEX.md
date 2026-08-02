@@ -13,18 +13,18 @@ Navigation with rough token estimates. Load the minimum that answers the task.
 
 ## Navigation by task type
 
-| If the task is... | Load | Est. tokens |
-|-------------------|------|-------------|
-| Add/edit a Python node | `docs/learnings/node-patterns.md` | ~500 |
-| Edit a `web/*.js` extension | `docs/learnings/web-extension-patterns.md` | ~500 |
-| Build/adjust node UI | `docs/learnings/ui-conventions.md` | ~400 |
-| Node I/O contract or HTTP route | `docs/learnings/api-design.md` | ~400 |
-| Avoid anti-patterns | `docs/learnings/common-pitfalls.md` | ~400 |
-| Optimize VRAM/tensor/UI | `docs/learnings/performance.md` | ~400 |
-| Wildcard engine work | `docs/learnings/wildcard-engine.md` | ~400 |
-| LM Studio / Muse work | `docs/learnings/llm-integration.md` | ~350 |
-| Install / distribute the pack | `docs/learnings/deployment.md` | ~350 |
-| Verify a change in the app | `docs/learnings/testing-patterns.md` | ~300 |
+| If the task is...               | Load                                       | Est. tokens |
+| ------------------------------- | ------------------------------------------ | ----------- |
+| Add/edit a Python node          | `docs/learnings/node-patterns.md`          | ~500        |
+| Edit a `web/*.js` extension     | `docs/learnings/web-extension-patterns.md` | ~500        |
+| Build/adjust node UI            | `docs/learnings/ui-conventions.md`         | ~400        |
+| Node I/O contract or HTTP route | `docs/learnings/api-design.md`             | ~400        |
+| Avoid anti-patterns             | `docs/learnings/common-pitfalls.md`        | ~400        |
+| Optimize VRAM/tensor/UI         | `docs/learnings/performance.md`            | ~400        |
+| Wildcard engine work            | `docs/learnings/wildcard-engine.md`        | ~400        |
+| LM Studio / Muse work           | `docs/learnings/llm-integration.md`        | ~350        |
+| Install / distribute the pack   | `docs/learnings/deployment.md`             | ~350        |
+| Verify a change in the app      | `docs/learnings/testing-patterns.md`       | ~300        |
 
 Fast lookups (cheatsheet): `docs/QUICK_REFERENCE.md` (~350 tokens).
 

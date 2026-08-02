@@ -21,9 +21,9 @@ import { ensureStylesheet } from "./db_shared.js";
 
 // Visible at import time so you can confirm in DevTools whether this file loaded.
 const FOLDERS = [
-  { key: "models",       label: "Models",               icon: "🗂" },
-  { key: "custom_nodes", label: "Custom Nodes",         icon: "🧩" },
-  { key: "dirtybirds",   label: "DirtyBirds Playhouse", icon: "🍑" },
+  { key: "models", label: "Models", icon: "🗂" },
+  { key: "custom_nodes", label: "Custom Nodes", icon: "🧩" },
+  { key: "dirtybirds", label: "DirtyBirds Playhouse", icon: "🍑" },
 ];
 
 async function openFolder(key) {
@@ -36,7 +36,9 @@ async function openFolder(key) {
     if (!resp.ok) {
       const e = await resp.json().catch(() => ({}));
       console.error("[DirtyBirds] open-folder failed:", e);
-      alert(`DirtyBirds: could not open folder — ${e.error || resp.statusText}`);
+      alert(
+        `DirtyBirds: could not open folder — ${e.error || resp.statusText}`,
+      );
     }
   } catch (err) {
     console.error("[DirtyBirds] open-folder error:", err);
@@ -48,11 +50,16 @@ function closeMenu() {
   document.getElementById("db-folder-menu")?.remove();
   document.removeEventListener("click", onOutside, true);
 }
-function onOutside() { closeMenu(); }
+function onOutside() {
+  closeMenu();
+}
 
 /** Toggle a themed dropdown anchored under the clicked toolbar button. */
 function toggleFolderMenu(evt) {
-  if (document.getElementById("db-folder-menu")) { closeMenu(); return; }
+  if (document.getElementById("db-folder-menu")) {
+    closeMenu();
+    return;
+  }
   ensureStylesheet();
 
   const menu = document.createElement("div");
@@ -62,8 +69,7 @@ function toggleFolderMenu(evt) {
   FOLDERS.forEach((f) => {
     const item = document.createElement("button");
     item.className = "db-folder-item";
-    item.innerHTML =
-      `<span class="db-folder-ico">${f.icon}</span><span>${f.label}</span>`;
+    item.innerHTML = `<span class="db-folder-ico">${f.icon}</span><span>${f.label}</span>`;
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       closeMenu();
@@ -82,9 +88,9 @@ function toggleFolderMenu(evt) {
   let top, left;
   if (r) {
     top = r.bottom + 6;
-    left = r.right - mw;               // right-align the menu to the button
+    left = r.right - mw; // right-align the menu to the button
   } else {
-    top = 48;                          // command-palette fallback (no anchor)
+    top = 48; // command-palette fallback (no anchor)
     left = window.innerWidth - mw - 12;
   }
   left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));

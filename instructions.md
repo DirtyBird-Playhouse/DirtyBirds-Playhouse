@@ -16,8 +16,8 @@ There are two files behind the scenes, both in this folder:
 C:\Users\mpick\My_AI_Tools\DirtyBirds-Playhouse\user_files\wildcards\
 ```
 
-- **Wildcard_Master.yaml** = your *word lists* (hair colors, clothing, poses...).
-- **templates.yaml** = your *saved scenarios* (ready-made prompts you reuse).
+- **Wildcard_Master.yaml** = your _word lists_ (hair colors, clothing, poses...).
+- **templates.yaml** = your _saved scenarios_ (ready-made prompts you reuse).
 
 You do not have to touch either file to make a prompt. You can just type in the
 node. The files are there when you want to save and reuse things.
@@ -45,7 +45,7 @@ Every run, the underscored bits get filled in differently.
 
 ## 3. The four things you can type
 
-### a) Pull a random word from a list  →  `__list/name__`
+### a) Pull a random word from a list → `__list/name__`
 
 ```
 __hair/color__
@@ -55,7 +55,7 @@ __clothing/footwear/business__
 The name is the path to the list, with `/` between levels. Capitals and spaces
 do not matter (`Long hair` also works as `long-hair`).
 
-### b) Pick one of a few choices  →  `{a|b|c}`
+### b) Pick one of a few choices → `{a|b|c}`
 
 ```
 {smiling|laughing|serious}
@@ -63,7 +63,7 @@ do not matter (`Long hair` also works as `long-hair`).
 
 Picks one at random.
 
-### c) Make one choice more likely  →  `number::choice`
+### c) Make one choice more likely → `number::choice`
 
 ```
 {7::a|3::b}
@@ -71,7 +71,7 @@ Picks one at random.
 
 `a` shows up about 70% of the time, `b` about 30%.
 
-### d) Pick several at once  →  `number$$choices`
+### d) Pick several at once → `number$$choices`
 
 ```
 {2$$a|b|c}        pick exactly 2
@@ -82,7 +82,7 @@ That is everything. You can mix them in one prompt.
 
 ---
 
-## 4. Keep outfits (and looks) from clashing  →  the register lock
+## 4. Keep outfits (and looks) from clashing → the register lock
 
 The problem: if you pull a top, bottoms, and shoes separately, you can end up with
 a business jacket and beach sandals. The fix is to **choose the style once and
@@ -126,11 +126,15 @@ its short name to run it.
 
    ```yaml
    templates:
-     my-look: ["[[outfit={Casual|Business}]]a woman, __clothing/tops/[[outfit]]__, __clothing/footwear/[[outfit]]__, __expression/facial__"]
+     my-look:
+       [
+         "[[outfit={Casual|Business}]]a woman, __clothing/tops/[[outfit]]__, __clothing/footwear/[[outfit]]__, __expression/facial__",
+       ]
    ```
 
    - `my-look` is the name you choose.
    - The whole prompt goes inside `["` and `"]` on one line.
+
 3. Save the file. No restart needed.
 4. In the node's positive box, just type:
 
@@ -157,7 +161,7 @@ and you edit your saved prompts in one small place.
 - **An outfit still mixes styles**: make sure every clothing piece uses the same
   `[[outfit]]` label, and that the list it points to does not itself contain the
   wrong style (e.g. dress shoes hiding in the Casual list).
-- **Same prompt every time**: turn on *reroll_each_run* on the node (it re-rolls
+- **Same prompt every time**: turn on _reroll_each_run_ on the node (it re-rolls
   randomly). With it off, the seed gives the same result on purpose.
 
 ---

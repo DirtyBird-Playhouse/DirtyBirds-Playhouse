@@ -10,15 +10,26 @@
 
 import { app } from "../../../scripts/app.js";
 import {
-  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON,
-  hideWidget, showListFlyout, bindWidthSync, setWidgetHeight,
+  DB_COLOR,
+  DB_BGCOLOR,
+  ensureStylesheet,
+  fetchJSON,
+  hideWidget,
+  showListFlyout,
+  bindWidthSync,
+  setWidgetHeight,
   makeButton,
   makeInput,
 } from "./db_shared.js";
 
 ensureStylesheet();
 
-const loraDisplay = f => (f || "").replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "");
+const loraDisplay = (f) =>
+  (f || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    .replace(/\.[^.]+$/, "");
 
 app.registerExtension({
   name: "DirtyBirds.Wardrobe",
@@ -29,12 +40,15 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       onNodeCreated?.apply(this, arguments);
       const node = this;
-      node.color   = DB_COLOR;
+      node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
 
       const dataW = hideWidget(node, "trigger_words_data");
       let chips = [];
-      try { const p = JSON.parse(dataW?.value || "[]"); if (Array.isArray(p)) chips = p; } catch (e) {}
+      try {
+        const p = JSON.parse(dataW?.value || "[]");
+        if (Array.isArray(p)) chips = p;
+      } catch (e) {}
 
       const widthEls = [];
 
@@ -44,45 +58,65 @@ app.registerExtension({
       const addBtn = makeButton();
       addBtn.className = "db-lib-btn db-lora-add-open-btn";
       addBtn.textContent = "👗  Add Outfit (LoRA)";
-      addBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      addBtn.style.cssText +=
+        "box-sizing:border-box;overflow:hidden;width:100%;";
       const addWrap = document.createElement("div");
-      addWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
+      addWrap.style.cssText =
+        "box-sizing:border-box;overflow:hidden;width:100%;";
       addWrap.appendChild(addBtn);
       node.addDOMWidget("db_wd_add", "customhtml", addWrap, {
-        serialize: false, height: 34, getMinHeight: () => 34,
+        serialize: false,
+        height: 34,
+        getMinHeight: () => 34,
       });
       widthEls.push(addWrap);
 
       // ── Trigger-word chip panel ──────────────────────────────────────────────
       const panel = document.createElement("div");
       panel.className = "db-tw-panel";
-      panel.style.cssText += "box-sizing:border-box;overflow:auto;width:100%;max-height:180px;";
-      const panelWidget = node.addDOMWidget("db_wd_chips", "customhtml", panel, {
-        serialize: false, height: 44, getMinHeight: () => Math.min(180, Math.max(44, panel.scrollHeight || 44)),
-      });
+      panel.style.cssText +=
+        "box-sizing:border-box;overflow:auto;width:100%;max-height:180px;";
+      const panelWidget = node.addDOMWidget(
+        "db_wd_chips",
+        "customhtml",
+        panel,
+        {
+          serialize: false,
+          height: 44,
+          getMinHeight: () =>
+            Math.min(180, Math.max(44, panel.scrollHeight || 44)),
+        },
+      );
       widthEls.push(panel);
 
       // ── Status line ──────────────────────────────────────────────────────────
       const status = document.createElement("div");
-      status.style.cssText = "font-size:10px;color:#888;padding:0 2px;width:100%;box-sizing:border-box;";
+      status.style.cssText =
+        "font-size:10px;color:#888;padding:0 2px;width:100%;box-sizing:border-box;";
       node.addDOMWidget("db_wd_status", "customhtml", status, {
-        serialize: false, height: 14, getMinHeight: () => 14,
+        serialize: false,
+        height: 14,
+        getMinHeight: () => 14,
       });
       widthEls.push(status);
 
-      function serialize() { if (dataW) dataW.value = JSON.stringify(chips); }
+      function serialize() {
+        if (dataW) dataW.value = JSON.stringify(chips);
+      }
       function restoreChips() {
         try {
           const parsed = JSON.parse(dataW?.value || "[]");
           if (Array.isArray(parsed)) chips = parsed;
         } catch (_) {}
       }
-      function activeCount() { return chips.filter(c => c.active).length; }
+      function activeCount() {
+        return chips.filter((c) => c.active).length;
+      }
       function activeText() {
         restoreChips();
         return chips
-          .filter(c => c.active && String(c.text || "").trim())
-          .map(c => String(c.text).trim())
+          .filter((c) => c.active && String(c.text || "").trim())
+          .map((c) => String(c.text).trim())
           .join(", ");
       }
       function refreshStatus() {
@@ -93,11 +127,15 @@ app.registerExtension({
       function fitNode() {
         // Grow the node so the last widget (Send button) is never clipped.
         const need = node.computeSize();
-        if ((node.size?.[1] || 0) < need[1]) node.setSize([node.size[0], need[1]]);
+        if ((node.size?.[1] || 0) < need[1])
+          node.setSize([node.size[0], need[1]]);
       }
       function syncH() {
         requestAnimationFrame(() => {
-          setWidgetHeight(panelWidget, Math.min(180, Math.max(44, panel.scrollHeight || 44)));
+          setWidgetHeight(
+            panelWidget,
+            Math.min(180, Math.max(44, panel.scrollHeight || 44)),
+          );
           fitNode();
           node.setDirtyCanvas(true, true);
         });
@@ -108,16 +146,21 @@ app.registerExtension({
         panel.innerHTML = "";
         if (!chips.length) {
           const hint = document.createElement("div");
-          hint.className = "db-tw-empty"; hint.textContent = "No trigger words";
+          hint.className = "db-tw-empty";
+          hint.textContent = "No trigger words";
           panel.appendChild(hint);
-          refreshStatus(); syncH(); return;
+          refreshStatus();
+          syncH();
+          return;
         }
         chips.forEach((entry, idx) => {
           const chip = document.createElement("span");
-          chip.className = "db-tw-chip" + (entry.active ? " db-tw-active" : " db-tw-inactive");
+          chip.className =
+            "db-tw-chip" + (entry.active ? " db-tw-active" : " db-tw-inactive");
           chip.title = `LoRA: ${loraDisplay(entry.lora)}\nClick: toggle • Double-click: edit • Right-click: remove`;
           const textEl = document.createElement("span");
-          textEl.className = "db-tw-text"; textEl.textContent = entry.text;
+          textEl.className = "db-tw-text";
+          textEl.textContent = entry.text;
           chip.appendChild(textEl);
 
           chip.addEventListener("click", () => {
@@ -125,7 +168,8 @@ app.registerExtension({
             entry.active = !entry.active;
             chip.classList.toggle("db-tw-active", entry.active);
             chip.classList.toggle("db-tw-inactive", !entry.active);
-            serialize(); refreshStatus();
+            serialize();
+            refreshStatus();
           });
 
           chip.addEventListener("dblclick", (e) => {
@@ -133,47 +177,78 @@ app.registerExtension({
             if (chip.classList.contains("db-tw-editing")) return;
             chip.classList.add("db-tw-editing");
             const input = makeInput();
-            input.className = "db-tw-input"; input.value = entry.text;
+            input.className = "db-tw-input";
+            input.value = entry.text;
             input.style.width = Math.max(40, entry.text.length * 7) + "px";
-            chip.innerHTML = ""; chip.appendChild(input);
+            chip.innerHTML = "";
+            chip.appendChild(input);
             function commit() {
               const v = input.value.trim();
-              if (v) entry.text = v; else chips.splice(idx, 1);
+              if (v) entry.text = v;
+              else chips.splice(idx, 1);
               chip.classList.remove("db-tw-editing");
-              serialize(); renderChips();
+              serialize();
+              renderChips();
             }
             input.addEventListener("keydown", (ev) => {
-              if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
-              if (ev.key === "Escape") { input.value = entry.text; input.blur(); }
+              if (ev.key === "Enter") {
+                ev.preventDefault();
+                input.blur();
+              }
+              if (ev.key === "Escape") {
+                input.value = entry.text;
+                input.blur();
+              }
             });
             input.addEventListener("blur", commit);
-            setTimeout(() => { input.focus(); input.select(); }, 10);
+            setTimeout(() => {
+              input.focus();
+              input.select();
+            }, 10);
           });
 
           chip.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             chips.splice(idx, 1);
-            serialize(); renderChips();
+            serialize();
+            renderChips();
           });
 
           panel.appendChild(chip);
         });
-        refreshStatus(); syncH();
+        refreshStatus();
+        syncH();
       }
 
       async function addLora(name) {
         status.textContent = `Loading ${loraDisplay(name)}…`;
-        const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`);
-        const words = (meta?.trigger_words || []).map(w => String(w).trim()).filter(Boolean);
-        if (!words.length) { status.textContent = `${loraDisplay(name)}: no trigger words found.`; return; }
+        const meta = await fetchJSON(
+          `/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`,
+        );
+        const words = (meta?.trigger_words || [])
+          .map((w) => String(w).trim())
+          .filter(Boolean);
+        if (!words.length) {
+          status.textContent = `${loraDisplay(name)}: no trigger words found.`;
+          return;
+        }
         let added = 0;
-        words.forEach(t => {
-          if (!chips.find(c => c.lora === name && c.text.toLowerCase() === t.toLowerCase())) {
-            chips.push({ lora: name, text: t, active: true }); added++;
+        words.forEach((t) => {
+          if (
+            !chips.find(
+              (c) =>
+                c.lora === name && c.text.toLowerCase() === t.toLowerCase(),
+            )
+          ) {
+            chips.push({ lora: name, text: t, active: true });
+            added++;
           }
         });
-        if (added) { serialize(); renderChips(); node.setDirtyCanvas(true); }
-        else status.textContent = `${loraDisplay(name)}: already added.`;
+        if (added) {
+          serialize();
+          renderChips();
+          node.setDirtyCanvas(true);
+        } else status.textContent = `${loraDisplay(name)}: already added.`;
       }
 
       addBtn.addEventListener("click", async () => {
@@ -186,17 +261,25 @@ app.registerExtension({
       const sendBtn = makeButton();
       sendBtn.className = "db-lib-btn db-lora-add-open-btn";
       sendBtn.textContent = "Send to Prompt Builder";
-      sendBtn.style.cssText += "box-sizing:border-box;overflow:hidden;width:100%;";
+      sendBtn.style.cssText +=
+        "box-sizing:border-box;overflow:hidden;width:100%;";
       const sendWrap = document.createElement("div");
-      sendWrap.style.cssText = "box-sizing:border-box;overflow:hidden;width:100%;";
+      sendWrap.style.cssText =
+        "box-sizing:border-box;overflow:hidden;width:100%;";
       sendWrap.appendChild(sendBtn);
       node.addDOMWidget("db_wd_send", "customhtml", sendWrap, {
-        serialize: false, height: 34, getMinHeight: () => 34,
+        serialize: false,
+        height: 34,
+        getMinHeight: () => 34,
       });
       widthEls.push(sendWrap);
 
       function findDirtyTalkNode() {
-        return app.graph?._nodes?.find(n => n.type === "DirtyBirdsPrompt" || n.comfyClass === "DirtyBirdsPrompt");
+        return app.graph?._nodes?.find(
+          (n) =>
+            n.type === "DirtyBirdsPrompt" ||
+            n.comfyClass === "DirtyBirdsPrompt",
+        );
       }
 
       function appendToDirtyTalk(text) {
@@ -205,10 +288,11 @@ app.registerExtension({
           status.textContent = "Add a Prompt Builder node first.";
           return;
         }
-        const posWidget = target.widgets?.find(w => w.name === "positive");
+        const posWidget = target.widgets?.find((w) => w.name === "positive");
         const posTA = target._dbPositiveTextarea;
         const current = String(posWidget?.value ?? posTA?.value ?? "").trim();
-        const sep = current && !/[\s,]$/.test(current) ? ", " : current ? " " : "";
+        const sep =
+          current && !/[\s,]$/.test(current) ? ", " : current ? " " : "";
         const next = current + sep + text;
         if (posWidget) posWidget.value = next;
         if (posTA) {

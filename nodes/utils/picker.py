@@ -96,5 +96,7 @@ class ImagePicker:
 
         sel = self._take(token)
         if sel is None:
-            PromptServer.instance.send_sync(self.event, {"token": token, "timeout": True})
+            PromptServer.instance.send_sync(
+                self.event, {"token": token, "timeout": True}
+            )
         return sel

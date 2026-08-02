@@ -19,12 +19,15 @@ from pathlib import Path
 
 def _install_server_stub():
     """Passthrough server.PromptServer so @routes decorators are no-ops."""
+
     class _Routes:
         def __getattr__(self, _name):
             def factory(*_a, **_k):
                 def wrap(fn):
                     return fn
+
                 return wrap
+
             return factory
 
     class _Instance:
@@ -49,12 +52,14 @@ def main():
     sys.path.insert(0, comfy_path)
 
     import folder_paths  # noqa: F401  (fail loudly if ComfyUI isn't importable)
+
     _install_server_stub()
     logging.basicConfig(level=logging.WARNING)
 
     nodes_dir = Path(repo_root) / "nodes"
     spec = importlib.util.spec_from_file_location(
-        "dirtybirds_nodes", nodes_dir / "__init__.py",
+        "dirtybirds_nodes",
+        nodes_dir / "__init__.py",
         submodule_search_locations=[str(nodes_dir)],
     )
     agg = importlib.util.module_from_spec(spec)
@@ -80,11 +85,15 @@ def main():
         except Exception as exc:  # noqa: BLE001
             schema_problems.append(f"{name}: {type(exc).__name__}: {exc}")
 
-    print(json.dumps({
-        "registered": sorted(agg.NODE_CLASS_MAPPINGS),
-        "display": sorted(agg.NODE_DISPLAY_NAME_MAPPINGS),
-        "schema_problems": schema_problems,
-    }))
+    print(
+        json.dumps(
+            {
+                "registered": sorted(agg.NODE_CLASS_MAPPINGS),
+                "display": sorted(agg.NODE_DISPLAY_NAME_MAPPINGS),
+                "schema_problems": schema_problems,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

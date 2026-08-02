@@ -46,4 +46,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {"DB_SomeNode": "DirtyBirds Some Node"}
 ## Data flow
 
 Prompt -> Loader (encodes) -> Sampler pipe. The Pipe module bundles/routes;
-Fixer optionally performs face correction.
+Inpainting optionally repaints, upscales, face-restores and sharpens.

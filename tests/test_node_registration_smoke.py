@@ -21,7 +21,6 @@ import pytest
 
 from _comfy_env import _find_comfy
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "_registration_probe.py"
 
@@ -35,8 +34,10 @@ EXPECTED_NODES = {
     "DirtyBirdsPipeOut",
     "DirtyBirdsWardrobe",
     "DirtyBirdsSavePrompt",
-    "DirtyBirdsFixer",
     "DirtyBirdsInpaint",
+    # DirtyBirdsFixer was retired; face restore, upscale and sharpen became the
+    # Finish node, and the Forbidden Vision vendor tree went with it.
+    "DirtyBirdsFinish",
 }
 
 
@@ -47,7 +48,8 @@ def probe_result():
         pytest.skip("No ComfyUI checkout found (set COMFYUI_PATH to run).")
     proc = subprocess.run(
         [sys.executable, str(PROBE), str(comfy), str(REPO_ROOT)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     # The last stdout line is the JSON payload (ComfyUI prints banners above it).
     lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
@@ -73,9 +75,9 @@ def test_every_node_package_registers(probe_result):
 def test_no_schema_or_entrypoint_problems(probe_result):
     """Each node has a callable schema + execute entrypoint (caught here, not at
     queue time)."""
-    assert not probe_result["schema_problems"], (
-        "Schema/entrypoint problems:\n" + "\n".join(probe_result["schema_problems"])
-    )
+    assert not probe_result[
+        "schema_problems"
+    ], "Schema/entrypoint problems:\n" + "\n".join(probe_result["schema_problems"])
 
 
 def test_display_names_cover_every_node(probe_result):

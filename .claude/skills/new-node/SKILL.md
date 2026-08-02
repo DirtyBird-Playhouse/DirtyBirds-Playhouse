@@ -26,7 +26,7 @@ Do these in order. Each one is load-bearing.
 
 1. **Create `nodes/<package>/__init__.py`** from `templates/node.py.template`.
    Substitute the class name, label, and docstring. Keep the module docstring
-   explaining *why the node exists*, not what the code does — that is the
+   explaining _why the node exists_, not what the code does — that is the
    convention in every existing package (see `nodes/pipe/__init__.py`).
 
 2. **Register in the aggregator.** Add the package name to `_NODE_PACKAGES` in

@@ -3,7 +3,6 @@ from pathlib import Path
 
 import torch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -34,15 +33,33 @@ def test_trailing_newline_does_not_create_an_extra_run():
 def test_empty_cycle_executes_once_and_concat_is_preserved():
     assert cycler.cycle_text("") == [""]
     base = cycler.append_positive("portrait", "from load prompt")
-    assert cycler.append_positive(base, "red dress") == "portrait, from load prompt, red dress"
+    assert (
+        cycler.append_positive(base, "red dress")
+        == "portrait, from load prompt, red dress"
+    )
     assert cycler.append_positive(base, "") == base
 
 
-def test_cycler_prompt_is_a_string_with_private_pipe_metadata():
-    prompt = cycler.with_cycler_metadata("portrait, red dress", "red dress")
-    assert isinstance(prompt, str)
-    assert prompt == "portrait, red dress"
-    assert prompt.db_cycler_text == "red dress"
+def test_cycler_line_never_rides_on_the_prompt_string_again():
+    """The line reaches the sampler on its own socket, not as string metadata.
+
+    The old design hung it on a str subclass. Any node that rebuilt the prompt
+    dropped it — including a no-op .strip(), which always returns a fresh plain
+    str — and the text overlay then did nothing, with no error to explain why.
+    """
+    assert not hasattr(cycler, "CyclerPrompt")
+    assert not hasattr(cycler, "with_cycler_metadata")
+    assert type(cycler.append_positive("portrait", "red dress")) is str
+
+
+def test_positives_and_cycler_lines_stay_index_aligned():
+    """Prompt Builder emits both as lists; ComfyUI expands them in lockstep, so
+    image i must carry the caption from line i."""
+    lines = cycler.cycle_text("red dress\nblue coat\ngreen hat")
+    positives = [cycler.append_positive("portrait", item) for item in lines]
+    assert len(positives) == len(lines)
+    for positive, line in zip(positives, lines):
+        assert positive.endswith(line)
 
 
 def test_overlay_updates_each_batch_image_without_resizing():
@@ -52,6 +69,38 @@ def test_overlay_updates_each_batch_image_without_resizing():
     assert result.dtype == images.dtype
     assert torch.all(result[:, 0] == 1)
     assert torch.any(result[:, -20:] < 0.9)
+
+
+def test_overlay_draws_no_backing_bar():
+    """Only glyph pixels change — no darkened strip across the image.
+
+    The old version filled a translucent black rectangle behind the caption,
+    which hid a band of the picture.
+    """
+    images = torch.ones((1, 768, 1024, 3), dtype=torch.float32)
+    result = overlay.add_text_overlay(images, "red dress")[0]
+    band = result[-160:]
+    # A full-width bar would darken nearly every pixel in the band. Outlined
+    # text touches only a small minority of them.
+    darkened = (band.min(dim=2).values < 0.9).float().mean().item()
+    assert darkened < 0.25, f"{darkened:.0%} of the caption band was darkened"
+    # The left and right edges of that band stay untouched picture.
+    assert torch.all(band[:, -1] == 1)
+
+
+def test_caption_scales_with_image_height_and_never_uses_the_bitmap_fallback():
+    """font_size=None must scale, and the face must be a real scalable font.
+
+    DejaVuSans.ttf does not exist on Windows; the old single-font lookup fell
+    back to ImageFont.load_default(), an ~8px bitmap face that ignores the size
+    argument, so every caption rendered unreadably small.
+    """
+    assert overlay._caption_size(512, None) < overlay._caption_size(1536, None)
+    assert overlay._caption_size(96, None) >= 10
+    # An explicit size always wins over the scaled one.
+    assert overlay._caption_size(1536, 24) == 24
+    small, large = overlay._font(12), overlay._font(96)
+    assert small.getlength("AAA") < large.getlength("AAA")
 
 
 def test_empty_overlay_is_a_noop():

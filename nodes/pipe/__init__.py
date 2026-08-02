@@ -45,6 +45,7 @@ def _empty_loader_settings():
 # Pipe Out — unpack a pipe into its parts
 # ---------------------------------------------------------------------------
 
+
 class DirtyBirdsPipeOut:
     """Unpack a DIRTYBIRDS_PIPE into its components (pipe passes through)."""
 
@@ -56,10 +57,28 @@ class DirtyBirdsPipeOut:
             },
         }
 
-    RETURN_TYPES = ("DIRTYBIRDS_PIPE", "MODEL", "CLIP", "VAE",
-                    "CONDITIONING", "CONDITIONING", "LATENT", "IMAGE", "INT")
-    RETURN_NAMES = ("db_pipe", "model", "clip", "vae",
-                    "positive", "negative", "latent", "image", "seed")
+    RETURN_TYPES = (
+        "DIRTYBIRDS_PIPE",
+        "MODEL",
+        "CLIP",
+        "VAE",
+        "CONDITIONING",
+        "CONDITIONING",
+        "LATENT",
+        "IMAGE",
+        "INT",
+    )
+    RETURN_NAMES = (
+        "db_pipe",
+        "model",
+        "clip",
+        "vae",
+        "positive",
+        "negative",
+        "latent",
+        "image",
+        "seed",
+    )
     FUNCTION = "unpack"
     CATEGORY = "DirtyBirds"
 
@@ -82,6 +101,7 @@ class DirtyBirdsPipeOut:
 # Pipe In — bundle parts back into a pipe
 # ---------------------------------------------------------------------------
 
+
 class DirtyBirdsPipeIn:
     """Bundle loose parts into a DIRTYBIRDS_PIPE, optionally overriding the
     fields of an existing pipe. Unconnected sockets keep the incoming value."""
@@ -92,16 +112,23 @@ class DirtyBirdsPipeIn:
             "required": {},
             "optional": {
                 # Start from an existing pipe; wired sockets below override it.
-                "db_pipe":  ("DIRTYBIRDS_PIPE",),
-                "model":    ("MODEL",),
-                "clip":     ("CLIP",),
-                "vae":      ("VAE",),
+                "db_pipe": ("DIRTYBIRDS_PIPE",),
+                "model": ("MODEL",),
+                "clip": ("CLIP",),
+                "vae": ("VAE",),
                 "positive": ("CONDITIONING",),
                 "negative": ("CONDITIONING",),
-                "latent":   ("LATENT",),
-                "image":    ("IMAGE",),
-                "seed":     ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff,
-                                     "forceInput": True}),
+                "latent": ("LATENT",),
+                "image": ("IMAGE",),
+                "seed": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 0xFFFFFFFFFFFFFFFF,
+                        "forceInput": True,
+                    },
+                ),
             },
         }
 
@@ -110,20 +137,36 @@ class DirtyBirdsPipeIn:
     FUNCTION = "pack"
     CATEGORY = "DirtyBirds"
 
-    def pack(self, db_pipe=None, model=None, clip=None, vae=None,
-             positive=None, negative=None, latent=None, image=None, seed=None):
+    def pack(
+        self,
+        db_pipe=None,
+        model=None,
+        clip=None,
+        vae=None,
+        positive=None,
+        negative=None,
+        latent=None,
+        image=None,
+        seed=None,
+    ):
         # Shallow-copy the incoming pipe so we don't mutate the upstream dict;
         # loader_settings is copied too so overrides stay local to this branch.
         if db_pipe:
             pipe = dict(db_pipe)
-            pipe["loader_settings"] = copy.copy(db_pipe.get("loader_settings")
-                                                or _empty_loader_settings())
+            pipe["loader_settings"] = copy.copy(
+                db_pipe.get("loader_settings") or _empty_loader_settings()
+            )
         else:
             pipe = {
-                "model": None, "clip": None, "vae": None,
-                "positive": None, "negative": None,
-                "samples": None, "images": None,
-                "seed": 0, "denoise": 1.0,
+                "model": None,
+                "clip": None,
+                "vae": None,
+                "positive": None,
+                "negative": None,
+                "samples": None,
+                "images": None,
+                "seed": 0,
+                "denoise": 1.0,
                 "loader_settings": _empty_loader_settings(),
             }
 
@@ -154,9 +197,9 @@ class DirtyBirdsPipeIn:
 
 NODE_CLASS_MAPPINGS = {
     "DirtyBirdsPipeOut": DirtyBirdsPipeOut,
-    "DirtyBirdsPipeIn":  DirtyBirdsPipeIn,
+    "DirtyBirdsPipeIn": DirtyBirdsPipeIn,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "DirtyBirdsPipeOut": "📤 Pipe Out",
-    "DirtyBirdsPipeIn":  "📥 Pipe In",
+    "DirtyBirdsPipeIn": "📥 Pipe In",
 }

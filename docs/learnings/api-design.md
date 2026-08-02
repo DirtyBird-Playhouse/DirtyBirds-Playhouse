@@ -29,6 +29,7 @@ endpoint, gated by a registry, with a fetch interceptor on the JS side. See
 memory `[[lora-manager-integration]]`.
 
 When adding a route:
+
 - Namespace it clearly (e.g. `/api/db/...`).
 - Validate inputs; never read banned paths (`master.yaml`, `user_files/`).
 - Return JSON the JS extension can consume; surface errors as status text.

@@ -46,7 +46,9 @@ def main():
         try:
             MARKER_DIR.mkdir(parents=True, exist_ok=True)
             session = str(payload.get("session_id") or "unknown")
-            (MARKER_DIR / f"{session}.nodes-touched").write_text(posix, encoding="utf-8")
+            (MARKER_DIR / f"{session}.nodes-touched").write_text(
+                posix, encoding="utf-8"
+            )
         except OSError:
             pass  # marker is an optimisation; never fail the edit over it
 

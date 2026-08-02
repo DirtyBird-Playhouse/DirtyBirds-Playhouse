@@ -1,12 +1,16 @@
 """Shared pytest fixtures/stubs for DirtyBirds tests.
 
-Nodes migrated to the ComfyUI V3 API import ``comfy_api.latest`` at module load
-time. That package only exists inside a running ComfyUI, so tests that import a
-migrated node by path would fail to collect. We install a lightweight but
-faithful stub of the small V3 surface those nodes use (``io.ComfyNode``,
+Every DirtyBirds node is V1, but the tests that load a node package against a
+real ComfyUI (``tests/_comfy_env.py``) put ComfyUI on ``sys.path``, which drags
+in its ``comfy_api`` package. This stub claims ``comfy_api`` in ``sys.modules``
+first, so those imports resolve to a small, predictable surface (``io.ComfyNode``,
 ``io.Schema``, the typed ``*.Input``/``*.Output`` builders, ``io.NodeOutput``,
-and the ``FolderType``/``UploadType`` enums) so the modules import and their
-``execute``/``define_schema`` logic stays exercisable off-ComfyUI.
+and the ``FolderType``/``UploadType`` enums) instead of the live one.
+
+Not optional: removing it fails three adapter tests in ``test_finish.py`` and
+``test_inpaint_adapter.py``. It is also why ``test_node_registration_smoke.py``
+has to probe in a subprocess — the real ComfyUI ``nodes.py`` needs the genuine
+``comfy_api.internal``, which this stub shadows.
 
 The stub mirrors the real semantics the tests depend on: ``NodeOutput`` exposes
 ``.result`` and positional ``__getitem__`` (so ``a, b = node.execute(...)``
@@ -46,8 +50,16 @@ def _install_comfy_api_stub():
         mask = "mask_upload"
 
     class Schema:
-        def __init__(self, node_id=None, display_name=None, category=None,
-                     inputs=None, outputs=None, hidden=None, **kwargs):
+        def __init__(
+            self,
+            node_id=None,
+            display_name=None,
+            category=None,
+            inputs=None,
+            outputs=None,
+            hidden=None,
+            **kwargs
+        ):
             self.node_id = node_id
             self.display_name = display_name
             self.category = category
@@ -74,8 +86,18 @@ def _install_comfy_api_stub():
             return self.args[index]
 
     io = types.ModuleType("comfy_api.latest.io")
-    for _name in ("Combo", "String", "Boolean", "Int", "Float",
-                  "Image", "Mask", "Latent", "Conditioning", "Custom"):
+    for _name in (
+        "Combo",
+        "String",
+        "Boolean",
+        "Int",
+        "Float",
+        "Image",
+        "Mask",
+        "Latent",
+        "Conditioning",
+        "Custom",
+    ):
         setattr(io, _name, _io_type(_name))
     io.FolderType = FolderType
     io.UploadType = UploadType
@@ -85,14 +107,9 @@ def _install_comfy_api_stub():
 
     ui = types.ModuleType("comfy_api.latest.ui")
 
-    class ComfyExtension:
-        async def get_node_list(self):
-            return []
-
     latest = types.ModuleType("comfy_api.latest")
     latest.io = io
     latest.ui = ui
-    latest.ComfyExtension = ComfyExtension
 
     root = types.ModuleType("comfy_api")
     root.latest = latest

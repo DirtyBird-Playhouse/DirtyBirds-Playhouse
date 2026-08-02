@@ -7,7 +7,10 @@ never actually re-rolled the sampling seed.
 
 import random
 
-SEED_MAX = 0xffffffffffffffff
+# 2**53 - 1: the largest integer a JS Number can hold exactly. Rolling within
+# this range means the seed echoed to the browser UI round-trips without losing
+# precision, so the "Last seed" recall reproduces the run exactly.
+SEED_MAX = 0x1FFFFFFFFFFFFF
 
 
 def resolve_seed(seed, seed_mode, rng=random):

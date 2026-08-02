@@ -21,7 +21,7 @@ from server import PromptServer
 logger = logging.getLogger(__name__)
 
 _DANBOORU_TAGS_URL = "https://danbooru.donmai.us/tags.json"
-_AIBOORU_TAGS_URL  = "https://aibooru.online/tags.json"
+_AIBOORU_TAGS_URL = "https://aibooru.online/tags.json"
 _GELBOORU_TAGS_URL = "https://gelbooru.com/index.php"
 
 _TAG_TYPE_NAMES = {
@@ -56,7 +56,9 @@ def _fetch_danbooru_style(base_url, query, max_tags):
     )
     url = f"{base_url}?{qs}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"}
+        )
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode())
         return [t["name"] for t in data if isinstance(t, dict) and t.get("name")]
@@ -82,15 +84,22 @@ def _dispatch(source, query, max_tags):
 
 
 def _fetch_gelbooru(query, max_tags):
-    params = urllib.parse.urlencode({
-        "page": "dapi", "s": "tag", "q": "index", "json": "1",
-        "name_pattern": f"%{query}%",
-        "orderby": "count",
-        "limit": min(max_tags, 200),
-    })
+    params = urllib.parse.urlencode(
+        {
+            "page": "dapi",
+            "s": "tag",
+            "q": "index",
+            "json": "1",
+            "name_pattern": f"%{query}%",
+            "orderby": "count",
+            "limit": min(max_tags, 200),
+        }
+    )
     url = f"{_GELBOORU_TAGS_URL}?{params}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"}
+        )
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode())
         # Gelbooru wraps results under "tag" key
@@ -115,7 +124,10 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
 def _aibooru_post_id(url):
     parsed = urllib.parse.urlparse((url or "").strip())
     host = parsed.netloc.lower()
-    if parsed.scheme.lower() != "https" or host not in {"aibooru.online", "www.aibooru.online"}:
+    if parsed.scheme.lower() != "https" or host not in {
+        "aibooru.online",
+        "www.aibooru.online",
+    }:
         raise ValueError("AIBooru tools require an https://aibooru.online/ post URL")
 
     parts = [p for p in parsed.path.split("/") if p]
@@ -127,13 +139,17 @@ def _aibooru_post_id(url):
         post_id = (urllib.parse.parse_qs(parsed.query).get("id") or [""])[0]
 
     if not re.fullmatch(r"\d+", post_id or ""):
-        raise ValueError("AIBooru URL must look like https://aibooru.online/posts/12345")
+        raise ValueError(
+            "AIBooru URL must look like https://aibooru.online/posts/12345"
+        )
     return post_id
 
 
 def _fetch_aibooru_post(url, timeout=15):
     api_url = _AIBOORU_POST_URL.format(post_id=_aibooru_post_id(url))
-    req = urllib.request.Request(api_url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"})
+    req = urllib.request.Request(
+        api_url, headers={"User-Agent": "DirtyBirdsPlayhouse/1.0"}
+    )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.loads(r.read().decode("utf-8"))
     if not isinstance(data, dict):
@@ -186,20 +202,26 @@ def _clean_completion(content):
     return text.strip()
 
 
-def _caption_url_with_lmstudio(url, model, endpoint, instruction, temperature=0.3, max_tokens=1024):
+def _caption_url_with_lmstudio(
+    url, model, endpoint, instruction, temperature=0.3, max_tokens=1024
+):
     endpoint = (endpoint or "http://localhost:1234/v1").strip()
     model = (model or "").strip() or _resolve_lmstudio_model(endpoint)
-    instruction = (instruction or "Describe this image as comma-separated image-generation tags.").strip()
+    instruction = (
+        instruction or "Describe this image as comma-separated image-generation tags."
+    ).strip()
     data_uri = _fetch_image_data_uri(url)
     payload = {
         "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": instruction},
-                {"type": "image_url", "image_url": {"url": data_uri}},
-            ],
-        }],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ],
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
         "stream": False,
@@ -208,7 +230,10 @@ def _caption_url_with_lmstudio(url, model, endpoint, instruction, temperature=0.
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/chat/completions",
         data=body,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer lm-studio"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer lm-studio",
+        },
         method="POST",
     )
     try:
@@ -227,21 +252,27 @@ def _caption_url_with_lmstudio(url, model, endpoint, instruction, temperature=0.
     return _clean_completion(msg.get("content") or msg.get("reasoning_content") or "")
 
 
-def _caption_data_uri_with_lmstudio(data_uri, model, endpoint, instruction, temperature=0.3, max_tokens=1024):
+def _caption_data_uri_with_lmstudio(
+    data_uri, model, endpoint, instruction, temperature=0.3, max_tokens=1024
+):
     endpoint = (endpoint or "http://localhost:1234/v1").strip()
     model = (model or "").strip() or _resolve_lmstudio_model(endpoint)
-    instruction = (instruction or "Describe this image as comma-separated image-generation tags.").strip()
+    instruction = (
+        instruction or "Describe this image as comma-separated image-generation tags."
+    ).strip()
     if not str(data_uri or "").startswith("data:image/"):
         raise ValueError("image upload must be a data:image URL")
     payload = {
         "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": instruction},
-                {"type": "image_url", "image_url": {"url": data_uri}},
-            ],
-        }],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ],
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
         "stream": False,
@@ -250,7 +281,10 @@ def _caption_data_uri_with_lmstudio(data_uri, model, endpoint, instruction, temp
     req = urllib.request.Request(
         endpoint.rstrip("/") + "/chat/completions",
         data=body,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer lm-studio"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer lm-studio",
+        },
         method="POST",
     )
     try:
@@ -277,9 +311,12 @@ def _caption_data_uri_with_lmstudio(data_uri, model, endpoint, instruction, temp
 @PromptServer.instance.routes.get("/dirtybirds/aibooru-post-tags")
 async def aibooru_post_tags(request):
     import asyncio
+
     url = request.rel_url.query.get("url", "").strip()
     if not url:
-        return web.json_response({"tags": [], "error": "missing AIBooru URL"}, status=400)
+        return web.json_response(
+            {"tags": [], "error": "missing AIBooru URL"}, status=400
+        )
 
     def work():
         data = _fetch_aibooru_post(url)
@@ -302,15 +339,18 @@ async def aibooru_post_tags(request):
 @PromptServer.instance.routes.get("/dirtybirds/url-caption")
 async def url_caption(request):
     import asyncio
+
     source_url = request.rel_url.query.get("url", "").strip()
     model = request.rel_url.query.get("model", "").strip()
     endpoint = request.rel_url.query.get("endpoint", "http://localhost:1234/v1").strip()
     instruction = request.rel_url.query.get(
         "instruction",
-        "Describe this image as comma-separated image-generation tags. Output only the tags."
+        "Describe this image as comma-separated image-generation tags. Output only the tags.",
     )
     if not source_url:
-        return web.json_response({"caption": "", "error": "missing image URL"}, status=400)
+        return web.json_response(
+            {"caption": "", "error": "missing image URL"}, status=400
+        )
 
     def work():
         image_url = source_url
@@ -330,6 +370,7 @@ async def url_caption(request):
 @PromptServer.instance.routes.post("/dirtybirds/image-caption")
 async def image_caption(request):
     import asyncio
+
     try:
         data = await request.json()
     except Exception:
@@ -338,10 +379,12 @@ async def image_caption(request):
     data_uri = str(data.get("image") or "").strip()
     model = str(data.get("model") or "").strip()
     endpoint = str(data.get("endpoint") or "http://localhost:1234/v1").strip()
-    instruction = str(data.get(
-        "instruction",
-        "Describe this image as comma-separated image-generation tags. Output only the tags."
-    ))
+    instruction = str(
+        data.get(
+            "instruction",
+            "Describe this image as comma-separated image-generation tags. Output only the tags.",
+        )
+    )
     if not data_uri:
         return web.json_response({"caption": "", "error": "missing image"}, status=400)
 
@@ -359,8 +402,9 @@ async def image_caption(request):
 @PromptServer.instance.routes.get("/dirtybirds/booru-search")
 async def booru_search(request):
     import asyncio
-    query  = request.rel_url.query.get("query",   "").strip()
-    source = request.rel_url.query.get("source",  "aibooru")
+
+    query = request.rel_url.query.get("query", "").strip()
+    source = request.rel_url.query.get("source", "aibooru")
     try:
         max_tags = int(request.rel_url.query.get("max_tags", "40"))
     except ValueError:

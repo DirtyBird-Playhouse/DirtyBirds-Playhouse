@@ -3,16 +3,20 @@
 This is the **source workspace** for the DirtyBirds-Playhouse ComfyUI custom-node package.
 
 ## Working with Michael
+
 - Not a coder. Plain language, one recommendation, no tracebacks/jargon.
 
 ## Setup / test
+
 ```
 pip install -r requirements.txt
 python -m pytest -q
 ```
+
 Launch ComfyUI with this node via `Start_ComfyUI.bat`. Smoke-test via the run-dirtybirds-playhouse skill.
 
 ## Layout
+
 - `nodes\` — node implementations · `web\` — UI (see rule below) · `tests\` + `pytest.ini`
 - `user-files\` — bundled wildcards/styles · `__init__.py` — node registration
 

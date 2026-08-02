@@ -10,7 +10,13 @@ import comfy.utils
 
 # Imports library_backend so its /dirtybirds/* metadata + Civitai routes register.
 from .library_backend import resolve_lora_filename  # noqa: F401 (also registers routes)
-from .dimension_store import load_dimensions, normalize_runtime_dimensions, save_dimensions as persist_dimensions
+from .dimension_store import (
+    is_random as is_random_dimension,
+    load_dimensions,
+    normalize_runtime_dimensions,
+    pick_random_dimension,
+    save_dimensions as persist_dimensions,
+)
 from .seed_util import resolve_seed
 
 logger = logging.getLogger(__name__)
@@ -32,17 +38,24 @@ def _load_vae(vae_name):
         if vae_path in _VAE_CACHE:
             return _VAE_CACHE[vae_path]
         import comfy.sd
+
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
         _VAE_CACHE[vae_path] = vae
         return vae
     except Exception as e:
-        logger.warning("[DirtyBirds] Failed to load VAE %s, using baked: %s", vae_name, e)
+        logger.warning(
+            "[DirtyBirds] Failed to load VAE %s, using baked: %s", vae_name, e
+        )
         return None
+
+
 _DEFAULT_DIMENSIONS_PATH = os.path.join(os.path.dirname(__file__), "dimensions.json")
 
 
 def _user_dimensions_path():
-    return os.path.join(folder_paths.get_user_directory(), "DirtyBirds-Playhouse", "dimensions.json")
+    return os.path.join(
+        folder_paths.get_user_directory(), "DirtyBirds-Playhouse", "dimensions.json"
+    )
 
 
 def _load_dimensions():
@@ -53,6 +66,7 @@ def _load_dimensions():
 # Helper: Apply LoRA Stack
 # ---------------------------------------------------------------------------
 
+
 def _apply_lora_stack(model, clip, lora_stack):
     if not lora_stack:
         return model, clip
@@ -60,9 +74,7 @@ def _apply_lora_stack(model, clip, lora_stack):
         try:
             lora_data = comfy.utils.load_torch_file(lora_path, safe_load=True)
             model, clip = load_lora_for_models(
-                model, clip, lora_data,
-                float(strength_model),
-                float(strength_clip)
+                model, clip, lora_data, float(strength_model), float(strength_clip)
             )
         except Exception as e:
             logger.warning("[DirtyBirds] Failed to load LoRA %s: %s", lora_path, e)
@@ -72,6 +84,7 @@ def _apply_lora_stack(model, clip, lora_stack):
 # ---------------------------------------------------------------------------
 # API Routes
 # ---------------------------------------------------------------------------
+
 
 @PromptServer.instance.routes.get("/dirtybirds/embeddings")
 async def get_embeddings(request):
@@ -103,24 +116,30 @@ async def save_dimensions(request):
 @PromptServer.instance.routes.post("/dirtybirds/send-embedding")
 async def send_embedding(request):
     data = await request.json()
-    node_id  = data.get("node_id")
-    slot     = data.get("slot", "positive")   # "positive" or "negative"
-    name     = data.get("name", "")
+    node_id = data.get("node_id")
+    slot = data.get("slot", "positive")  # "positive" or "negative"
+    name = data.get("name", "")
     strength = data.get("strength", 1.0)
     if not node_id:
-        return web.json_response({"success": False, "error": "node_id required"}, status=400)
-    PromptServer.instance.send_sync("dirtybirds_set_embedding", {
-        "node_id":  str(node_id),
-        "slot":     slot,
-        "name":     name,
-        "strength": strength,
-    })
+        return web.json_response(
+            {"success": False, "error": "node_id required"}, status=400
+        )
+    PromptServer.instance.send_sync(
+        "dirtybirds_set_embedding",
+        {
+            "node_id": str(node_id),
+            "slot": slot,
+            "name": name,
+            "strength": strength,
+        },
+    )
     return web.json_response({"success": True})
 
 
 # ---------------------------------------------------------------------------
 # Node Definition
 # ---------------------------------------------------------------------------
+
 
 class DirtyBirdsLoader:
 
@@ -134,66 +153,98 @@ class DirtyBirdsLoader:
         return {
             "required": {
                 # Hidden – driven by workflow toggle in JS
-                "workflow":    (["Text2Image", "Image2Image"], {"default": "Text2Image"}),
+                "workflow": (["Text2Image", "Image2Image"], {"default": "Text2Image"}),
                 # Checkpoint dropdown
-                "ckpt_name":   (ckpt_list,),
+                "ckpt_name": (ckpt_list,),
                 # Raw prompt strings — fed from Prompt Builder ("User Prompt")
                 # as input sockets (forceInput); the loader appends trigger words
                 # + embedding tokens, then encodes with the checkpoint's CLIP.
-                "positive":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                "negative":    ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+                "positive": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
+                "negative": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
                 # Hidden – resolution pills
-                "dimension":   ("STRING", {"default": dim_options[0]}),
+                "dimension": ("STRING", {"default": dim_options[0]}),
                 # Hidden – inline LoRA picker (JSON array of selected loras)
-                "loras_data":  ("STRING", {"default": "[]"}),
+                "loras_data": ("STRING", {"default": "[]"}),
                 # Hidden – trigger word chip states (JSON array of { lora, text, active })
                 "trigger_words_data": ("STRING", {"default": "[]"}),
                 # Batch size for generation (slider 1-5)
-                "batch_size":  ("INT", {"default": 1, "min": 1, "max": 5, "step": 1, "display": "slider"}),
+                "batch_size": (
+                    "INT",
+                    {"default": 1, "min": 1, "max": 5, "step": 1, "display": "slider"},
+                ),
                 # Seed + denoise — ride the pipe out to the DirtyBirds sampler.
                 # control_after_generate disabled: the JS UI manages randomization.
-                "seed":        ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": False}),
-                "denoise":     ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "seed": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 0xFFFFFFFFFFFFFFFF,
+                        "control_after_generate": False,
+                    },
+                ),
+                "denoise": (
+                    "FLOAT",
+                    {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
                 # Seed mode — JS flyout toggles fixed vs. re-roll-every-run.
-                "seed_mode":   (["fixed", "random"], {"default": "fixed"}),
+                "seed_mode": (["fixed", "random"], {"default": "fixed"}),
                 # CLIP skip — stop N layers early (2 is typical for Pony/Illustrious).
                 # Appended last so existing saved workflows keep their widget order.
-                "clip_skip":   ("INT", {"default": 1, "min": 1, "max": 12, "step": 1}),
+                "clip_skip": ("INT", {"default": 1, "min": 1, "max": 12, "step": 1}),
                 # VAE override — BAKED_VAE keeps the checkpoint's own VAE.
                 "vae_name": ([BAKED_VAE, ""], {"default": BAKED_VAE}),
             },
             "optional": {
-                "image":        ("IMAGE",),
-                "lora_stack":   ("LORA_STACK",),   # chain from external stacker
+                "image": ("IMAGE",),
+                "lora_stack": ("LORA_STACK",),  # chain from external stacker
                 # Embedding selection — wired from DirtyBirdsEmbeddingLoader or set inline
                 "pos_embedding": ("STRING", {"default": ""}),
                 "neg_embedding": ("STRING", {"default": ""}),
-            }
+            },
         }
 
-    RETURN_TYPES  = ("DIRTYBIRDS_PIPE",)
-    RETURN_NAMES  = ("db_pipe",)
-    FUNCTION      = "process"
-    CATEGORY      = "DirtyBirds"
+    RETURN_TYPES = ("DIRTYBIRDS_PIPE",)
+    RETURN_NAMES = ("db_pipe",)
+    FUNCTION = "process"
+    CATEGORY = "DirtyBirds"
 
     @classmethod
     def IS_CHANGED(cls, dimension="", seed_mode="fixed", **kwargs):
         # Force re-execution every run when resolution OR seed is randomized so a
         # fresh value is picked each time, rather than caching one random result.
-        if dimension == "__random__" or seed_mode == "random":
+        if is_random_dimension(dimension) or seed_mode == "random":
             import random
+
             return random.random()
         return dimension
 
-    def process(self, workflow, ckpt_name, positive="", negative="",
-                dimension="__random__", loras_data="[]", trigger_words_data="[]", batch_size=1,
-                seed=0, denoise=1.0, seed_mode="fixed", clip_skip=1, vae_name=BAKED_VAE,
-                image=None, lora_stack=None, pos_embedding="", neg_embedding=""):
-        # Prompt Builder's public output stays a normal STRING. The current
-        # cycler line rides on its in-process string subclass, so the loader
-        # needs no separate cycler socket.
-        cycler_text = getattr(positive, "db_cycler_text", "")
-
+    def process(
+        self,
+        workflow,
+        ckpt_name,
+        positive="",
+        negative="",
+        dimension="__random__",
+        loras_data="[]",
+        trigger_words_data="[]",
+        batch_size=1,
+        seed=0,
+        denoise=1.0,
+        seed_mode="fixed",
+        clip_skip=1,
+        vae_name=BAKED_VAE,
+        image=None,
+        lora_stack=None,
+        pos_embedding="",
+        neg_embedding="",
+    ):
         # Seed mode. In "random" the sampling seed is re-rolled every run so each
         # generation differs (IS_CHANGED already forces re-execution); in "fixed"
         # the widget value is used verbatim for reproducibility. The chosen seed
@@ -220,13 +271,15 @@ class DirtyBirdsLoader:
                 vae = override_vae
 
         device = model.load_device
-        dtype  = model.model_dtype()
+        dtype = model.model_dtype()
 
         # ── Build combined LoRA stack ────────────────────────────────────────
         combined_stack = []
 
         try:
-            inline_entries = json.loads(loras_data) if isinstance(loras_data, str) else []
+            inline_entries = (
+                json.loads(loras_data) if isinstance(loras_data, str) else []
+            )
         except Exception as e:
             logger.warning("[DirtyBirds] Malformed loras_data JSON, skipping: %s", e)
             inline_entries = []
@@ -246,11 +299,13 @@ class DirtyBirdsLoader:
             if not lora_path or not os.path.exists(lora_path):
                 logger.warning("[DirtyBirds] LoRA not found: %s", name)
                 continue
-            combined_stack.append((
-                lora_path,
-                float(entry.get("strength", 1.0)),
-                float(entry.get("clip_strength", entry.get("strength", 1.0))),
-            ))
+            combined_stack.append(
+                (
+                    lora_path,
+                    float(entry.get("strength", 1.0)),
+                    float(entry.get("clip_strength", entry.get("strength", 1.0))),
+                )
+            )
 
         inline_count = len(combined_stack)
 
@@ -259,21 +314,28 @@ class DirtyBirdsLoader:
         # first element straight to load_torch_file, which resolves against the cwd —
         # so resolve to a real path here (mirrors the inline-entry handling above),
         # tolerating both relative names and already-absolute paths.
-        for entry in (lora_stack or []):
+        for entry in lora_stack or []:
             try:
                 name, sm, sc = entry[0], entry[1], entry[2]
             except (TypeError, IndexError):
                 continue
-            resolved = name if (os.path.isabs(name) and os.path.exists(name)) \
+            resolved = (
+                name
+                if (os.path.isabs(name) and os.path.exists(name))
                 else folder_paths.get_full_path("loras", name)
+            )
             if not resolved or not os.path.exists(resolved):
                 logger.warning("[DirtyBirds] lora_stack LoRA not found: %s", name)
                 continue
             combined_stack.append((resolved, float(sm), float(sc)))
 
         if combined_stack:
-            logger.info("[DirtyBirds] Applying %d LoRA(s): %d inline + %d via lora_stack",
-                        len(combined_stack), inline_count, len(combined_stack) - inline_count)
+            logger.info(
+                "[DirtyBirds] Applying %d LoRA(s): %d inline + %d via lora_stack",
+                len(combined_stack),
+                inline_count,
+                len(combined_stack) - inline_count,
+            )
             model, clip = _apply_lora_stack(model, clip, combined_stack)
 
         # ── CLIP skip ────────────────────────────────────────────────────────
@@ -285,9 +347,15 @@ class DirtyBirdsLoader:
 
         # ── Trigger words (appended to positive before encoding) ─────────────
         try:
-            tw_entries = json.loads(trigger_words_data) if isinstance(trigger_words_data, str) else []
+            tw_entries = (
+                json.loads(trigger_words_data)
+                if isinstance(trigger_words_data, str)
+                else []
+            )
         except Exception as e:
-            logger.warning("[DirtyBirds] Malformed trigger_words_data JSON, skipping: %s", e)
+            logger.warning(
+                "[DirtyBirds] Malformed trigger_words_data JSON, skipping: %s", e
+            )
             tw_entries = []
 
         trigger_terms = []
@@ -304,7 +372,9 @@ class DirtyBirdsLoader:
 
         trigger_words = ", ".join(trigger_terms)
         if trigger_words:
-            positive = (positive + ", " + trigger_words) if positive.strip() else trigger_words
+            positive = (
+                (positive + ", " + trigger_words) if positive.strip() else trigger_words
+            )
 
         # ── Encode prompts (after LoRA so clip modifications apply) ──────────
         # Embedding widget value is "name" or "name:strength" (set from Casting Coach).
@@ -342,9 +412,10 @@ class DirtyBirdsLoader:
         dims_data = _load_dimensions()
 
         if workflow == "Text2Image":
-            if dimension == "__random__":
-                import random
-                dimension = random.choice(list(dims_data.keys())) if dims_data else "1024x1024"
+            if is_random_dimension(dimension):
+                # 🎲 Random (optionally filtered to portrait/landscape/square)
+                # rolls here, per run — IS_CHANGED already forces re-execution.
+                dimension = pick_random_dimension(dimension, dims_data)
                 logger.info("[DirtyBirds] Random resolution selected: %s", dimension)
             # Resolution is stored as a "WIDTHxHEIGHT" string (ratio grid + custom
             # picker). Prefer the named preset, else parse the raw WxH directly.
@@ -356,7 +427,9 @@ class DirtyBirdsLoader:
                 except (ValueError, IndexError):
                     wh = [1024, 1024]
             width, height = normalize_runtime_dimensions(*wh)
-            latent_tensor = torch.zeros([batch_size, 4, height // 8, width // 8], device=device, dtype=dtype)
+            latent_tensor = torch.zeros(
+                [batch_size, 4, height // 8, width // 8], device=device, dtype=dtype
+            )
             latent = {"samples": latent_tensor}
         else:
             if image is None:
@@ -385,39 +458,37 @@ class DirtyBirdsLoader:
             latent = {"samples": latent_tensor}
             # Dimensions for loader_settings (channels-last axes)
             height = image_bhwc.shape[1]
-            width  = image_bhwc.shape[2]
+            width = image_bhwc.shape[2]
 
         # ── PIPE_LINE dict (Easy_Use compatible) ─────────────────────────────
         pipe = {
             # Core – required by all Easy_Use consumers
-            "model":    model,
-            "clip":     clip,
-            "vae":      vae,
+            "model": model,
+            "clip": clip,
+            "vae": vae,
             "positive": positive_cond,
             "negative": negative_cond,
-            "samples":  latent,
-            "images":   None,
-            "seed":     int(seed),
-            "denoise":  float(denoise),
-            "db_cycler_text": str(cycler_text or ""),
+            "samples": latent,
+            "images": None,
+            "seed": int(seed),
+            "denoise": float(denoise),
             # Loader settings – read by pre-sampling / sampler nodes
             "loader_settings": {
-                "ckpt_name":          ckpt_name,
-                "clip_skip":          int(clip_skip),
-                "vae_name":           vae_name,
-                "lora_name":          None,
-                "lora_stack":         combined_stack,
-                "positive":           positive,
-                "negative":           negative,
-                "empty_latent_width":  width,
+                "ckpt_name": ckpt_name,
+                "clip_skip": int(clip_skip),
+                "vae_name": vae_name,
+                "lora_name": None,
+                "lora_stack": combined_stack,
+                "positive": positive,
+                "negative": negative,
+                "empty_latent_width": width,
                 "empty_latent_height": height,
-                "batch_size":         batch_size,
+                "batch_size": batch_size,
                 # DirtyBirds-specific extras (harmless to Easy_Use nodes)
-                "db_pos_embedding":   pos_embedding,
-                "db_neg_embedding":   neg_embedding,
-                "db_workflow":        workflow,
-                "db_dimension":       dimension,
-                "db_cycler_text":     str(cycler_text or ""),
+                "db_pos_embedding": pos_embedding,
+                "db_neg_embedding": neg_embedding,
+                "db_workflow": workflow,
+                "db_dimension": dimension,
             },
         }
 
@@ -425,15 +496,23 @@ class DirtyBirdsLoader:
         ext_lora_names = [os.path.basename(path) for path, _, _ in (lora_stack or [])]
         # Sole output: db_pipe carries model/clip/vae, conditioning, samples,
         # plus seed + denoise for the DirtyBirds sampler.
-        return {"ui": {"db_prompts": [positive, negative],
-                       "db_lora_stack": ext_lora_names,
-                       "db_seed_used": [seed]},
-                "result": (pipe,)}
+        return {
+            "ui": {
+                "db_prompts": [positive, negative],
+                "db_lora_stack": ext_lora_names,
+                "db_seed_used": [seed],
+                # Echo the resolution actually used (post-snap, and post-roll in
+                # 🎲 Random) so the UI can show what was picked instead of just
+                # "Random". In Image2Image this is the connected image's size.
+                "db_dimension_used": [f"{int(width)}x{int(height)}"],
+            },
+            "result": (pipe,),
+        }
 
 
 # ---------------------------------------------------------------------------
 # Mappings
 # ---------------------------------------------------------------------------
 
-NODE_CLASS_MAPPINGS        = {"DirtyBirdsLoader": DirtyBirdsLoader}
+NODE_CLASS_MAPPINGS = {"DirtyBirdsLoader": DirtyBirdsLoader}
 NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsLoader": "⚙️ Generation Setup"}

@@ -139,9 +139,9 @@ def _sharpen_image(img, mode="off", scale_ratio=1.0):
         if not percent:
             return img
     alpha = img.getchannel("A") if "A" in img.getbands() else None
-    sharpened = img.convert("RGB").filter(ImageFilter.UnsharpMask(
-        radius=radius, percent=percent, threshold=3
-    ))
+    sharpened = img.convert("RGB").filter(
+        ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=3)
+    )
     if alpha is not None:
         sharpened.putalpha(alpha)
     return sharpened
@@ -161,7 +161,7 @@ def _to_tensors(img):
         if rgb.size[0] != w or rgb.size[1] != h:
             continue  # skip frames of a differing size (animated/multi-size)
         arr = np.array(rgb).astype(np.float32) / 255.0
-        output_images.append(torch.from_numpy(arr)[None, ])
+        output_images.append(torch.from_numpy(arr)[None,])
         if "A" in frame.getbands():
             mask = np.array(frame.getchannel("A")).astype(np.float32) / 255.0
             mask = 1.0 - torch.from_numpy(mask)
@@ -185,10 +185,13 @@ def _run_sam3(image_tensor, prompt, confidence):
     call fails (caller then falls back to passthrough)."""
     try:
         from . import sam3  # native, self-contained — no node-registry lookup
+
         cutout, mask = sam3.segment(image_tensor, prompt, float(confidence))
         return cutout, mask
     except Exception as e:
-        logger.warning("[DirtyBirds] SAM3 segmentation failed (%s); passing image through.", e)
+        logger.warning(
+            "[DirtyBirds] SAM3 segmentation failed (%s); passing image through.", e
+        )
         return None
 
 
@@ -198,32 +201,53 @@ class DirtyBirdsLoadImage:
     @classmethod
     def INPUT_TYPES(cls):
         input_dir = folder_paths.get_input_directory()
-        files = [""] + sorted(
-            f for f in os.listdir(input_dir)
-            if os.path.isfile(os.path.join(input_dir, f))
-        ) if os.path.isdir(input_dir) else []
+        files = (
+            [""]
+            + sorted(
+                f
+                for f in os.listdir(input_dir)
+                if os.path.isfile(os.path.join(input_dir, f))
+            )
+            if os.path.isdir(input_dir)
+            else []
+        )
         return {
             "required": {
                 "image": (files, {"image_upload": True, "default": ""}),
             },
             "optional": {
-                "image_url": ("STRING", {
-                    "default": "",
-                    "placeholder": "http(s):// or local path — overrides the picker when set",
-                }),
+                "image_url": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "placeholder": "http(s):// or local path — overrides the picker when set",
+                    },
+                ),
                 # Auto-resize the loaded image so its longest side == resize_max
                 # (aspect preserved, snapped to a multiple of 8).
                 "resize": ("BOOLEAN", {"default": False}),
                 "resize_mode": (["long_side", "custom"], {"default": "long_side"}),
                 # Ranges match the on-node sliders (256–2048, step 64).
-                "resize_max": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
-                "resize_width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
-                "resize_height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 64}),
+                "resize_max": (
+                    "INT",
+                    {"default": 1024, "min": 256, "max": 2048, "step": 64},
+                ),
+                "resize_width": (
+                    "INT",
+                    {"default": 1024, "min": 256, "max": 2048, "step": 64},
+                ),
+                "resize_height": (
+                    "INT",
+                    {"default": 1024, "min": 256, "max": 2048, "step": 64},
+                ),
                 # Retained only so older saved workflows still load. The UI hides
                 # it and long_side resize always hits the chosen target (up or
                 # down), so this input is intentionally ignored.
                 "allow_upscale": ("BOOLEAN", {"default": False}),
-                "sharpen": (["off", "auto", "low", "medium", "high"], {"default": "auto"}),
+                "sharpen": (
+                    ["off", "auto", "low", "medium", "high"],
+                    {"default": "auto"},
+                ),
             },
         }
 
@@ -232,9 +256,18 @@ class DirtyBirdsLoadImage:
     FUNCTION = "load"
     CATEGORY = "DirtyBirds"
 
-    def load(self, image=None, image_url="", resize=False, resize_mode="long_side",
-             resize_max=1024, resize_width=1024, resize_height=1024,
-             allow_upscale=False, sharpen="auto"):
+    def load(
+        self,
+        image=None,
+        image_url="",
+        resize=False,
+        resize_mode="long_side",
+        resize_max=1024,
+        resize_width=1024,
+        resize_height=1024,
+        allow_upscale=False,
+        sharpen="auto",
+    ):
         img = _open_source(image, image_url)
         original_longest = max(img.size)
         if resize:
@@ -255,9 +288,18 @@ class DirtyBirdsLoadImage:
         return (out_image, out_mask)
 
     @classmethod
-    def IS_CHANGED(cls, image=None, image_url="", resize=False, resize_mode="long_side",
-                   resize_max=1024, resize_width=1024, resize_height=1024,
-                   allow_upscale=False, sharpen="auto"):
+    def IS_CHANGED(
+        cls,
+        image=None,
+        image_url="",
+        resize=False,
+        resize_mode="long_side",
+        resize_max=1024,
+        resize_width=1024,
+        resize_height=1024,
+        allow_upscale=False,
+        sharpen="auto",
+    ):
         seg_key = (
             f"|{bool(resize)}|{resize_mode}|{int(resize_max)}|"
             f"{int(resize_width)}x{int(resize_height)}|{sharpen}"
@@ -266,8 +308,11 @@ class DirtyBirdsLoadImage:
         if src:
             if src.startswith(("http://", "https://")):
                 return src + seg_key  # fixed URL -> stable cache key
-            path = src if os.path.isfile(src) else os.path.join(
-                folder_paths.get_input_directory(), src)
+            path = (
+                src
+                if os.path.isfile(src)
+                else os.path.join(folder_paths.get_input_directory(), src)
+            )
         else:
             path = folder_paths.get_annotated_filepath(image)
         try:
@@ -279,10 +324,18 @@ class DirtyBirdsLoadImage:
             return (src or image) + seg_key
 
     @classmethod
-    def VALIDATE_INPUTS(cls, image=None, image_url="", resize=False,
-                        resize_mode="long_side", resize_max=1024,
-                        resize_width=1024, resize_height=1024,
-                        allow_upscale=False, sharpen="auto"):
+    def VALIDATE_INPUTS(
+        cls,
+        image=None,
+        image_url="",
+        resize=False,
+        resize_mode="long_side",
+        resize_max=1024,
+        resize_width=1024,
+        resize_height=1024,
+        allow_upscale=False,
+        sharpen="auto",
+    ):
         # When `image_url` supplies the source the picker is irrelevant, so an
         # empty/absent `image` is fine. ComfyUI omits `image` from the call when
         # the widget has no value, hence the default above.

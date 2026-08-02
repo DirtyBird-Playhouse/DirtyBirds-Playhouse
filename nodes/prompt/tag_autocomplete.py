@@ -7,7 +7,6 @@ import threading
 from aiohttp import web
 from server import PromptServer
 
-
 _CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "danbooru_e621_merged.csv")
 _lock = threading.Lock()
 _tags = None
@@ -24,7 +23,11 @@ def _load_tags():
                 for row in csv.reader(handle):
                     if len(row) < 3 or not row[0]:
                         continue
-                    aliases = tuple(a.lower() for a in row[3].split(",") if a) if len(row) > 3 else ()
+                    aliases = (
+                        tuple(a.lower() for a in row[3].split(",") if a)
+                        if len(row) > 3
+                        else ()
+                    )
                     rows.append((row[0], int(row[1]), int(row[2]), aliases))
             _tags = tuple(rows)
     return _tags
@@ -58,4 +61,3 @@ async def tag_autocomplete(request):
     except ValueError:
         limit = 20
     return web.json_response({"tags": search_tags(query, limit)})
-

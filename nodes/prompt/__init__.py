@@ -8,8 +8,8 @@ from server import PromptServer
 # The wildcard / dynamic-prompt engine lives in its own ComfyUI-free module so it
 # can be unit-tested standalone. load_wildcard_dict and process are re-exported
 # here for backwards compatibility with anything importing them from this module.
-from .utils.wildcard_engine import load_wildcard_dict, process
-from .cycler import append_positive, cycle_text, with_cycler_metadata
+from .utils.wildcard_engine import load_wildcard_dict, process, resolve
+from .cycler import append_positive, cycle_text
 
 # Booru tag fetcher: a widget of this (Dirty Talk) node. Imported for the
 # side-effect of registering its /dirtybirds/booru-search route.
@@ -22,61 +22,10 @@ logger = logging.getLogger(__name__)
 # The Archive node owns saving prompts; Dirty Talk only loads them.
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
-# Name of the roll-scoped variable the dress-state dropdown declares. The
-# wildcard file's __Templates/Scene__ (and any prompt) references it as [[reg]].
-DRESS_REG = "reg"
-
-
-def _dress_states():
-    """Dress-register values, read live from the wildcards.
-
-    These are the sub-keys directly under clothing/tops/ (nude, partially-nude,
-    casual-wear, ...), so the dropdown tracks whatever states exist in the YAML
-    without any code change. Returned in the engine's canonical hyphenated form
-    (what [[reg]] must inject). Sorted; [] if none/unavailable."""
-    try:
-        wd = load_wildcard_dict()
-    except Exception:
-        return []
-    prefix = "clothing/tops/"
-    states = set()
-    for key in wd:
-        if key.startswith(prefix):
-            rest = key[len(prefix):]
-            if rest and "/" not in rest:
-                states.add(rest)
-    return sorted(states)
-
-
-def _dress_labels():
-    """Human-friendly dropdown labels: 'partially-nude' -> 'partially nude'.
-
-    The label is what the user sees/selects; _dress_declaration converts it back
-    to the canonical hyphenated value before injecting, since a __token__ path
-    cannot contain a space."""
-    return [s.replace("-", " ") for s in _dress_states()]
-
-
-def _dress_declaration(dress_state):
-    """Build the [[reg=...]] text to prepend for a chosen dropdown label.
-
-    '(off)' -> nothing; 'random' -> a {a|b|c} pick over all states; a specific
-    label (e.g. 'business attire') -> a fixed pick using its canonical hyphenated
-    value ('business-attire'). Returns '' when there is nothing to inject."""
-    if not dress_state or dress_state == "(off)":
-        return ""
-    states = _dress_states()
-    if dress_state == "random":
-        return f"[[{DRESS_REG}={{{'|'.join(states)}}}]] " if states else ""
-    canonical = dress_state.strip().lower().replace(" ", "-")
-    if canonical in states:
-        return f"[[{DRESS_REG}={canonical}]] "
-    return ""
-
-
 # ---------------------------------------------------------------------------
 # Web API Routes
 # ---------------------------------------------------------------------------
+
 
 @PromptServer.instance.routes.post("/dirtybirds/send-prompt")
 async def send_prompt(request):
@@ -85,10 +34,11 @@ async def send_prompt(request):
     positive = str(data.get("positive", "") or "").strip()
     if not positive:
         return web.json_response(
-            {"success": False, "error": "positive prompt required"}, status=400)
-    PromptServer.instance.send_sync(
-        "dirtybirds_set_prompt", {"positive": positive})
+            {"success": False, "error": "positive prompt required"}, status=400
+        )
+    PromptServer.instance.send_sync("dirtybirds_set_prompt", {"positive": positive})
     return web.json_response({"success": True})
+
 
 @PromptServer.instance.routes.get("/dirtybirds/wildcards")
 async def get_wildcards(request):
@@ -101,7 +51,8 @@ async def get_prompt_files(request):
     """List .txt files in the prompts/ folder."""
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     files = sorted(
-        f for f in os.listdir(PROMPTS_DIR)
+        f
+        for f in os.listdir(PROMPTS_DIR)
         if f.lower().endswith(".txt") and os.path.isfile(os.path.join(PROMPTS_DIR, f))
     )
     return web.json_response({"files": files})
@@ -114,7 +65,9 @@ async def get_prompt_file(request):
     if not name or ".." in name or not name.lower().endswith(".txt"):
         raise web.HTTPBadRequest(text="invalid name")
     full = os.path.normpath(os.path.join(PROMPTS_DIR, name))
-    if os.path.commonpath([os.path.abspath(full), os.path.abspath(PROMPTS_DIR)]) != os.path.abspath(PROMPTS_DIR):
+    if os.path.commonpath(
+        [os.path.abspath(full), os.path.abspath(PROMPTS_DIR)]
+    ) != os.path.abspath(PROMPTS_DIR):
         raise web.HTTPForbidden()
     if not os.path.isfile(full):
         raise web.HTTPNotFound()
@@ -126,6 +79,7 @@ async def get_prompt_file(request):
 # ---------------------------------------------------------------------------
 # Node Definition
 # ---------------------------------------------------------------------------
+
 
 class DirtyBirdsPrompt:
     """Builds base positive / negative prompts with built-in wildcard support."""
@@ -141,65 +95,131 @@ class DirtyBirdsPrompt:
                 # control_after_generate is disabled: ComfyUI auto-adds it to any
                 # INT widget named "seed", but reroll_each_run already covers the
                 # random/fixed choice, so the dropdown would be redundant.
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff,
-                                 "control_after_generate": False}),
+                "seed": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 0xFFFFFFFFFFFFFFFF,
+                        "control_after_generate": False,
+                    },
+                ),
                 # When on, wildcards re-roll randomly every run (ignores seed).
                 # When off, the seed above gives a fixed, reproducible roll.
                 "reroll_each_run": ("BOOLEAN", {"default": True}),
                 "cycler_text": ("STRING", {"multiline": True, "default": ""}),
-                # Dress-state picker. Auto-populated from the wildcards (the
-                # states under clothing/tops/). Prepends [[reg=...]] to positive
-                # so __Templates/Scene__ resolves to that outfit. "(off)" leaves
-                # the text alone; "random" rolls a new state each run.
-                # NOTE: kept LAST so adding it doesn't shift the saved widget
-                # values of existing workflows (ComfyUI restores widgets by order).
-                "dress_state": (["(off)", "random"] + _dress_labels(),
-                                {"default": "(off)"}),
+                # Step mode — walk wildcard lists in order, one entry per run,
+                # instead of rolling them. For checking a wildcard file entry by
+                # entry. The UI advances wildcard_step after each queued run.
+                # NOTE: kept LAST so adding widgets doesn't shift the saved
+                # values of existing workflows (ComfyUI restores them by order).
+                "step_enabled": ("BOOLEAN", {"default": False}),
+                "wildcard_step": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 0xFFFFFFFF,
+                        "control_after_generate": False,
+                    },
+                ),
             },
             "optional": {
                 # Concatenate additional prompt text after the node's own output.
-                "concat_positive": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
-                "concat_negative": ("STRING", {"multiline": True, "default": "", "forceInput": True}),
+                "concat_positive": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
+                "concat_negative": (
+                    "STRING",
+                    {"multiline": True, "default": "", "forceInput": True},
+                ),
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("positive", "negative")
-    OUTPUT_IS_LIST = (True, False)
+    # cycler_line is appended last so existing saved workflows keep their link
+    # indices. It expands in lockstep with positive — iteration i emits
+    # positive[i] and the cycler line that produced it — so wiring it straight
+    # to Sampler & Picker gives the text overlay the right caption per image,
+    # regardless of what sits between here and Generation Setup.
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("positive", "negative", "cycler_line")
+    OUTPUT_IS_LIST = (True, False, True)
     FUNCTION = "process"
     CATEGORY = "DirtyBirds"
 
     @classmethod
-    def VALIDATE_INPUTS(cls, dress_state=None, **kwargs):
-        # Accept any dress_state, including a stale/empty value from a graph saved
-        # before this widget existed (or from an earlier order shuffle). process()
-        # safely ignores anything it doesn't recognise, so this only prevents the
-        # spurious "Value not in list" error at queue time.
+    def VALIDATE_INPUTS(cls, **kwargs):
+        # Accept stale widget values from a graph saved against an older widget
+        # set (the removed dress_state combo shifted later widgets by one).
+        # process() ignores anything it doesn't recognise, so this only prevents
+        # a spurious "Value not in list" error at queue time.
         return True
 
     @classmethod
-    def IS_CHANGED(cls, positive="", negative="", seed=0, reroll_each_run=True,
-                   dress_state="(off)", **kwargs):
+    def IS_CHANGED(
+        cls,
+        positive="",
+        negative="",
+        seed=0,
+        reroll_each_run=True,
+        step_enabled=False,
+        wildcard_step=0,
+        **kwargs,
+    ):
         if reroll_each_run:
             return random.random()
-        return (positive, negative, seed, dress_state)
+        # The step number is part of the identity of a stepped run, or a fixed
+        # seed would cache the first entry and never advance.
+        return (
+            positive,
+            negative,
+            seed,
+            bool(step_enabled),
+            wildcard_step,
+        )
 
-    def process(self, positive, negative, reroll_each_run=True, seed=0,
-                cycler_text="", dress_state="(off)", concat_positive=None,
-                concat_negative=None, **_deprecated_inputs):
+    def process(
+        self,
+        positive,
+        negative,
+        reroll_each_run=True,
+        seed=0,
+        cycler_text="",
+        step_enabled=False,
+        wildcard_step=0,
+        concat_positive=None,
+        concat_negative=None,
+        **_deprecated_inputs,
+    ):
         if reroll_each_run:
-            seed = random.randint(0, 0xffffffffffffffff)
+            # Cap at 2**53-1 so the seed echoed to the UI round-trips exactly;
+            # otherwise the browser loses precision and "Last" can't reproduce
+            # the wildcard roll. (JS Numbers are exact only up to 2**53-1.)
+            seed = random.randint(0, 0x1FFFFFFFFFFFFF)
 
-        # Prepend the dress-state declaration (if the dropdown selected one) so
-        # [[reg]] is set before __Templates/Scene__ and the outfit tokens resolve.
-        positive = _dress_declaration(dress_state) + positive
+        # Step mode walks every wildcard list by position instead of rolling it,
+        # so consecutive runs march through a file entry by entry. None = roll.
+        # Values are checked rather than trusted: a graph saved before the
+        # dress_state widget was removed shifts its "(off)" string into these
+        # slots, and a bare truth test would switch stepping on by itself.
+        step = None
+        if step_enabled is True or step_enabled == 1:
+            try:
+                step = max(0, int(wildcard_step))
+            except (TypeError, ValueError):
+                step = 0
+        step_total = 0
 
         wd = load_wildcard_dict()
         try:
-            pos_out = process(positive, seed, wd)
-            neg_out = process(negative, (seed + 1) & 0xffffffffffffffff, wd)
+            pos_out, picker = resolve(positive, seed, wd, step)
+            neg_out = process(negative, (seed + 1) & 0xFFFFFFFFFFFFFFFF, wd, step)
+            step_total = getattr(picker, "longest", 0)
         except Exception as e:
-            logger.warning("[DirtyBirds] Wildcard processing failed (%s); using raw text", e)
+            logger.warning(
+                "[DirtyBirds] Wildcard processing failed (%s); using raw text", e
+            )
             pos_out, neg_out = positive, negative
 
         # Append concat strings when provided.
@@ -211,19 +231,30 @@ class DirtyBirdsPrompt:
             neg_out = (neg_out + ", " + cn) if neg_out else cn
 
         cycle_items = cycle_text(cycler_text)
-        positives = [with_cycler_metadata(append_positive(pos_out, item), item)
-                     for item in cycle_items]
+        positives = [append_positive(pos_out, item) for item in cycle_items]
 
         # Log operational counts only — never the prompt text itself, which can
         # be sensitive and would otherwise land in the console/log files.
         logger.info(
             "[DirtyBirds] Script: concat_positive=%s, concat_negative=%s, cycler_items=%d",
-            "set" if cp else "none", "set" if cn else "none", len(cycle_items))
+            "set" if cp else "none",
+            "set" if cn else "none",
+            len(cycle_items),
+        )
 
         # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
         # before the sampler runs, letting the user cancel early if it's wrong.
-        return {"ui": {"db_prompts_md": [positives[0], neg_out]},
-                "result": (positives, neg_out)}
+        # db_seed_used echoes the seed actually rolled so the UI's "Last" recall
+        # can reproduce the wildcard roll.
+        ui = {"db_prompts_md": [positives[0], neg_out], "db_seed_used": [seed]}
+        if step is not None:
+            # Position + list length, so the UI can show "step 3 / 42" and say
+            # when a full pass through the file is done.
+            ui["db_step_used"] = [step, int(step_total)]
+        return {
+            "ui": ui,
+            "result": (positives, neg_out, cycle_items),
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,19 @@
  */
 
 import { app } from "../../../scripts/app.js";
-import { DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW, makeSectionLabel, hideWidget, makeCollapsibleSectionLabel, makeButton, makeTextarea, makeInput } from "./db_shared.js";
+import {
+  DB_COLOR,
+  DB_BGCOLOR,
+  ensureStylesheet,
+  fetchJSON,
+  nodeInnerW,
+  makeSectionLabel,
+  hideWidget,
+  makeCollapsibleSectionLabel,
+  makeButton,
+  makeTextarea,
+  makeInput,
+} from "./db_shared.js";
 
 ensureStylesheet();
 
@@ -26,16 +38,21 @@ function joinPromptPath(folder, filename) {
   return dir + "\\" + name;
 }
 
-function markdownPrompt(positive, negative) {
+function markdownPrompt(positive, negative, settings) {
   const pos = (positive || "").trim();
   const neg = (negative || "").trim();
-  return [
+  const set = (settings || "").trim();
+  const lines = [
     "## Positive",
     pos || "_empty_",
     "",
     "## Negative",
     neg || "_empty_",
-  ].join("\n");
+  ];
+  // Settings only appear once a run has reported them — 🎲 Random's rolled
+  // resolution among them, which nothing else records.
+  if (set) lines.push("", "## Settings", set);
+  return lines.join("\n");
 }
 
 function showPromptBrowser(startPath, onPickFolder, onPickFile) {
@@ -62,7 +79,8 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
 
   const pathEl = document.createElement("div");
   pathEl.className = "db-url-tools-status";
-  pathEl.style.cssText = "padding:6px 10px;word-break:break-all;white-space:normal;";
+  pathEl.style.cssText =
+    "padding:6px 10px;word-break:break-all;white-space:normal;";
 
   const actions = document.createElement("div");
   actions.className = "db-url-tools-row";
@@ -78,7 +96,10 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
   panel.append(header, pathEl, actions, list);
 
   let currentPath = startPath || "";
-  function close() { overlay.remove(); panel.remove(); }
+  function close() {
+    overlay.remove();
+    panel.remove();
+  }
   function addRow(label, titleText, onClick) {
     const row = document.createElement("div");
     row.className = "db-res-opt";
@@ -93,7 +114,9 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
   async function load(path) {
     list.textContent = "";
     pathEl.textContent = "Loading...";
-    const data = await fetchJSON(`/dirtybirds/saveprompt-browse?path=${encodeURIComponent(path || "")}`);
+    const data = await fetchJSON(
+      `/dirtybirds/saveprompt-browse?path=${encodeURIComponent(path || "")}`,
+    );
     if (!data || data.error) {
       pathEl.textContent = data?.error || "Could not load folder.";
       return;
@@ -112,7 +135,10 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
       });
     });
   }
-  useFolderBtn.addEventListener("click", () => { onPickFolder?.(currentPath); close(); });
+  useFolderBtn.addEventListener("click", () => {
+    onPickFolder?.(currentPath);
+    close();
+  });
   closeBtn.addEventListener("click", close);
   overlay.addEventListener("click", close);
   document.body.append(overlay, panel);
@@ -134,8 +160,11 @@ app.registerExtension({
     nodeType.prototype.onDrawBackground = function () {
       const ws = this.widgets;
       if (Array.isArray(ws)) {
-        const i = ws.findIndex(w => w?.name === "$$canvas-image-preview");
-        if (i > -1) { ws[i].onRemove?.(); ws.splice(i, 1); }
+        const i = ws.findIndex((w) => w?.name === "$$canvas-image-preview");
+        if (i > -1) {
+          ws[i].onRemove?.();
+          ws.splice(i, 1);
+        }
       }
       this.imgs = null;
       this.preview = null;
@@ -145,6 +174,8 @@ app.registerExtension({
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
       const prompts = message?.db_prompts_md;
+      const settings = message?.db_settings_md;
+      if (Array.isArray(settings)) this._dbArchiveSettings = settings[0] || "";
       if (Array.isArray(prompts)) {
         this._dbArchivePositive = prompts[0] || "";
         this._dbArchiveNegative = prompts[1] || "";
@@ -154,7 +185,8 @@ app.registerExtension({
       if (Array.isArray(imgs)) this._dbArchivePaintImages?.(imgs);
       // A run just delivered a result -> reveal it (the panel is collapsed by
       // default, which otherwise makes a successful save look like it did nothing).
-      if (Array.isArray(prompts) || Array.isArray(imgs)) this._dbArchiveReveal?.();
+      if (Array.isArray(prompts) || Array.isArray(imgs))
+        this._dbArchiveReveal?.();
     };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -164,7 +196,12 @@ app.registerExtension({
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
 
-      const staleWidgets = new Set(["db_script_panel", "db_save_title", "db_save_prefix", "db_save_file"]);
+      const staleWidgets = new Set([
+        "db_script_panel",
+        "db_save_title",
+        "db_save_prefix",
+        "db_save_file",
+      ]);
       if (Array.isArray(node.widgets)) {
         for (let i = node.widgets.length - 1; i >= 0; i--) {
           if (staleWidgets.has(node.widgets[i]?.name)) {
@@ -229,7 +266,14 @@ app.registerExtension({
           node.setDirtyCanvas(true, true);
         });
         row.append(lbl, input);
-        return { row, input, sync: () => { input.value = widget?.value ?? ""; input.title = input.value; } };
+        return {
+          row,
+          input,
+          sync: () => {
+            input.value = widget?.value ?? "";
+            input.title = input.value;
+          },
+        };
       }
 
       const prefixRow = makeTextRow("Filename", prefixWidget, "DirtyBirds");
@@ -266,7 +310,8 @@ app.registerExtension({
       fileRow.append(fileLabel, fileInput);
 
       const savePromptBtn = makeButton();
-      savePromptBtn.className = "db-lib-btn db-lora-add-open-btn db-archive-save-btn";
+      savePromptBtn.className =
+        "db-lib-btn db-lora-add-open-btn db-archive-save-btn";
       savePromptBtn.textContent = "Save Prompt";
       const status = document.createElement("div");
       status.className = "db-url-tools-status";
@@ -282,27 +327,42 @@ app.registerExtension({
       folderInput.addEventListener("input", syncPromptFile);
       fileInput.addEventListener("input", syncPromptFile);
       browseBtn.addEventListener("click", () => {
-        showPromptBrowser(folderInput.value, (folder) => {
-          folderInput.value = folder;
-          syncPromptFile();
-          syncPanelH();
-        }, (folder, filename) => {
-          folderInput.value = folder;
-          fileInput.value = filename;
-          syncPromptFile();
-          syncPanelH();
-        });
+        showPromptBrowser(
+          folderInput.value,
+          (folder) => {
+            folderInput.value = folder;
+            syncPromptFile();
+            syncPanelH();
+          },
+          (folder, filename) => {
+            folderInput.value = folder;
+            fileInput.value = filename;
+            syncPromptFile();
+            syncPanelH();
+          },
+        );
       });
 
       savePromptBtn.addEventListener("click", async () => {
         // Pull prompt from Dirty Talk node if Archive's own inputs are empty.
-        let positive = (posWidget?.value || node._dbArchivePositive || "").trim();
+        let positive = (
+          posWidget?.value ||
+          node._dbArchivePositive ||
+          ""
+        ).trim();
         if (!positive) {
           const dt = (app.graph?._nodes || []).find(
-            (n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt"
+            (n) =>
+              n.comfyClass === "DirtyBirdsPrompt" ||
+              n.type === "DirtyBirdsPrompt",
           );
           if (dt) {
-            positive = (dt._dbResolvedPositive || dt._dbPositiveTextarea?.value || dt.widgets?.find(w => w.name === "positive")?.value || "").trim();
+            positive = (
+              dt._dbResolvedPositive ||
+              dt._dbPositiveTextarea?.value ||
+              dt.widgets?.find((w) => w.name === "positive")?.value ||
+              ""
+            ).trim();
           }
         }
         if (!positive) {
@@ -316,7 +376,11 @@ app.registerExtension({
         const data = await fetchJSON("/dirtybirds/archive-save-prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positive, negative: negWidget?.value || node._dbArchiveNegative || "", prompts_file: fullPromptPath() }),
+          body: JSON.stringify({
+            positive,
+            negative: negWidget?.value || node._dbArchiveNegative || "",
+            prompts_file: fullPromptPath(),
+          }),
         });
         if (data?.ok) {
           status.textContent = "Saved to " + (data.path || "prompt file");
@@ -328,14 +392,39 @@ app.registerExtension({
         syncPanelH();
       });
 
-      archiveRow.append(prefixRow.row, folderRow, fileRow, savePromptBtn, status);
-      panel.append(archiveLabel, archiveRow, previewSection.label, previewContent);
+      archiveRow.append(
+        prefixRow.row,
+        folderRow,
+        fileRow,
+        savePromptBtn,
+        status,
+      );
+      panel.append(
+        archiveLabel,
+        archiveRow,
+        previewSection.label,
+        previewContent,
+      );
       syncPromptFile();
 
-      const panelWidget = node.addDOMWidget("db_archive_panel", "customhtml", panel, {
+      // Hand-maintained heights, because nothing measures the panel any more.
+      //   COLLAPSED  settings rows only
+      //   EXPANDED   + the saved-prompt textarea
+      //   WITH_IMAGE + the saved image thumbnail
+      // Adding a row to the panel means bumping these.
+      const PANEL_COLLAPSED = 210;
+      const PANEL_EXPANDED = 420;
+      const PANEL_WITH_IMAGE = 620;
+      let hasImage = false;
+      const panelMinHeight = () => {
+        if (!previewSection.isExpanded()) return PANEL_COLLAPSED;
+        return hasImage ? PANEL_WITH_IMAGE : PANEL_EXPANDED;
+      };
+
+      node.addDOMWidget("db_archive_panel", "customhtml", panel, {
         serialize: false,
-        height: 320,
-        getMinHeight: () => previewSection.isExpanded() ? 420 : 210,
+        height: PANEL_EXPANDED,
+        getMinHeight: panelMinHeight,
       });
 
       node._dbArchivePaint = () => {
@@ -343,14 +432,29 @@ app.registerExtension({
         let negative = negWidget?.value || node._dbArchiveNegative || "";
         if (!positive.trim()) {
           const dt = (app.graph?._nodes || []).find(
-            (n) => n.comfyClass === "DirtyBirdsPrompt" || n.type === "DirtyBirdsPrompt"
+            (n) =>
+              n.comfyClass === "DirtyBirdsPrompt" ||
+              n.type === "DirtyBirdsPrompt",
           );
           if (dt) {
-            positive = dt._dbResolvedPositive || dt._dbPositiveTextarea?.value || dt.widgets?.find(w => w.name === "positive")?.value || "";
-            negative = negative || dt._dbResolvedNegative || dt._dbNegativeTextarea?.value || dt.widgets?.find(w => w.name === "negative")?.value || "";
+            positive =
+              dt._dbResolvedPositive ||
+              dt._dbPositiveTextarea?.value ||
+              dt.widgets?.find((w) => w.name === "positive")?.value ||
+              "";
+            negative =
+              negative ||
+              dt._dbResolvedNegative ||
+              dt._dbNegativeTextarea?.value ||
+              dt.widgets?.find((w) => w.name === "negative")?.value ||
+              "";
           }
         }
-        promptBox.value = markdownPrompt(positive, negative);
+        promptBox.value = markdownPrompt(
+          positive,
+          negative,
+          node._dbArchiveSettings,
+        );
         syncPanelH();
       };
 
@@ -360,7 +464,8 @@ app.registerExtension({
 
       node._dbArchivePaintImages = (imgs) => {
         imagePanel.innerHTML = "";
-        if (!imgs || !imgs.length) {
+        hasImage = Boolean(imgs && imgs.length);
+        if (!hasImage) {
           imagePanel.style.display = "none";
           syncPanelH();
           return;
@@ -378,28 +483,30 @@ app.registerExtension({
       function applyWidths() {
         panel.style.width = nodeInnerW(node) + "px";
       }
+
+      // Width only. This used to measure panel.scrollHeight and setSize the node
+      // to match, from inside onResize — so every drag of the resize handle was
+      // immediately overwritten by the measured height, which is what made the
+      // node look like it refused to resize and snapped back.
+      //
+      // The height floor now comes from the getMinHeight constants above, the
+      // same hand-maintained approach the rest of the pack uses. Drag it as tall
+      // as you like; it will not fight back.
       function syncPanelH() {
-        if (node._dbArchiveSizing) return;
         applyWidths();
-        requestAnimationFrame(() => {
-          node._dbArchiveSizing = true;
-          const h = Math.max(260, panel.scrollHeight || 260);
-          try { panelWidget.height = h; } catch (_) {}
-          panelWidget.computedHeight = h;
-          const nodeH = Math.max(330, h + 58);
-          if (Math.abs((node.size?.[1] || 0) - nodeH) > 2) {
-            if (typeof node.setSize === "function") node.setSize([node.size[0], nodeH]);
-            else node.size[1] = nodeH;
-          }
-          node.setDirtyCanvas(true, true);
-          node._dbArchiveSizing = false;
-        });
+        // One-shot floor so the node grows when the saved image first appears.
+        // Only ever grows, and is never reached from onResize, so it cannot
+        // fight the resize handle the way the old measurement did.
+        const floor = panelMinHeight() + 58;
+        if ((node.size?.[1] || 0) < floor)
+          node.setSize?.([node.size[0], floor]);
+        node.setDirtyCanvas(true, true);
       }
 
       const origResize = node.onResize;
       node.onResize = function (size) {
         origResize?.call(this, size);
-        syncPanelH();
+        applyWidths();
       };
 
       const onConfigure = node.onConfigure;
@@ -415,10 +522,12 @@ app.registerExtension({
         });
       };
 
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        node._dbArchivePaint();
-        syncPanelH();
-      }));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          node._dbArchivePaint();
+          syncPanelH();
+        }),
+      );
     };
   },
 });

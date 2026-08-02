@@ -93,13 +93,65 @@ def load_wildcard_dict():
                     values = [ln for ln in lines if ln and not ln.startswith("#")]
                     if values:
                         result[key] = values
-                elif (file.endswith(".yaml") or file.endswith(".yml")) and yaml is not None:
+                elif (
+                    file.endswith(".yaml") or file.endswith(".yml")
+                ) and yaml is not None:
                     with open(path, "r", encoding="UTF-8", errors="ignore") as f:
                         data = yaml.safe_load(f) or {}
                     _flatten_yaml(data, "", result)
             except Exception as e:
-                logger.warning("[DirtyBirds] Could not load wildcard file %s: %s", path, e)
+                logger.warning(
+                    "[DirtyBirds] Could not load wildcard file %s: %s", path, e
+                )
     return result
+
+
+class SequentialPicker:
+    """Walks lists by position instead of sampling them, for step mode.
+
+    Testing a wildcard file means seeing every entry, which random picking
+    never guarantees. With ``step`` 0 each list yields its first entry, 1 the
+    second, and so on, wrapping at the end — so queueing runs back to back
+    walks the file one entry per run.
+
+    It stands in for ``random.Random`` and implements only the three methods
+    the resolver calls. Option weights are ignored by design: stepping visits
+    every entry equally, which is the point.
+
+    ``longest`` records the biggest set of choices walked, counting BOTH
+    __wildcard__ list entries and the options inside a {a|b|c} group. Counting
+    only list entries reads "1" for the common shape where a wildcard key holds
+    one string that is itself a {a|b|c} group — which is where the variety
+    actually lives. ``counts`` keeps the per-source breakdown behind it.
+    """
+
+    def __init__(self, step):
+        self.step = max(0, int(step or 0))
+        self.longest = 0
+        self.counts = []
+
+    def _record(self, size, kind):
+        self.longest = max(self.longest, size)
+        self.counts.append({"kind": kind, "size": size})
+
+    def choice(self, seq):
+        pool = list(seq)
+        if not pool:
+            raise IndexError("cannot pick from an empty sequence")
+        self._record(len(pool), "list")
+        return pool[self.step % len(pool)]
+
+    def choices(self, population, weights=None, k=1):
+        pool = list(population)
+        if not pool:
+            return []
+        self._record(len(pool), "options")
+        return [pool[(self.step + offset) % len(pool)] for offset in range(k)]
+
+    def randint(self, a, b):
+        if b <= a:
+            return a
+        return a + (self.step % (b - a + 1))
 
 
 def _split_weight(option):
@@ -199,6 +251,7 @@ def _resolve_fragment(text, wd, rng, variables):
     via a __token__ -- still fires. Templates with none of these constructs are
     returned unchanged after a single no-op pass, so existing prompts behave
     exactly as before."""
+
     def _assign(m):
         variables[m.group(1)] = _resolve_fragment(m.group(2), wd, rng, variables)
         return ""
@@ -206,8 +259,7 @@ def _resolve_fragment(text, wd, rng, variables):
     out = text
     for _ in range(_MAX_DEPTH):
         new = _VAR_ASSIGN_RE.sub(_assign, out)
-        new = _VAR_REF_RE.sub(
-            lambda m: variables.get(m.group(1), m.group(0)), new)
+        new = _VAR_REF_RE.sub(lambda m: variables.get(m.group(1), m.group(0)), new)
         new = _DYNAMIC_RE.sub(lambda m: _resolve_dynamic(m, rng), new)
         new = _WILDCARD_RE.sub(lambda m: _resolve_wildcard(m, wd, rng), new)
         if new == out:
@@ -216,15 +268,24 @@ def _resolve_fragment(text, wd, rng, variables):
     return out
 
 
-def process(text, seed, wildcard_dict=None):
+def resolve(text, seed, wildcard_dict=None, step=None):
+    """Resolve one prompt, returning (text, picker).
+
+    ``step=None`` rolls at random from ``seed``. An integer ``step`` switches to
+    SequentialPicker so every list is walked by position instead — the caller
+    reads ``picker.longest`` to report how far through the file the step is."""
+    picker = SequentialPicker(step) if step is not None else random.Random(seed)
+    if not text:
+        return text, picker
+    wd = wildcard_dict if wildcard_dict is not None else load_wildcard_dict()
+    return _resolve_fragment(text, wd, picker, {}), picker
+
+
+def process(text, seed, wildcard_dict=None, step=None):
     """Resolve variables, dynamic prompts and __wildcards__, seeded for repeatability.
 
     Variables (`[[name=value]]` declares once per roll, `[[name]]` reuses) make
     multi-token picks coherent -- e.g. choose a clothing register once and dress
     head to toe from it. They work whether declared in the prompt you type or
     inside a scenario template pulled via a __token__."""
-    if not text:
-        return text
-    wd = wildcard_dict if wildcard_dict is not None else load_wildcard_dict()
-    rng = random.Random(seed)
-    return _resolve_fragment(text, wd, rng, {})
+    return resolve(text, seed, wildcard_dict, step)[0]

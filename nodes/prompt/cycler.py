@@ -2,18 +2,15 @@
 
 Each physical line produces one output, with a hard limit that prevents an
 accidental paste from scheduling an unbounded ComfyUI list.
+
+The active line reaches Sampler & Picker over a real ``cycler_line`` socket, not
+by riding on the prompt string. An earlier design smuggled it on a ``str``
+subclass; any node that rebuilt the prompt — even ``.strip()``, which always
+returns a fresh plain ``str`` — silently dropped it and the text overlay died
+with no error. Don't reintroduce that.
 """
 
 MAX_CYCLER_LINES = 50
-
-
-class CyclerPrompt(str):
-    """A normal STRING carrying the active cycler line between native nodes."""
-
-    def __new__(cls, value, cycler_text=""):
-        instance = super().__new__(cls, value)
-        instance.db_cycler_text = str(cycler_text or "")
-        return instance
 
 
 def cycle_text(text):
@@ -33,8 +30,3 @@ def append_positive(base, addition):
     if not addition:
         return base
     return (base + ", " + addition) if base else addition
-
-
-def with_cycler_metadata(value, cycler_text):
-    """Keep the public output a STRING while privately carrying pipe metadata."""
-    return CyclerPrompt(value, cycler_text)

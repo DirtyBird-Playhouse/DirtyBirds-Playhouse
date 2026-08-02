@@ -5,10 +5,10 @@ side-effect ``folders`` module for route registration. (The booru tag fetcher is
 a widget of the prompt/Dirty Talk node and registers its route from there.)
 
 Each package is imported defensively: if one fails to load — most likely because
-an optional heavy dependency is missing (e.g. the Fixer's OpenCV/ultralytics/timm
-stack) — it is skipped with a warning instead of taking the whole pack down. That
-prevents the "no supported nodes" failure where a single broken import hides all
-eleven nodes.
+an optional dependency is missing (e.g. Inpainting's facexlib / spandrel_extra_arches
+face-restore stack) — it is skipped with a warning instead of taking the whole pack
+down. That prevents the "no supported nodes" failure where a single broken import
+hides every node.
 """
 
 import importlib
@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
-# V3 (comfy_api.latest) node classes, collected from packages that have migrated.
-# Registered via the package-root ``comfy_entrypoint`` alongside the V1 mappings.
-V3_NODES = []
 
 # Node packages, in menu/registration order. Each exposes NODE_CLASS_MAPPINGS
 # and NODE_DISPLAY_NAME_MAPPINGS.
@@ -33,8 +30,8 @@ _NODE_PACKAGES = (
     "pipe",
     "wardrobe",
     "saveprompt",
-    "fixer",
     "inpaint",
+    "finish",
 )
 
 for _name in _NODE_PACKAGES:
@@ -48,8 +45,9 @@ for _name in _NODE_PACKAGES:
         )
         continue
     NODE_CLASS_MAPPINGS.update(getattr(_module, "NODE_CLASS_MAPPINGS", {}))
-    NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
-    V3_NODES.extend(getattr(_module, "V3_NODES", []))
+    NODE_DISPLAY_NAME_MAPPINGS.update(
+        getattr(_module, "NODE_DISPLAY_NAME_MAPPINGS", {})
+    )
 
 # Imported for side effects: HTTP route registration. Guarded so a route-import
 # failure likewise cannot prevent the nodes above from registering.
@@ -58,4 +56,4 @@ try:
 except Exception as exc:  # noqa: BLE001
     logger.warning("[DirtyBirds] folders route registration failed: %s", exc)
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "V3_NODES"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

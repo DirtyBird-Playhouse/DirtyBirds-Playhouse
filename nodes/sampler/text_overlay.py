@@ -8,12 +8,33 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
+# Tried in order. DejaVuSans alone silently failed on Windows — ImageFont
+# then fell back to load_default(), an ~8px bitmap face that ignores the size
+# argument, so every caption rendered tiny no matter what was asked for.
+_FONT_CANDIDATES = (
+    "arial.ttf",
+    "DejaVuSans.ttf",
+    "Helvetica.ttc",
+    "LiberationSans-Regular.ttf",
+)
 
-def _font(size=56):
+
+def _font(size):
+    for name in _FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
     try:
-        return ImageFont.truetype("DejaVuSans.ttf", size)
-    except OSError:
+        # Pillow >= 10.1 can scale its built-in face; older ones cannot.
+        return ImageFont.load_default(size)
+    except TypeError:
         return ImageFont.load_default()
+
+
+def _caption_size(image_height, font_size):
+    """Scale the caption to the image so it reads at 512px and at 2048px."""
+    return max(10, int(font_size or image_height // 12))
 
 
 def _wrap(draw, text, font, max_width):
@@ -33,35 +54,59 @@ def _wrap(draw, text, font, max_width):
     return lines
 
 
-def add_text_overlay(images, text, font_size=56):
-    """Burn a translucent black bottom bar with white text into every image."""
+def add_text_overlay(images, text, font_size=None):
+    """Burn white text with a dark outline across the bottom of every image.
+
+    No backing bar: the outline is what keeps the caption legible, on a pale sky
+    or a black dress alike, without hiding a strip of the picture behind it.
+    ``font_size`` of None scales the caption to each image's height.
+    """
     if not str(text or "").strip():
         return images
     if not torch.is_tensor(images) or images.ndim != 4:
         raise ValueError("images must be a BHWC IMAGE tensor")
 
     rendered = []
-    font = _font(font_size)
     for item in images:
-        rgb = np.clip(item.detach().cpu().numpy()[..., :3] * 255.0, 0, 255).astype(np.uint8)
+        rgb = np.clip(item.detach().cpu().numpy()[..., :3] * 255.0, 0, 255).astype(
+            np.uint8
+        )
         image = Image.fromarray(rgb, "RGB").convert("RGBA")
         draw = ImageDraw.Draw(image, "RGBA")
-        padding = max(6, font_size // 5)
-        lines = _wrap(draw, text, font, max(1, image.width - 2 * padding))
+        size = _caption_size(image.height, font_size)
+        font = _font(size)
+        # The outline grows with the text, or it vanishes at large sizes.
+        stroke = max(1, size // 10)
+        padding = max(4, size // 3)
+        usable = max(1, image.width - 2 * (padding + stroke))
+        lines = _wrap(draw, text, font, usable)
         if not lines:
             rendered.append(item)
             continue
-        boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+        # Measure with the stroke included so tall glyphs and the outline are
+        # not clipped by the image edge.
+        boxes = [
+            draw.textbbox((0, 0), line, font=font, stroke_width=stroke)
+            for line in lines
+        ]
         line_heights = [max(1, box[3] - box[1]) for box in boxes]
-        bar_height = sum(line_heights) + padding * 2 + max(0, len(lines) - 1) * 4
-        top = max(0, image.height - bar_height)
-        draw.rectangle((0, top, image.width, image.height), fill=(0, 0, 0, 170))
-        y = top + padding
+        gap = max(2, size // 8)
+        block = sum(line_heights) + max(0, len(lines) - 1) * gap
+        y = max(0, image.height - padding - block)
         for line, height in zip(lines, line_heights):
-            draw.text((padding, y), line, font=font, fill=(255, 255, 255, 255))
-            y += height + 4
+            draw.text(
+                (padding, y),
+                line,
+                font=font,
+                fill=(255, 255, 255, 255),
+                stroke_width=stroke,
+                stroke_fill=(0, 0, 0, 255),
+            )
+            y += height + gap
         array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
-        rendered.append(torch.from_numpy(array).to(device=item.device, dtype=item.dtype))
+        rendered.append(
+            torch.from_numpy(array).to(device=item.device, dtype=item.dtype)
+        )
     return torch.stack(rendered, dim=0)
 
 

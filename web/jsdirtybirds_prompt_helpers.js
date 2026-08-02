@@ -33,40 +33,49 @@ export function showOptionsFlyout(title, options, current, onPick) {
   document.querySelector(".db-flyout-overlay")?.remove();
   document.querySelector(".db-flyout")?.remove();
 
-  const overlay = document.createElement("div"); overlay.className = "db-flyout-overlay";
-  const panel = document.createElement("div"); panel.className = "db-flyout";
-  panel.style.left = Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
+  const overlay = document.createElement("div");
+  overlay.className = "db-flyout-overlay";
+  const panel = document.createElement("div");
+  panel.className = "db-flyout";
+  panel.style.left =
+    Math.min(window.innerWidth / 2, window.innerWidth - 300) + "px";
   panel.style.top = Math.max(40, window.innerHeight / 2 - 120) + "px";
 
-  const header = document.createElement("div"); header.className = "db-flyout-header";
-  const titleEl = document.createElement("span"); titleEl.className = "db-flyout-title"; titleEl.textContent = title;
+  const header = document.createElement("div");
+  header.className = "db-flyout-header";
+  const titleEl = document.createElement("span");
+  titleEl.className = "db-flyout-title";
+  titleEl.textContent = title;
   const closeBtn = makeButton("✕", null, "db-flyout-close");
-  header.append(titleEl, closeBtn); panel.appendChild(header);
+  header.append(titleEl, closeBtn);
+  panel.appendChild(header);
 
-  const list = document.createElement("div"); list.className = "db-flyout-list"; panel.appendChild(list);
-  options.forEach(opt => {
+  const list = document.createElement("div");
+  list.className = "db-flyout-list";
+  panel.appendChild(list);
+  options.forEach((opt) => {
     const row = document.createElement("div");
-    row.className = "db-res-opt" + (opt.value === current ? " db-selected" : "");
+    row.className =
+      "db-res-opt" + (opt.value === current ? " db-selected" : "");
     row.innerHTML = `<span class="db-res-opt-glyph">${opt.glyph || ""}</span><span class="db-res-opt-label">${escapeHTML(opt.label)}</span>`;
-    row.addEventListener("click", () => { close(); onPick(opt.value); });
+    row.addEventListener("click", () => {
+      close();
+      onPick(opt.value);
+    });
     list.appendChild(row);
   });
 
-  function close() { overlay.remove(); panel.remove(); }
-  closeBtn.addEventListener("click", close); overlay.addEventListener("click", close);
+  function close() {
+    overlay.remove();
+    panel.remove();
+  }
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", close);
   document.body.append(overlay, panel);
 }
 
 // Resolve the underlying <textarea> for a multiline STRING widget across
 // ComfyUI versions (element may be the textarea or a wrapper containing one).
-function getTextarea(widget) {
-  if (!widget) return null;
-  const el = widget.element || widget.inputEl;
-  if (!el) return null;
-  if (el.tagName === "TEXTAREA") return el;
-  return el.querySelector?.("textarea") || null;
-}
-
 export function insertAtCursor(textarea, widget, token) {
   if (!textarea) return;
   const start = textarea.selectionStart ?? textarea.value.length;
@@ -145,9 +154,12 @@ function hideAutocomplete() {
 function positionAutocomplete(textarea) {
   const rect = textarea.getBoundingClientRect();
   const lines = textarea.value.slice(0, textarea.selectionStart).split("\n");
-  const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
-  autocompleteState.dropdown.style.left = (rect.left + 10) + "px";
-  autocompleteState.dropdown.style.top = Math.min(window.innerHeight - 220, rect.top + lines.length * lineHeight) + "px";
+  const lineHeight =
+    parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
+  autocompleteState.dropdown.style.left = rect.left + 10 + "px";
+  autocompleteState.dropdown.style.top =
+    Math.min(window.innerHeight - 220, rect.top + lines.length * lineHeight) +
+    "px";
   autocompleteState.dropdown.style.display = "block";
 }
 
@@ -162,15 +174,30 @@ function showTagAutocomplete(textarea, matches, start) {
   const select = (name) => {
     const cursor = textarea.selectionStart;
     const insertion = `${name}, `;
-    textarea.value = textarea.value.slice(0, start) + insertion + textarea.value.slice(cursor);
+    textarea.value =
+      textarea.value.slice(0, start) + insertion + textarea.value.slice(cursor);
     textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     hideAutocomplete();
   };
   autocompleteState.selectItem = (index) => select(matches[index].tag_name);
-  matches.slice(0, 20).forEach(match => {
-    const item = createAutocompleteItem(match.tag_name, () => select(match.tag_name));
-    const categoryColors = { 0: "#009be6", 1: "#ff8a8b", 3: "#c797ff", 4: "#35c64a", 5: "#ead084", 7: "#009be6", 8: "#ff8a8b", 10: "#c797ff", 11: "#35c64a", 12: "#8bd5ca", 14: "#ead084" };
+  matches.slice(0, 20).forEach((match) => {
+    const item = createAutocompleteItem(match.tag_name, () =>
+      select(match.tag_name),
+    );
+    const categoryColors = {
+      0: "#009be6",
+      1: "#ff8a8b",
+      3: "#c797ff",
+      4: "#35c64a",
+      5: "#ead084",
+      7: "#009be6",
+      8: "#ff8a8b",
+      10: "#c797ff",
+      11: "#35c64a",
+      12: "#8bd5ca",
+      14: "#ead084",
+    };
     item.style.color = categoryColors[match.category] || "#bbb";
     const count = Number(match.post_count || 0).toLocaleString();
     item.innerHTML = `<span>${match.tag_name}</span><span style="float:right;opacity:.55;margin-left:18px">${count}</span>`;
@@ -192,7 +219,7 @@ function showAutocompleteDropdown(textarea, matches, prefix, partial) {
 
   autocompleteState.dropdown.innerHTML = "";
 
-  matches.slice(0, 10).forEach(name => {
+  matches.slice(0, 10).forEach((name) => {
     const item = createAutocompleteItem(name, () => {
       insertAutocompleteSelection(textarea, prefix, name);
       hideAutocomplete();
@@ -203,10 +230,12 @@ function showAutocompleteDropdown(textarea, matches, prefix, partial) {
   // Position dropdown near cursor
   const rect = textarea.getBoundingClientRect();
   const lines = textarea.value.slice(0, textarea.selectionStart).split("\n");
-  const lineHeight = parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
+  const lineHeight =
+    parseInt(window.getComputedStyle(textarea).lineHeight) || 18;
 
-  autocompleteState.dropdown.style.left = (rect.left + 10) + "px";
-  autocompleteState.dropdown.style.top = (rect.top + lines.length * lineHeight) + "px";
+  autocompleteState.dropdown.style.left = rect.left + 10 + "px";
+  autocompleteState.dropdown.style.top =
+    rect.top + lines.length * lineHeight + "px";
   autocompleteState.dropdown.style.display = "block";
 }
 
@@ -216,14 +245,18 @@ function insertAutocompleteSelection(textarea, prefix, name) {
   const beforeCursor = text.slice(0, cursorPos);
 
   // Remove the partial match
-  const cleanedBefore = beforeCursor.replace(/<lora:[^:>]*$|(\[emb:|<embed:)[^:>]*$/, "");
+  const cleanedBefore = beforeCursor.replace(
+    /<lora:[^:>]*$|(\[emb:|<embed:)[^:>]*$/,
+    "",
+  );
 
   // Insert full syntax
   const syntax = `${prefix}${name}:1.0>`;
   const afterCursor = text.slice(cursorPos);
 
   textarea.value = cleanedBefore + syntax + afterCursor;
-  textarea.selectionStart = textarea.selectionEnd = cleanedBefore.length + syntax.length;
+  textarea.selectionStart = textarea.selectionEnd =
+    cleanedBefore.length + syntax.length;
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -233,7 +266,6 @@ export function syncTextareaToWidget(textarea, widget, node) {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
   node?.setDirtyCanvas?.(true, true);
 }
-
 
 export function handleAutocompleteInput(event, textarea, node) {
   clearTimeout(autocompleteState.timeout);
@@ -253,9 +285,13 @@ export function handleAutocompleteInput(event, textarea, node) {
     const start = cursorPos - partial.length;
     autocompleteState.timeout = setTimeout(async () => {
       const data = await fetchJSON(
-        `/dirtybirds/tag-autocomplete?query=${encodeURIComponent(partial)}&limit=40`
+        `/dirtybirds/tag-autocomplete?query=${encodeURIComponent(partial)}&limit=40`,
       );
-      if (requestId !== autocompleteState.requestId || textarea.selectionStart !== cursorPos) return;
+      if (
+        requestId !== autocompleteState.requestId ||
+        textarea.selectionStart !== cursorPos
+      )
+        return;
       showTagAutocomplete(textarea, data?.tags || [], start);
     }, 60);
     return;
@@ -263,34 +299,44 @@ export function handleAutocompleteInput(event, textarea, node) {
 
   const partial = loraMatch ? loraMatch[1] : embedMatch ? embedMatch[2] : "";
   const prefix = loraMatch ? "<lora:" : "<embed:";
-  const list = loraMatch ? (node._dbLoraList || []) : (node._dbEmbeddingList || []);
+  const list = loraMatch ? node._dbLoraList || [] : node._dbEmbeddingList || [];
 
   autocompleteState.timeout = setTimeout(() => {
     showAutocompleteDropdown(
       textarea,
-      list.filter(item => item.toLowerCase().includes(partial.toLowerCase())),
+      list.filter((item) => item.toLowerCase().includes(partial.toLowerCase())),
       prefix,
-      partial
+      partial,
     );
   }, 150);
 }
 
 export function handleAutocompleteKeydown(event, textarea) {
-  if (!autocompleteState.dropdown || autocompleteState.dropdown.style.display === "none") return;
+  if (
+    !autocompleteState.dropdown ||
+    autocompleteState.dropdown.style.display === "none"
+  )
+    return;
 
   const items = [...autocompleteState.dropdown.children];
   if ((event.key === "ArrowDown" || event.key === "ArrowUp") && items.length) {
     event.preventDefault();
     const delta = event.key === "ArrowDown" ? 1 : -1;
-    autocompleteState.selectedIndex = (autocompleteState.selectedIndex + delta + items.length) % items.length;
+    autocompleteState.selectedIndex =
+      (autocompleteState.selectedIndex + delta + items.length) % items.length;
     items.forEach((item, index) => {
-      item.style.backgroundColor = index === autocompleteState.selectedIndex ? "#4a4a52" : "transparent";
+      item.style.backgroundColor =
+        index === autocompleteState.selectedIndex ? "#4a4a52" : "transparent";
     });
     items[autocompleteState.selectedIndex].scrollIntoView({ block: "nearest" });
     return;
   }
 
-  if ((event.key === "Enter" || event.key === "Tab") && autocompleteState.selectedIndex >= 0 && autocompleteState.selectItem) {
+  if (
+    (event.key === "Enter" || event.key === "Tab") &&
+    autocompleteState.selectedIndex >= 0 &&
+    autocompleteState.selectItem
+  ) {
     event.preventDefault();
     autocompleteState.selectItem(autocompleteState.selectedIndex);
     return;

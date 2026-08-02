@@ -1,6 +1,6 @@
-/** Shared content-driven sizing for every DirtyBirds node. */
+/** Shared control surface + common node width for every DirtyBirds node. */
 import { app } from "../../../scripts/app.js";
-import { DIRTYBIRDS_NODE_WIDTH, installContentSizeGuard } from "./db_shared.js";
+import { DIRTYBIRDS_NODE_WIDTH, applyControlSurface } from "./db_shared.js";
 
 // One common two-column canvas for every DirtyBirds node. Individual nodes may
 // contain different amounts of content, but they no longer define competing
@@ -10,23 +10,18 @@ function minimumWidth(nodeData, node) {
 }
 
 app.registerExtension({
-  name: "DirtyBirds.ContentSizeGuard",
+  name: "DirtyBirds.ControlSurface",
   beforeRegisterNodeDef(nodeType, nodeData) {
     if (!String(nodeData?.name || "").startsWith("DirtyBirds")) return;
     const originalCreated = nodeType.prototype.onNodeCreated;
-    const originalConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onNodeCreated = function () {
       const result = originalCreated?.apply(this, arguments);
       // Other node extensions add their DOM widgets during the same creation
-      // chain. Install after those callbacks have finished.
-      requestAnimationFrame(() => installContentSizeGuard(this, {
-        minWidth: minimumWidth(nodeData, this),
-      }));
-      return result;
-    };
-    nodeType.prototype.onConfigure = function () {
-      const result = originalConfigure?.apply(this, arguments);
-      requestAnimationFrame(() => this._dbFitContent?.());
+      // chain. Mark the surface after those callbacks have finished, so every
+      // widget element exists by then.
+      requestAnimationFrame(() =>
+        applyControlSurface(this, { minWidth: minimumWidth(nodeData, this) }),
+      );
       return result;
     };
   },

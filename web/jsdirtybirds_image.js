@@ -39,8 +39,11 @@ function clearDefaultImageWidget(node) {
   const imageWidget = node.widgets?.find((widget) => widget.name === "image");
   if (!imageWidget) return;
   const value = String(imageWidget.value || "");
-  const values = imageWidget.options?.values || imageWidget.options?.items || [];
-  const firstRealValue = Array.isArray(values) ? values.find((item) => String(item || "").trim()) : "";
+  const values =
+    imageWidget.options?.values || imageWidget.options?.items || [];
+  const firstRealValue = Array.isArray(values)
+    ? values.find((item) => String(item || "").trim())
+    : "";
   const looksAutoSelected = value && value === firstRealValue;
   if (!looksAutoSelected && value.toLowerCase() !== "example.png") return;
 
@@ -62,7 +65,8 @@ app.registerExtension({
     // blurry canvas copy while retaining node.imgs for other DirtyBirds tools.
     const origDrawBackground = nodeType.prototype.onDrawBackground;
     nodeType.prototype.onDrawBackground = function () {
-      if (!this._dbOwnsImagePreview) return origDrawBackground?.apply(this, arguments);
+      if (!this._dbOwnsImagePreview)
+        return origDrawBackground?.apply(this, arguments);
       const imgs = this.imgs;
       this.imgs = undefined;
       try {
@@ -106,7 +110,10 @@ app.registerExtension({
         for (const w of [...(node.widgets || [])]) {
           if (w === imageWidget) continue;
           const nm = String(w.name || "");
-          if (/upload|choose file/i.test(nm) || (w.type === "button" && !w.element)) {
+          if (
+            /upload|choose file/i.test(nm) ||
+            (w.type === "button" && !w.element)
+          ) {
             removeWidget(node, w);
           }
         }
@@ -155,7 +162,8 @@ app.registerExtension({
       urlInput.type = "text";
       urlInput.className = "db-text-input";
       urlInput.placeholder = "image URL or local path";
-      urlInput.style.cssText += "flex:0 0 auto;height:24px;width:100%;box-sizing:border-box;";
+      urlInput.style.cssText +=
+        "flex:0 0 auto;height:24px;width:100%;box-sizing:border-box;";
       urlInput.value = String(imageUrlWidget?.value || "");
 
       const sourceSummary = document.createElement("div");
@@ -165,7 +173,9 @@ app.registerExtension({
         if (!source) return "";
         try {
           if (/^https?:\/\//i.test(source)) return new URL(source).hostname;
-        } catch (_) { /* retain the original source */ }
+        } catch (_) {
+          /* retain the original source */
+        }
         return source.split(/[\\/]/).filter(Boolean).pop() || source;
       }
       function paintSourceSummary() {
@@ -185,7 +195,10 @@ app.registerExtension({
       let _urlPreviewTimer = null;
       function previewFromUrl(raw) {
         const src = String(raw || "").trim();
-        if (!src) { restoreSelectedFilePreview(); return; }
+        if (!src) {
+          restoreSelectedFilePreview();
+          return;
+        }
         const url = /^https?:\/\//i.test(src)
           ? src
           : `/view?filename=${encodeURIComponent(src)}&type=input`;
@@ -198,24 +211,33 @@ app.registerExtension({
           setStatus(`${img.naturalWidth} × ${img.naturalHeight}`, "ok");
           node.setDirtyCanvas(true, true);
         };
-        img.onerror = () => setStatus("Could not load preview from that URL/path.", "err");
+        img.onerror = () =>
+          setStatus("Could not load preview from that URL/path.", "err");
         img.src = url;
       }
       function scheduleUrlPreview() {
         clearTimeout(_urlPreviewTimer);
-        _urlPreviewTimer = setTimeout(() => previewFromUrl(urlInput.value), 450);
+        _urlPreviewTimer = setTimeout(
+          () => previewFromUrl(urlInput.value),
+          450,
+        );
       }
       urlInput.addEventListener("input", () => {
         if (imageUrlWidget) imageUrlWidget.value = urlInput.value;
         paintSourceSummary();
         scheduleUrlPreview();
-        window.dispatchEvent(new CustomEvent("dirtybirds:image-source-changed"));
+        window.dispatchEvent(
+          new CustomEvent("dirtybirds:image-source-changed"),
+        );
       });
       // Paste lands the value before 'input' settles — preview a touch sooner.
-      urlInput.addEventListener("paste", () => setTimeout(scheduleUrlPreview, 0));
+      urlInput.addEventListener("paste", () =>
+        setTimeout(scheduleUrlPreview, 0),
+      );
       // Small clear (✕) button overlaid on the right of the URL field.
       const urlWrap = document.createElement("div");
-      urlWrap.style.cssText = "position:relative;width:100%;box-sizing:border-box;";
+      urlWrap.style.cssText =
+        "position:relative;width:100%;box-sizing:border-box;";
       urlInput.style.paddingRight = "22px";
       const urlClear = makeButton();
       urlClear.type = "button";
@@ -225,9 +247,15 @@ app.registerExtension({
         "position:absolute;right:4px;top:50%;transform:translateY(-50%);" +
         "width:16px;height:16px;border:none;background:none;color:#888;" +
         "font-size:11px;line-height:1;cursor:pointer;padding:0;display:none;";
-      urlClear.addEventListener("mouseenter", () => { urlClear.style.color = "#5aadff"; });
-      urlClear.addEventListener("mouseleave", () => { urlClear.style.color = "#888"; });
-      function syncUrlClear() { urlClear.style.display = urlInput.value.trim() ? "block" : "none"; }
+      urlClear.addEventListener("mouseenter", () => {
+        urlClear.style.color = "#5aadff";
+      });
+      urlClear.addEventListener("mouseleave", () => {
+        urlClear.style.color = "#888";
+      });
+      function syncUrlClear() {
+        urlClear.style.display = urlInput.value.trim() ? "block" : "none";
+      }
       urlClear.addEventListener("click", () => {
         urlInput.value = "";
         if (imageUrlWidget) imageUrlWidget.value = "";
@@ -235,7 +263,9 @@ app.registerExtension({
         previewFromUrl("");
         setStatus("");
         syncUrlClear();
-        window.dispatchEvent(new CustomEvent("dirtybirds:image-source-changed"));
+        window.dispatchEvent(
+          new CustomEvent("dirtybirds:image-source-changed"),
+        );
         urlInput.focus();
       });
       urlInput.addEventListener("input", syncUrlClear);
@@ -261,7 +291,9 @@ app.registerExtension({
         imageWidget.callback?.(path);
         paintSourceSummary();
         restoreSelectedFilePreview();
-        window.dispatchEvent(new CustomEvent("dirtybirds:image-source-changed"));
+        window.dispatchEvent(
+          new CustomEvent("dirtybirds:image-source-changed"),
+        );
         node.setDirtyCanvas(true, true);
       }
 
@@ -308,7 +340,8 @@ app.registerExtension({
           body.append("image", file);
           body.append("overwrite", "true");
           const resp = await fetch("/upload/image", { method: "POST", body });
-          if (resp.status !== 200) return setStatus(`Upload failed (${resp.status}).`, "err");
+          if (resp.status !== 200)
+            return setStatus(`Upload failed (${resp.status}).`, "err");
           const data = await resp.json();
           let path = data.name;
           if (data.subfolder) path = `${data.subfolder}/${path}`;
@@ -328,24 +361,41 @@ app.registerExtension({
       // ── Resize toggle + max-size slider ───────────────────────────────────
       const resizeLabel = makeSectionLabel("Resize");
       const resizeToggle = makeButton();
-      resizeToggle.className = "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
-      resizeToggle.style.cssText += "height:26px;min-height:26px;padding:0 8px;width:100%;";
+      resizeToggle.className =
+        "db-lib-btn db-lora-add-open-btn db-image-segment-toggle";
+      resizeToggle.style.cssText +=
+        "height:26px;min-height:26px;padding:0 8px;width:100%;";
       const { row: resizeMaxRow, paint: paintResizeMax } = makeSlider(
-        "Longest Side", 256, 2048, 64,
+        "Longest Side",
+        256,
+        2048,
+        64,
         () => Number(resizeMaxWidget?.value ?? 1024),
-        (v) => { if (resizeMaxWidget) resizeMaxWidget.value = Math.round(v); },
+        (v) => {
+          if (resizeMaxWidget) resizeMaxWidget.value = Math.round(v);
+        },
         (v) => String(Math.round(v)),
       );
       const { row: resizeWidthRow, paint: paintResizeWidth } = makeSlider(
-        "Width", 256, 2048, 64,
+        "Width",
+        256,
+        2048,
+        64,
         () => Number(resizeWidthWidget?.value ?? 1024),
-        (v) => { if (resizeWidthWidget) resizeWidthWidget.value = Math.round(v); },
+        (v) => {
+          if (resizeWidthWidget) resizeWidthWidget.value = Math.round(v);
+        },
         (v) => String(Math.round(v)),
       );
       const { row: resizeHeightRow, paint: paintResizeHeight } = makeSlider(
-        "Height", 256, 2048, 64,
+        "Height",
+        256,
+        2048,
+        64,
         () => Number(resizeHeightWidget?.value ?? 1024),
-        (v) => { if (resizeHeightWidget) resizeHeightWidget.value = Math.round(v); },
+        (v) => {
+          if (resizeHeightWidget) resizeHeightWidget.value = Math.round(v);
+        },
         (v) => String(Math.round(v)),
       );
 
@@ -369,7 +419,12 @@ app.registerExtension({
 
       const sizeControls = document.createElement("div");
       sizeControls.className = "db-image-size-controls";
-      sizeControls.append(resizeMode, resizeMaxRow, resizeWidthRow, resizeHeightRow);
+      sizeControls.append(
+        resizeMode,
+        resizeMaxRow,
+        resizeWidthRow,
+        resizeHeightRow,
+      );
 
       function paintResize() {
         const on = !!resizeWidget?.value;
@@ -378,9 +433,12 @@ app.registerExtension({
         sizeControls.style.opacity = on ? "1" : "0.35";
         sizeControls.style.pointerEvents = on ? "auto" : "none";
         const mode = String(resizeModeWidget?.value || "long_side");
-        modeOptions.forEach((option) => option.classList.toggle(
-          "db-seg-active", option.dataset.mode === mode
-        ));
+        modeOptions.forEach((option) =>
+          option.classList.toggle(
+            "db-seg-active",
+            option.dataset.mode === mode,
+          ),
+        );
         resizeMaxRow.style.display = mode === "long_side" ? "flex" : "none";
         resizeWidthRow.style.display = mode === "custom" ? "flex" : "none";
         resizeHeightRow.style.display = mode === "custom" ? "flex" : "none";
@@ -399,7 +457,8 @@ app.registerExtension({
       sharpenCol.className = "db-image-tools-col";
       const sharpenLabel = makeSectionLabel("Sharpen");
       const sharpenButton = makeButton();
-      sharpenButton.className = "db-lib-btn db-lora-add-open-btn db-image-sharpen-toggle";
+      sharpenButton.className =
+        "db-lib-btn db-lora-add-open-btn db-image-sharpen-toggle";
       const sharpenModes = ["off", "auto", "low", "medium", "high"];
       function paintSharpen() {
         const mode = String(sharpenWidget?.value || "auto").toLowerCase();
@@ -409,7 +468,10 @@ app.registerExtension({
       }
       sharpenButton.addEventListener("click", () => {
         const current = String(sharpenWidget?.value || "auto").toLowerCase();
-        const next = sharpenModes[(sharpenModes.indexOf(current) + 1) % sharpenModes.length];
+        const next =
+          sharpenModes[
+            (sharpenModes.indexOf(current) + 1) % sharpenModes.length
+          ];
         if (sharpenWidget) sharpenWidget.value = next;
         paintSharpen();
         node.setDirtyCanvas(true, true);
@@ -424,13 +486,15 @@ app.registerExtension({
       resizeCol.className = "db-image-tools-col";
       const resizeHint = document.createElement("div");
       resizeHint.className = "db-image-tool-hint";
-      resizeHint.textContent = "Long Side preserves aspect; Custom sets exact dimensions";
+      resizeHint.textContent =
+        "Long Side preserves aspect; Custom sets exact dimensions";
       resizeCol.append(resizeLabel, resizeToggle, sizeControls, resizeHint);
       toolsSplit.append(sharpenCol, toolsDivider, resizeCol);
 
       // ── Optional controls ─────────────────────────────────────────────────
       const optionalContent = document.createElement("div");
-      optionalContent.className = "db-collapsible-content db-image-optional-content";
+      optionalContent.className =
+        "db-collapsible-content db-image-optional-content";
       optionalContent.style.display = "none";
       optionalContent.append(toolsSplit);
       const optionalSection = makeCollapsibleSectionLabel("Image Tools", {
@@ -449,16 +513,29 @@ app.registerExtension({
       }
 
       // ── Assemble panel ────────────────────────────────────────────────────
-      panel.append(fileInput, sourceLabel, sourceRow, urlWrap, sourceSummary, status, previewWrap,
-        optionalSection.label, optionalContent);
+      panel.append(
+        fileInput,
+        sourceLabel,
+        sourceRow,
+        urlWrap,
+        sourceSummary,
+        status,
+        previewWrap,
+        optionalSection.label,
+        optionalContent,
+      );
 
       node.addDOMWidget("db_image_tools_panel", "customhtml", panel, {
         serialize: false,
         getMinHeight: () => {
           const controls = optionalSection.isExpanded() ? 330 : 132;
-          const preview = previewWrap.style.display === "none"
-            ? 0
-            : Math.max(100, Number.parseFloat(previewWrap.style.height) || 240) + 8;
+          const preview =
+            previewWrap.style.display === "none"
+              ? 0
+              : Math.max(
+                  100,
+                  Number.parseFloat(previewWrap.style.height) || 240,
+                ) + 8;
           return controls + preview;
         },
       });
@@ -484,9 +561,20 @@ app.registerExtension({
       paintResizeHeight();
       paintSharpen();
       paintToolsSummary();
-      requestAnimationFrame(() => { hideStockWidgets(); clearDefaultImageWidget(node); });
-      requestAnimationFrame(() => requestAnimationFrame(() => { hideStockWidgets(); syncPanelH(); }));
-      setTimeout(() => { hideStockWidgets(); node.setDirtyCanvas(true, true); }, 100);
+      requestAnimationFrame(() => {
+        hideStockWidgets();
+        clearDefaultImageWidget(node);
+      });
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          hideStockWidgets();
+          syncPanelH();
+        }),
+      );
+      setTimeout(() => {
+        hideStockWidgets();
+        node.setDirtyCanvas(true, true);
+      }, 100);
     };
   },
 });

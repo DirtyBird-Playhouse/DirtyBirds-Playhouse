@@ -1,186 +1,332 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>🛠️ Prompt Studio — DirtyBirds</title>
-<link rel="stylesheet" href="/extensions/DirtyBirds-Playhouse/css/prompt_studio.css" />
-</head>
-<body>
-<header>
-  <span class="title">🛠️ Prompt Studio</span>
-  <label class="fld">File
-    <select id="fileSel"></select>
-  </label>
-  <button id="newBtn">＋ New file</button>
-  <span class="grow"></span>
-  <label class="fld">LM Studio URL
-    <input id="serverUrl" class="txt" value="http://localhost:1234/v1" style="width:220px" />
-  </label>
-  <button id="pullModels" title="Pull the model list from LM Studio">↻ Models</button>
-  <label class="fld">Model
-    <select id="modelName" class="txt" style="width:200px"></select>
-  </label>
-  <label class="fld">Vision model
-    <select id="visionModel" class="txt" style="width:200px"></select>
-  </label>
-</header>
-
-<nav class="tabs">
-  <button id="tabBtn-wild" class="active" data-pane="wild">🎲 Wildcards</button>
-  <button id="tabBtn-caption" data-pane="caption">🖼️ Caption</button>
-  <button id="tabBtn-enhance" data-pane="enhance">✨ Enhance</button>
-</nav>
-
-<div id="status" class="status" style="margin:10px 16px 0"></div>
-
-<!-- Shared model settings (apply to all tabs) -->
-<details id="modelSettings" style="margin:10px 16px 0">
-  <summary class="hint" style="cursor:pointer">⚙️ Model settings (temperature, tokens, prompts)</summary>
-  <div class="panel" style="margin-top:6px">
-    <div class="row" style="margin-bottom:8px">
-      <label class="fld">Temperature
-        <input id="temp" class="txt" type="number" min="0" max="2" step="0.1"
-               value="0.3" style="width:70px" />
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>🛠️ Prompt Studio — DirtyBirds</title>
+    <link
+      rel="stylesheet"
+      href="/extensions/DirtyBirds-Playhouse/css/prompt_studio.css"
+    />
+  </head>
+  <body>
+    <header>
+      <span class="title">🛠️ Prompt Studio</span>
+      <label class="fld"
+        >File
+        <select id="fileSel"></select>
       </label>
-      <label class="fld">Max tokens
-        <input id="maxTokens" class="txt" type="number" min="256" max="32768" step="256"
-               value="8192" style="width:90px" />
+      <button id="newBtn">＋ New file</button>
+      <span class="grow"></span>
+      <label class="fld"
+        >LM Studio URL
+        <input
+          id="serverUrl"
+          class="txt"
+          value="http://localhost:1234/v1"
+          style="width: 220px"
+        />
       </label>
-    </div>
-    <div class="row" style="margin-bottom:4px">
-      <span class="hint grow">Extract system prompt — use <code>{categories}</code> for the category list.</span>
-      <button id="resetPrompt" type="button">↺ Reset</button>
-    </div>
-    <textarea id="sysPrompt" rows="8" spellcheck="false"
-              placeholder="Loading default system prompt…"></textarea>
-    <div class="row" style="margin:8px 0 4px">
-      <span class="hint grow">Caption prompt (sent to the vision model)</span>
-      <button id="resetCaption" type="button">↺ Reset</button>
-    </div>
-    <textarea id="captionPrompt" rows="4" spellcheck="false"
-              placeholder="Loading default caption prompt…"></textarea>
-    <div class="row" style="margin:8px 0 4px">
-      <span class="hint grow">Enhance system prompt</span>
-      <button id="resetEnhance" type="button">↺ Reset</button>
-    </div>
-    <textarea id="enhancePrompt" rows="4" spellcheck="false"
-              placeholder="Loading default enhance prompt…"></textarea>
-  </div>
-</details>
-
-<!-- ── TAB: Wildcards (YAML + Extract + Review) ──────────────────────────── -->
-<section id="pane-wild" class="tabpane active">
-<div class="wrap">
-  <!-- LEFT: raw YAML editor -->
-  <div class="col">
-    <div class="panel">
-      <h2>📝 YAML File</h2>
-      <div class="row" style="margin-bottom:8px">
-        <span id="fileLabel" class="hint grow">—</span>
-        <button id="reloadBtn">↻ Reload</button>
-        <button id="saveBtn" class="primary">💾 Save</button>
-      </div>
-      <textarea id="yamlEditor" rows="26" spellcheck="false"
-                placeholder="# Wildcard YAML — edit directly, then Save."></textarea>
-      <div class="hint" style="margin-top:6px">Saved files validate as YAML before writing. Nested maps become <code>parent/child</code> keys.</div>
-    </div>
-  </div>
-
-  <!-- RIGHT: AI extract + review -->
-  <div class="col">
-    <div class="panel">
-      <h2>🤖 AI Extract</h2>
-      <div class="hint" id="sourceHint" style="margin-bottom:6px">Paste raw text / keywords; your LM Studio model sorts them into category paths.</div>
-      <textarea id="rawText" rows="8" placeholder="Paste prompts, tags, or descriptive text to extract…"></textarea>
-      <div class="row" style="margin:8px 0">
-        <button id="analyzeBtn" class="grow">🚀 Analyze &amp; Extract</button>
-      </div>
-      <details>
-        <summary class="hint" style="cursor:pointer">Target schema categories (one per line)</summary>
-        <textarea id="categories" rows="6" spellcheck="false"
-                  placeholder="quality&#10;clothing/tops&#10;lighting/neon"></textarea>
-      </details>
-    </div>
-
-    <div class="panel" id="reviewPanel" style="display:none">
-      <h2>✅ Review &amp; Commit</h2>
-      <div class="hint" style="margin-bottom:8px">Edit phrases or categories. ✨ = new category recommended by the model. Commit appends them to the selected file.</div>
-      <label class="hint" style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:pointer">
-        <input type="checkbox" id="hideDupes" checked> Hide duplicates already in the file
+      <button id="pullModels" title="Pull the model list from LM Studio">
+        ↻ Models
+      </button>
+      <label class="fld"
+        >Model
+        <select id="modelName" class="txt" style="width: 200px"></select>
       </label>
-      <div id="reviewList"></div>
-      <div class="row" style="margin-top:8px">
-        <button id="commitBtn" class="primary grow">💾 Approve &amp; Commit to file</button>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
+      <label class="fld"
+        >Vision model
+        <select id="visionModel" class="txt" style="width: 200px"></select>
+      </label>
+    </header>
 
-<!-- ── TAB: Caption ──────────────────────────────────────────────────────── -->
-<section id="pane-caption" class="tabpane">
-  <div class="wrap" style="grid-template-columns:1fr">
-    <div class="panel">
-      <h2>🖼️ Image Caption</h2>
-      <div class="hint" style="margin-bottom:8px">Caption an image with your vision model, then send the result to the Extract box.</div>
-      <div class="row" style="margin-bottom:8px">
-        <button id="pullLoadImage" class="grow">📥 From Load Image node</button>
+    <nav class="tabs">
+      <button id="tabBtn-wild" class="active" data-pane="wild">
+        🎲 Wildcards
+      </button>
+      <button id="tabBtn-caption" data-pane="caption">🖼️ Caption</button>
+      <button id="tabBtn-enhance" data-pane="enhance">✨ Enhance</button>
+    </nav>
+
+    <div id="status" class="status" style="margin: 10px 16px 0"></div>
+
+    <!-- Shared model settings (apply to all tabs) -->
+    <details id="modelSettings" style="margin: 10px 16px 0">
+      <summary class="hint" style="cursor: pointer">
+        ⚙️ Model settings (temperature, tokens, prompts)
+      </summary>
+      <div class="panel" style="margin-top: 6px">
+        <div class="row" style="margin-bottom: 8px">
+          <label class="fld"
+            >Temperature
+            <input
+              id="temp"
+              class="txt"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              value="0.3"
+              style="width: 70px"
+            />
+          </label>
+          <label class="fld"
+            >Max tokens
+            <input
+              id="maxTokens"
+              class="txt"
+              type="number"
+              min="256"
+              max="32768"
+              step="256"
+              value="8192"
+              style="width: 90px"
+            />
+          </label>
+        </div>
+        <div class="row" style="margin-bottom: 4px">
+          <span class="hint grow"
+            >Extract system prompt — use <code>{categories}</code> for the
+            category list.</span
+          >
+          <button id="resetPrompt" type="button">↺ Reset</button>
+        </div>
+        <textarea
+          id="sysPrompt"
+          rows="8"
+          spellcheck="false"
+          placeholder="Loading default system prompt…"
+        ></textarea>
+        <div class="row" style="margin: 8px 0 4px">
+          <span class="hint grow"
+            >Caption prompt (sent to the vision model)</span
+          >
+          <button id="resetCaption" type="button">↺ Reset</button>
+        </div>
+        <textarea
+          id="captionPrompt"
+          rows="4"
+          spellcheck="false"
+          placeholder="Loading default caption prompt…"
+        ></textarea>
+        <div class="row" style="margin: 8px 0 4px">
+          <span class="hint grow">Enhance system prompt</span>
+          <button id="resetEnhance" type="button">↺ Reset</button>
+        </div>
+        <textarea
+          id="enhancePrompt"
+          rows="4"
+          spellcheck="false"
+          placeholder="Loading default enhance prompt…"
+        ></textarea>
       </div>
-      <div id="dropZone" class="hint" style="border:1px dashed #555;border-radius:8px;padding:24px;margin-bottom:8px;text-align:center;cursor:pointer">
-        🖼️ Drop / paste / click to choose an image (uses the vision model)
-        <input id="imageInput" type="file" accept="image/*" style="display:none" />
-        <div id="imgPreviewWrap" style="display:none;margin-top:8px">
-          <img id="imgPreview" style="max-height:240px;max-width:100%;border-radius:6px" />
-          <div class="row" style="margin-top:8px;justify-content:center">
-            <button id="captionBtn" type="button" class="primary">✨ Caption image</button>
-            <button id="clearImgBtn" type="button">✕ Clear</button>
+    </details>
+
+    <!-- ── TAB: Wildcards (YAML + Extract + Review) ──────────────────────────── -->
+    <section id="pane-wild" class="tabpane active">
+      <div class="wrap">
+        <!-- LEFT: raw YAML editor -->
+        <div class="col">
+          <div class="panel">
+            <h2>📝 YAML File</h2>
+            <div class="row" style="margin-bottom: 8px">
+              <span id="fileLabel" class="hint grow">—</span>
+              <button id="reloadBtn">↻ Reload</button>
+              <button id="saveBtn" class="primary">💾 Save</button>
+            </div>
+            <textarea
+              id="yamlEditor"
+              rows="26"
+              spellcheck="false"
+              placeholder="# Wildcard YAML — edit directly, then Save."
+            ></textarea>
+            <div class="hint" style="margin-top: 6px">
+              Saved files validate as YAML before writing. Nested maps become
+              <code>parent/child</code> keys.
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: AI extract + review -->
+        <div class="col">
+          <div class="panel">
+            <h2>🤖 AI Extract</h2>
+            <div class="hint" id="sourceHint" style="margin-bottom: 6px">
+              Paste raw text / keywords; your LM Studio model sorts them into
+              category paths.
+            </div>
+            <textarea
+              id="rawText"
+              rows="8"
+              placeholder="Paste prompts, tags, or descriptive text to extract…"
+            ></textarea>
+            <div class="row" style="margin: 8px 0">
+              <button id="analyzeBtn" class="grow">
+                🚀 Analyze &amp; Extract
+              </button>
+            </div>
+            <details>
+              <summary class="hint" style="cursor: pointer">
+                Target schema categories (one per line)
+              </summary>
+              <textarea
+                id="categories"
+                rows="6"
+                spellcheck="false"
+                placeholder="quality&#10;clothing/tops&#10;lighting/neon"
+              ></textarea>
+            </details>
+          </div>
+
+          <div class="panel" id="reviewPanel" style="display: none">
+            <h2>✅ Review &amp; Commit</h2>
+            <div class="hint" style="margin-bottom: 8px">
+              Edit phrases or categories. ✨ = new category recommended by the
+              model. Commit appends them to the selected file.
+            </div>
+            <label
+              class="hint"
+              style="
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-bottom: 8px;
+                cursor: pointer;
+              "
+            >
+              <input type="checkbox" id="hideDupes" checked /> Hide duplicates
+              already in the file
+            </label>
+            <div id="reviewList"></div>
+            <div class="row" style="margin-top: 8px">
+              <button id="commitBtn" class="primary grow">
+                💾 Approve &amp; Commit to file
+              </button>
+            </div>
           </div>
         </div>
       </div>
-      <textarea id="captionOut" rows="5" placeholder="Caption appears here…"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button id="captionToExtract" class="grow">➡️ Send to Extract</button>
-        <label class="fld">Inject into
-          <select id="captionTarget">
-            <option value="positive">positive</option>
-            <option value="negative">negative</option>
-          </select>
-        </label>
-        <button id="captionInject" class="primary">💉 Inject (append)</button>
-      </div>
-      <div class="hint" style="margin-top:6px">Inject appends the caption to the chosen box of the node that opened this editor.</div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<!-- ── TAB: Enhance ──────────────────────────────────────────────────────── -->
-<section id="pane-enhance" class="tabpane">
-  <div class="wrap" style="grid-template-columns:1fr">
-    <div class="panel">
-      <h2>✨ Prompt Enhance</h2>
-      <div class="hint" style="margin-bottom:8px">Rewrite a prompt into a richer version with your LM Studio text model, then inject it back into the Prompt node that opened this editor.</div>
-      <textarea id="enhanceIn" rows="5" placeholder="Type or paste a prompt to enhance…"></textarea>
-      <div class="row" style="margin:8px 0">
-        <button id="enhanceBtn" class="grow">🚀 Enhance prompt</button>
+    <!-- ── TAB: Caption ──────────────────────────────────────────────────────── -->
+    <section id="pane-caption" class="tabpane">
+      <div class="wrap" style="grid-template-columns: 1fr">
+        <div class="panel">
+          <h2>🖼️ Image Caption</h2>
+          <div class="hint" style="margin-bottom: 8px">
+            Caption an image with your vision model, then send the result to the
+            Extract box.
+          </div>
+          <div class="row" style="margin-bottom: 8px">
+            <button id="pullLoadImage" class="grow">
+              📥 From Load Image node
+            </button>
+          </div>
+          <div
+            id="dropZone"
+            class="hint"
+            style="
+              border: 1px dashed #555;
+              border-radius: 8px;
+              padding: 24px;
+              margin-bottom: 8px;
+              text-align: center;
+              cursor: pointer;
+            "
+          >
+            🖼️ Drop / paste / click to choose an image (uses the vision model)
+            <input
+              id="imageInput"
+              type="file"
+              accept="image/*"
+              style="display: none"
+            />
+            <div id="imgPreviewWrap" style="display: none; margin-top: 8px">
+              <img
+                id="imgPreview"
+                style="max-height: 240px; max-width: 100%; border-radius: 6px"
+              />
+              <div class="row" style="margin-top: 8px; justify-content: center">
+                <button id="captionBtn" type="button" class="primary">
+                  ✨ Caption image
+                </button>
+                <button id="clearImgBtn" type="button">✕ Clear</button>
+              </div>
+            </div>
+          </div>
+          <textarea
+            id="captionOut"
+            rows="5"
+            placeholder="Caption appears here…"
+          ></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button id="captionToExtract" class="grow">
+              ➡️ Send to Extract
+            </button>
+            <label class="fld"
+              >Inject into
+              <select id="captionTarget">
+                <option value="positive">positive</option>
+                <option value="negative">negative</option>
+              </select>
+            </label>
+            <button id="captionInject" class="primary">
+              💉 Inject (append)
+            </button>
+          </div>
+          <div class="hint" style="margin-top: 6px">
+            Inject appends the caption to the chosen box of the node that opened
+            this editor.
+          </div>
+        </div>
       </div>
-      <div class="hint" style="margin-bottom:4px">Enhanced prompt:</div>
-      <textarea id="enhanceOut" rows="6" placeholder="Enhanced prompt appears here…"></textarea>
-      <div class="row" style="margin-top:8px">
-        <label class="fld">Inject into
-          <select id="enhanceTarget">
-            <option value="positive">positive</option>
-            <option value="negative">negative</option>
-          </select>
-        </label>
-        <button id="injectBtn" class="primary grow">💉 Inject into Prompt node</button>
-        <button id="copyEnhance">📋 Copy</button>
-      </div>
-      <div class="hint" id="injectHint" style="margin-top:6px">Injection replaces the chosen prompt box of the node that opened this editor.</div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<script src="/extensions/DirtyBirds-Playhouse/prompt_studio.js"></script>
-</body>
+    <!-- ── TAB: Enhance ──────────────────────────────────────────────────────── -->
+    <section id="pane-enhance" class="tabpane">
+      <div class="wrap" style="grid-template-columns: 1fr">
+        <div class="panel">
+          <h2>✨ Prompt Enhance</h2>
+          <div class="hint" style="margin-bottom: 8px">
+            Rewrite a prompt into a richer version with your LM Studio text
+            model, then inject it back into the Prompt node that opened this
+            editor.
+          </div>
+          <textarea
+            id="enhanceIn"
+            rows="5"
+            placeholder="Type or paste a prompt to enhance…"
+          ></textarea>
+          <div class="row" style="margin: 8px 0">
+            <button id="enhanceBtn" class="grow">🚀 Enhance prompt</button>
+          </div>
+          <div class="hint" style="margin-bottom: 4px">Enhanced prompt:</div>
+          <textarea
+            id="enhanceOut"
+            rows="6"
+            placeholder="Enhanced prompt appears here…"
+          ></textarea>
+          <div class="row" style="margin-top: 8px">
+            <label class="fld"
+              >Inject into
+              <select id="enhanceTarget">
+                <option value="positive">positive</option>
+                <option value="negative">negative</option>
+              </select>
+            </label>
+            <button id="injectBtn" class="primary grow">
+              💉 Inject into Prompt node
+            </button>
+            <button id="copyEnhance">📋 Copy</button>
+          </div>
+          <div class="hint" id="injectHint" style="margin-top: 6px">
+            Injection replaces the chosen prompt box of the node that opened
+            this editor.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script src="/extensions/DirtyBirds-Playhouse/prompt_studio.js"></script>
+  </body>
 </html>

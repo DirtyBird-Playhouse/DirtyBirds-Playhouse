@@ -9,21 +9,35 @@
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 import {
-  DB_COLOR, DB_BGCOLOR, ensureStylesheet, fetchJSON, nodeInnerW,
-  hideWidget as hideWidgetShared, makeSectionLabel, makeCollapsibleSectionLabel,
+  DB_COLOR,
+  DB_BGCOLOR,
+  ensureStylesheet,
+  fetchJSON,
+  nodeInnerW,
+  hideWidget as hideWidgetShared,
+  makeSectionLabel,
+  makeCollapsibleSectionLabel,
 } from "./db_shared.js";
 
 ensureStylesheet();
 
 function makeAspectSVG(width, height) {
   const box = 18;
-  const rw = width >= height ? box : Math.max(2, Math.round((width / height) * box));
-  const rh = width >= height ? Math.max(2, Math.round((height / width) * box)) : box;
+  const rw =
+    width >= height ? box : Math.max(2, Math.round((width / height) * box));
+  const rh =
+    width >= height ? Math.max(2, Math.round((height / width) * box)) : box;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("width", box); svg.setAttribute("height", box); svg.setAttribute("viewBox", `0 0 ${box} ${box}`);
+  svg.setAttribute("width", box);
+  svg.setAttribute("height", box);
+  svg.setAttribute("viewBox", `0 0 ${box} ${box}`);
   const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  rect.setAttribute("x", Math.floor((box - rw) / 2)); rect.setAttribute("y", Math.floor((box - rh) / 2));
-  rect.setAttribute("width", rw); rect.setAttribute("height", rh); rect.setAttribute("rx", "1"); rect.setAttribute("fill", "currentColor");
+  rect.setAttribute("x", Math.floor((box - rw) / 2));
+  rect.setAttribute("y", Math.floor((box - rh) / 2));
+  rect.setAttribute("width", rw);
+  rect.setAttribute("height", rh);
+  rect.setAttribute("rx", "1");
+  rect.setAttribute("fill", "currentColor");
   svg.append(rect);
   return svg;
 }
@@ -35,12 +49,24 @@ function makeAspectSVG(width, height) {
 function loadMedia(mount, url, onMissing, onLoaded) {
   const image = document.createElement("img");
   image.alt = "";
-  image.onload = () => { mount.replaceChildren(image); onLoaded?.(); };
+  image.onload = () => {
+    mount.replaceChildren(image);
+    onLoaded?.();
+  };
   image.onerror = () => {
     const video = document.createElement("video");
-    video.muted = true; video.loop = true; video.autoplay = true; video.playsInline = true;
-    video.onloadeddata = () => { mount.replaceChildren(video); video.play?.().catch(() => {}); onLoaded?.(); };
-    video.onerror = () => { onMissing?.(); };
+    video.muted = true;
+    video.loop = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.onloadeddata = () => {
+      mount.replaceChildren(video);
+      video.play?.().catch(() => {});
+      onLoaded?.();
+    };
+    video.onerror = () => {
+      onMissing?.();
+    };
     video.src = url;
   };
   image.src = url;
@@ -78,9 +104,15 @@ function showCardPicker(title, names, current, previewURL, onPick) {
   const normalizedNames = names.map((name) => {
     const normalized = String(name).replace(/\\/g, "/");
     const slash = normalized.lastIndexOf("/");
-    return { name, normalized, folder: slash >= 0 ? normalized.slice(0, slash) : "(root)" };
+    return {
+      name,
+      normalized,
+      folder: slash >= 0 ? normalized.slice(0, slash) : "(root)",
+    };
   });
-  const folders = [...new Set(normalizedNames.map((item) => item.folder))].sort((a, b) => a.localeCompare(b));
+  const folders = [...new Set(normalizedNames.map((item) => item.folder))].sort(
+    (a, b) => a.localeCompare(b),
+  );
   for (const value of ["All folders", ...folders]) {
     const option = document.createElement("option");
     option.value = value;
@@ -94,37 +126,60 @@ function showCardPicker(title, names, current, previewURL, onPick) {
 
   function renderCards() {
     observer?.disconnect();
-    observer = typeof IntersectionObserver === "function"
-      ? new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          observer.unobserve(entry.target);
-          entry.target._dbLoadPreview?.();
-        }
-      }, { root: grid, rootMargin: "180px" })
-      : null;
+    observer =
+      typeof IntersectionObserver === "function"
+        ? new IntersectionObserver(
+            (entries) => {
+              for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                observer.unobserve(entry.target);
+                entry.target._dbLoadPreview?.();
+              }
+            },
+            { root: grid, rootMargin: "180px" },
+          )
+        : null;
     const query = search.value.trim().toLowerCase();
     const selectedFolder = folder.value;
-    const filtered = normalizedNames.filter((item) =>
-      (!query || item.normalized.toLowerCase().includes(query)) &&
-      (selectedFolder === "All folders" || item.folder === selectedFolder));
+    const filtered = normalizedNames.filter(
+      (item) =>
+        (!query || item.normalized.toLowerCase().includes(query)) &&
+        (selectedFolder === "All folders" || item.folder === selectedFolder),
+    );
     count.textContent = `${filtered.length} / ${normalizedNames.length}`;
     grid.replaceChildren();
-    if (!filtered.length) grid.append(el("div", "db-generation-picker-empty", "Nothing found"));
+    if (!filtered.length)
+      grid.append(el("div", "db-generation-picker-empty", "Nothing found"));
     for (const item of filtered) {
-      const card = el("button", `db-generation-picker-card${item.name === current ? " is-selected" : ""}`);
+      const card = el(
+        "button",
+        `db-generation-picker-card${item.name === current ? " is-selected" : ""}`,
+      );
       card.type = "button";
       const media = el("div", "db-generation-picker-media", "Preview");
       media._dbLoadPreview = () => {
         if (media.dataset.loaded) return;
         media.dataset.loaded = "true";
-        loadMedia(media, previewURL(item.name), () => { media.textContent = "No preview"; });
+        loadMedia(media, previewURL(item.name), () => {
+          media.textContent = "No preview";
+        });
       };
-      if (observer) observer.observe(media); else media._dbLoadPreview();
-      const label = el("span", "db-generation-picker-label", item.normalized.split("/").pop().replace(/\.[^.]+$/, ""));
+      if (observer) observer.observe(media);
+      else media._dbLoadPreview();
+      const label = el(
+        "span",
+        "db-generation-picker-label",
+        item.normalized
+          .split("/")
+          .pop()
+          .replace(/\.[^.]+$/, ""),
+      );
       card.title = item.normalized;
       card.append(media, label);
-      card.addEventListener("click", () => { closeFlyouts(); onPick(item.name); });
+      card.addEventListener("click", () => {
+        closeFlyouts();
+        onPick(item.name);
+      });
       grid.append(card);
     }
   }
@@ -142,9 +197,21 @@ function showResolutionEditor(title, rows, onSave) {
   const records = [];
   const addRow = (record = { label: "Custom", width: 1024, height: 1024 }) => {
     const row = el("div", "db-generation-resolution-edit-row");
-    const label = el("input", "db-generation-edit-input"); label.value = record.label || ""; label.placeholder = "Label";
-    const width = el("input", "db-generation-edit-input"); width.type = "number"; width.value = record.width; width.min = 64; width.max = 8192; width.step = 8;
-    const height = el("input", "db-generation-edit-input"); height.type = "number"; height.value = record.height; height.min = 64; height.max = 8192; height.step = 8;
+    const label = el("input", "db-generation-edit-input");
+    label.value = record.label || "";
+    label.placeholder = "Label";
+    const width = el("input", "db-generation-edit-input");
+    width.type = "number";
+    width.value = record.width;
+    width.min = 64;
+    width.max = 8192;
+    width.step = 8;
+    const height = el("input", "db-generation-edit-input");
+    height.type = "number";
+    height.value = record.height;
+    height.min = 64;
+    height.max = 8192;
+    height.step = 8;
     const snap = (input) => {
       const value = clamp(input.value || 1024, 64, 8192);
       input.value = String(Math.round(value / 8) * 8);
@@ -152,21 +219,47 @@ function showResolutionEditor(title, rows, onSave) {
     width.addEventListener("change", () => snap(width));
     height.addEventListener("change", () => snap(height));
     const remove = button("×", () => row.remove(), "db-generation-remove");
-    row.append(label, width, height, remove); list.append(row);
+    row.append(label, width, height, remove);
+    list.append(row);
     records.push({ row, label, width, height });
   };
   rows.forEach(addRow);
   const actions = el("div", "db-generation-editor-actions");
-  actions.append(button("+ Add", () => addRow()), button("Save", async () => {
-    const values = records.filter((item) => item.row.isConnected).map((item) => ({
-      label: item.label.value.trim(),
-      width: Math.round(clamp(item.width.value, 64, 8192) / 8) * 8,
-      height: Math.round(clamp(item.height.value, 64, 8192) / 8) * 8,
-    })).filter((item) => item.label && item.width >= 64 && item.height >= 64);
-    await onSave(values); closeFlyouts();
-  }, "is-active"));
+  actions.append(
+    button("+ Add", () => addRow()),
+    button(
+      "Save",
+      async () => {
+        const values = records
+          .filter((item) => item.row.isConnected)
+          .map((item) => ({
+            label: item.label.value.trim(),
+            width: Math.round(clamp(item.width.value, 64, 8192) / 8) * 8,
+            height: Math.round(clamp(item.height.value, 64, 8192) / 8) * 8,
+          }))
+          .filter(
+            (item) => item.label && item.width >= 64 && item.height >= 64,
+          );
+        await onSave(values);
+        closeFlyouts();
+      },
+      "is-active",
+    ),
+  );
   panel.append(list, actions);
 }
+
+// 🎲 Random sentinels stored in the `dimension` widget. The backend rolls the
+// actual size per run (see dimension_store.pick_random_dimension), so these
+// values must stay in step with its sentinels.
+const RANDOM_DIMENSIONS = {
+  __random__: "🎲 Random",
+  __random_portrait__: "🎲 Random portrait",
+  __random_landscape__: "🎲 Random landscape",
+  __random_square__: "🎲 Random square",
+};
+const isRandomDimension = (value) =>
+  Object.prototype.hasOwnProperty.call(RANDOM_DIMENSIONS, value);
 
 function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
   const panel = flyoutShell("Resolution");
@@ -175,17 +268,44 @@ function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
     const row = el("button", `db-res-opt${selected ? " db-selected" : ""}`);
     row.type = "button";
     const icon = el("span", "db-res-opt-glyph");
-    if (glyph instanceof Element) icon.append(glyph); else icon.textContent = glyph;
+    if (glyph instanceof Element) icon.append(glyph);
+    else icon.textContent = glyph;
     row.append(icon, el("span", "db-res-opt-label", label));
-    row.addEventListener("click", () => { closeFlyouts(); value === "custom" ? onCustom() : value === "edit" ? onEdit() : onPick(value); });
+    row.addEventListener("click", () => {
+      closeFlyouts();
+      value === "custom"
+        ? onCustom()
+        : value === "edit"
+          ? onEdit()
+          : onPick(value);
+    });
     list.append(row);
   };
-  addChoice("🎲", "Random", "__random__", current === "__random__");
+  // Shape-filtered rolls: an unfiltered Random mixes portrait and landscape,
+  // which rarely suits the subject. Only offer a shape that has presets.
+  const shapes = Object.values(dimensions);
+  const hasShape = (test) =>
+    shapes.some(([width, height]) => test(width, height));
+  const shapeAvailable = {
+    __random__: () => true,
+    __random_portrait__: () => hasShape((w, h) => h > w),
+    __random_landscape__: () => hasShape((w, h) => w > h),
+    __random_square__: () => hasShape((w, h) => w === h),
+  };
+  for (const [value, label] of Object.entries(RANDOM_DIMENSIONS)) {
+    if (shapeAvailable[value]())
+      addChoice("🎲", label.replace("🎲 ", ""), value, current === value);
+  }
   addChoice("+", "Custom resolution", "custom");
   addChoice("✎", "Edit stored resolutions", "edit");
   for (const [label, [width, height]] of Object.entries(dimensions)) {
     const svg = makeAspectSVG(width, height);
-    addChoice(svg, `${label}  ·  ${width}×${height}`, label, current === label || current === `${width}x${height}`);
+    addChoice(
+      svg,
+      `${label}  ·  ${width}×${height}`,
+      label,
+      current === label || current === `${width}x${height}`,
+    );
   }
   panel.append(list);
 }
@@ -195,19 +315,28 @@ function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
 // feed its own height back into ComfyUI and grow on every draw. Lists beyond
 // their row cap scroll internally (.db-generation-lora-list /
 // .db-generation-trigger-list) instead of growing the section unbounded.
-const PANEL_BASE_HEIGHT = 340; // Generation block (checkpoint + settings + full-width seed) + collapsed headers
-const EMBED_CARD_BASE_H = 86;   // enable + picker + weight box, no preview (incl. top accent)
-const EMBED_PREVIEW_H = 74;     // added once if either slot reserves a 64px preview
+// Generation block (checkpoint + settings + full-width seed) + collapsed headers.
+// 356 not 340: the resolution caption made the settings column (res + caption +
+// batch + denoise = ~115px) taller than the model column (checkpoint + 64px
+// preview = ~100px), so the settings column now sets the workspace height.
+const PANEL_BASE_HEIGHT = 356;
+const EMBED_CARD_BASE_H = 86; // enable + picker + weight box, no preview (incl. top accent)
+const EMBED_PREVIEW_H = 74; // added once if either slot reserves a 64px preview
 const LORA_SECTION_BASE_H = 75; // "Selected"/"Trigger Words" labels + add-row chrome
-const LORA_ROW_H = 110;         // thumb(64) + weights row + padding/gap, measured
-const LORA_ROW_CAP = 4;         // beyond this the list scrolls instead of growing (4 * 110 = 440px, matches CSS max-height)
+const LORA_ROW_H = 110; // thumb(64) + weights row + padding/gap, measured
+const LORA_ROW_CAP = 4; // beyond this the list scrolls instead of growing (4 * 110 = 440px, matches CSS max-height)
 const TRIGGER_ROW_H = 26;
-const TRIGGER_ROW_CAP = 6;      // 6 * 26 = 156px, matches CSS max-height
-const UI_VERSION = 9;
+const TRIGGER_ROW_CAP = 6; // 6 * 26 = 156px, matches CSS max-height
+// 10: the resolution caption raised the panel's minimum height. Bumping this
+// re-normalizes already-saved nodes once, which both clears the clipped section
+// header and drops the dead space under it.
+const UI_VERSION = 10;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
-const findWidget = (node, name) => node.widgets?.find((widget) => widget.name === name);
-const findInput = (node, name) => node.inputs?.find((input) => input.name === name);
+const findWidget = (node, name) =>
+  node.widgets?.find((widget) => widget.name === name);
+const findInput = (node, name) =>
+  node.inputs?.find((input) => input.name === name);
 
 function parseJSON(value, fallback = []) {
   try {
@@ -233,7 +362,11 @@ function el(tag, className, text) {
 }
 
 function button(text, onClick, className = "") {
-  const control = el("button", `db-generation-button ${className}`.trim(), text);
+  const control = el(
+    "button",
+    `db-generation-button ${className}`.trim(),
+    text,
+  );
   control.type = "button";
   control.addEventListener("click", onClick);
   return control;
@@ -304,12 +437,27 @@ function setupGenerationNode(node) {
   node.bgcolor = DB_BGCOLOR;
   node.resizable = true;
 
-  const widgets = Object.fromEntries((node.widgets || []).map((widget) => [widget.name, widget]));
+  const widgets = Object.fromEntries(
+    (node.widgets || []).map((widget) => [widget.name, widget]),
+  );
   const backingNames = [
     // positive/negative become forceInput sockets, but ComfyUI retains their
     // backing widgets. They must cancel their widget-row spacing too.
-    "positive", "negative", "workflow", "ckpt_name", "dimension", "loras_data", "trigger_words_data",
-    "batch_size", "seed", "denoise", "seed_mode", "clip_skip", "vae_name", "pos_embedding", "neg_embedding",
+    "positive",
+    "negative",
+    "workflow",
+    "ckpt_name",
+    "dimension",
+    "loras_data",
+    "trigger_words_data",
+    "batch_size",
+    "seed",
+    "denoise",
+    "seed_mode",
+    "clip_skip",
+    "vae_name",
+    "pos_embedding",
+    "neg_embedding",
   ];
   for (const name of backingNames) {
     if (widgets[name]) hideWidgetShared(node, name);
@@ -331,22 +479,32 @@ function setupGenerationNode(node) {
     triggerWords = parseJSON(widgets.trigger_words_data?.value);
     // A trigger word is owned by a selected LoRA and must not survive without
     // that parent.
-    const selectedLoraNames = new Set(loras.map((item) => item?.name).filter(Boolean));
-    const currentTriggerWords = triggerWords.filter((item) => selectedLoraNames.has(item?.lora));
+    const selectedLoraNames = new Set(
+      loras.map((item) => item?.name).filter(Boolean),
+    );
+    const currentTriggerWords = triggerWords.filter((item) =>
+      selectedLoraNames.has(item?.lora),
+    );
     if (currentTriggerWords.length !== triggerWords.length) {
       triggerWords = currentTriggerWords;
-      if (widgets.trigger_words_data) widgets.trigger_words_data.value = JSON.stringify(triggerWords);
+      if (widgets.trigger_words_data)
+        widgets.trigger_words_data.value = JSON.stringify(triggerWords);
     }
   }
   syncLoraStateFromWidgets();
 
   const panel = el("div", "db-generation-panel");
   panel.style.setProperty("--db-node-bg", DB_BGCOLOR);
-  const panelWidget = node.addDOMWidget("db_generation_panel", "customhtml", panel, {
-    serialize: false,
-    getMinHeight: () => currentPanelHeight(),
-    afterResize: (resizedNode) => syncPanelWidth(resizedNode),
-  });
+  const panelWidget = node.addDOMWidget(
+    "db_generation_panel",
+    "customhtml",
+    panel,
+    {
+      serialize: false,
+      getMinHeight: () => currentPanelHeight(),
+      afterResize: (resizedNode) => syncPanelWidth(resizedNode),
+    },
+  );
 
   // The DOM widget owns live width synchronization. ComfyUI calls afterResize
   // during an interactive drag, whereas replacing node.onResize is unreliable
@@ -354,18 +512,27 @@ function setupGenerationNode(node) {
   function syncPanelWidth(resizedNode = node) {
     panel.style.width = nodeInnerW(resizedNode || node) + "px";
   }
-  requestAnimationFrame(() => requestAnimationFrame(() => syncPanelWidth(node)));
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => syncPanelWidth(node)),
+  );
 
   function embeddingsHeight() {
-    const hasPreview = Boolean(readEmbedding(widgets.pos_embedding?.value).name) ||
+    const hasPreview =
+      Boolean(readEmbedding(widgets.pos_embedding?.value).name) ||
       Boolean(readEmbedding(widgets.neg_embedding?.value).name);
     return EMBED_CARD_BASE_H + (hasPreview ? EMBED_PREVIEW_H : 0);
   }
 
   function lorasHeight() {
     const loraRows = Math.min(Math.max(loras.length, 1), LORA_ROW_CAP);
-    const triggerRows = Math.min(Math.max(triggerWords.length, 1), TRIGGER_ROW_CAP);
-    return LORA_SECTION_BASE_H + Math.max(loraRows * LORA_ROW_H, triggerRows * TRIGGER_ROW_H);
+    const triggerRows = Math.min(
+      Math.max(triggerWords.length, 1),
+      TRIGGER_ROW_CAP,
+    );
+    return (
+      LORA_SECTION_BASE_H +
+      Math.max(loraRows * LORA_ROW_H, triggerRows * TRIGGER_ROW_H)
+    );
   }
 
   function currentPanelHeight() {
@@ -386,12 +553,16 @@ function setupGenerationNode(node) {
     // serialized minimum so it cannot keep a rebuilt node artificially tall.
     const previousMinimum = node.min_height;
     node.min_height = 0;
-    const computed = typeof node.computeSize === "function" ? node.computeSize() : null;
+    const computed =
+      typeof node.computeSize === "function" ? node.computeSize() : null;
     node.min_height = previousMinimum;
     return Math.max(panelHeight + 96, Number(computed?.[1]) || 0);
   }
 
-  function applyLayout(adjustForSectionToggle = false, normalizeSavedHeight = false) {
+  function applyLayout(
+    adjustForSectionToggle = false,
+    normalizeSavedHeight = false,
+  ) {
     node.properties ||= {};
     node.properties.db_generation_sections = { ...state };
     node.properties.db_generation_ui_version = UI_VERSION;
@@ -406,7 +577,9 @@ function setupGenerationNode(node) {
     const minimumHeight = naturalNodeHeight(panelHeight);
     node.min_height = minimumHeight;
 
-    let targetHeight = normalizeSavedHeight ? minimumHeight : Math.max(minimumHeight, currentHeight);
+    let targetHeight = normalizeSavedHeight
+      ? minimumHeight
+      : Math.max(minimumHeight, currentHeight);
     if (adjustForSectionToggle && !normalizeSavedHeight) {
       targetHeight = Math.max(minimumHeight, currentHeight + panelDelta);
     }
@@ -421,63 +594,125 @@ function setupGenerationNode(node) {
   node._dbApplyGenerationLayout = applyLayout;
 
   // Generation -------------------------------------------------------------
-  const generation = el("section", "db-generation-section is-open db-generation-main");
+  const generation = el(
+    "section",
+    "db-generation-section is-open db-generation-main",
+  );
   generation.append(makeSectionLabel("Generation"));
   const generationBody = el("div", "db-generation-section-body");
   generation.append(generationBody);
 
   const workflow = el("div", "db-generation-segmented");
   const textToImage = button("Text → Image", () => setWorkflow("Text2Image"));
-  const imageToImage = button("Image → Image", () => setWorkflow("Image2Image"));
+  const imageToImage = button("Image → Image", () =>
+    setWorkflow("Image2Image"),
+  );
   workflow.append(textToImage, imageToImage);
 
   let dimensions = { "1024x1024": [1024, 1024] };
   const checkpointValues = widgets.ckpt_name?.options?.values || [];
-  const checkpoint = button("", () => {
-    showCardPicker("Checkpoints", checkpointValues, widgets.ckpt_name?.value,
-      (name) => `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}`,
-      (name) => { setWidget(widgets.ckpt_name, name, node); updateCheckpointControl(); updateCheckpointPreview(); });
-  }, "db-generation-model-button");
+  const checkpoint = button(
+    "",
+    () => {
+      showCardPicker(
+        "Checkpoints",
+        checkpointValues,
+        widgets.ckpt_name?.value,
+        (name) =>
+          `/dirtybirds/model-preview?type=checkpoints&name=${encodeURIComponent(name)}`,
+        (name) => {
+          setWidget(widgets.ckpt_name, name, node);
+          updateCheckpointControl();
+          updateCheckpointPreview();
+        },
+      );
+    },
+    "db-generation-model-button",
+  );
   const checkpointTag = el("span", "db-generation-control-tag", "CKPT");
   const checkpointName = el("span", "db-generation-control-name");
-  checkpoint.append(checkpointTag, checkpointName, el("span", "db-generation-control-caret", "▾"));
+  checkpoint.append(
+    checkpointTag,
+    checkpointName,
+    el("span", "db-generation-control-caret", "▾"),
+  );
   const preview = el("div", "db-generation-preview");
-  const previewEmpty = el("span", "db-generation-preview-empty", "No checkpoint preview");
+  const previewEmpty = el(
+    "span",
+    "db-generation-preview-empty",
+    "No checkpoint preview",
+  );
   preview.append(previewEmpty);
 
   // CLIP skip and VAE override are intentionally not surfaced in the UI — the
   // backing widgets stay hidden at their defaults (clip_skip=1, Baked VAE), so
   // the model column is just the checkpoint selector + its preview.
 
-  const resolution = button("", () => {
-    const current = widgets.dimension?.value || "__random__";
-    showResolutionPicker(dimensions, current, (value) => {
-      if (value === "__random__") setWidget(widgets.dimension, value, node);
-      else {
-        const [width, height] = dimensions[value] || [1024, 1024];
-        setWidget(widgets.dimension, `${width}x${height}`, node);
-      }
-      updateResolutionControl();
-    }, () => {
-      const raw = widgets.dimension?.value || "1024x1024";
-      const [width, height] = raw.split("x").map(Number);
-      showResolutionEditor("Custom Resolution", [{ label: "Custom", width: width || 1024, height: height || 1024 }], (values) => {
-        const value = values[0];
-        if (value) { setWidget(widgets.dimension, `${value.width}x${value.height}`, node); updateResolutionControl(); }
-      });
-    }, () => {
-      const rows = Object.entries(dimensions).map(([label, [width, height]]) => ({ label, width, height }));
-      showResolutionEditor("Edit Resolutions", rows, async (values) => {
-        const next = Object.fromEntries(values.map((value) => [value.label, [value.width, value.height]]));
-        const saved = await fetchJSON("/dirtybirds/dimensions", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next),
-        });
-        if (saved) dimensions = saved;
-        updateResolutionControl();
-      });
-    });
-  }, "db-generation-model-button");
-  resolution.append(el("span", "db-generation-control-tag", "RES"), el("span", "db-generation-control-name"), el("span", "db-generation-control-caret", "▾"));
+  const resolution = button(
+    "",
+    () => {
+      const current = widgets.dimension?.value || "__random__";
+      showResolutionPicker(
+        dimensions,
+        current,
+        (value) => {
+          if (isRandomDimension(value))
+            setWidget(widgets.dimension, value, node);
+          else {
+            const [width, height] = dimensions[value] || [1024, 1024];
+            setWidget(widgets.dimension, `${width}x${height}`, node);
+          }
+          updateResolutionControl();
+        },
+        () => {
+          const raw = widgets.dimension?.value || "1024x1024";
+          const [width, height] = raw.split("x").map(Number);
+          showResolutionEditor(
+            "Custom Resolution",
+            [{ label: "Custom", width: width || 1024, height: height || 1024 }],
+            (values) => {
+              const value = values[0];
+              if (value) {
+                setWidget(
+                  widgets.dimension,
+                  `${value.width}x${value.height}`,
+                  node,
+                );
+                updateResolutionControl();
+              }
+            },
+          );
+        },
+        () => {
+          const rows = Object.entries(dimensions).map(
+            ([label, [width, height]]) => ({ label, width, height }),
+          );
+          showResolutionEditor("Edit Resolutions", rows, async (values) => {
+            const next = Object.fromEntries(
+              values.map((value) => [value.label, [value.width, value.height]]),
+            );
+            const saved = await fetchJSON("/dirtybirds/dimensions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(next),
+            });
+            if (saved) dimensions = saved;
+            updateResolutionControl();
+          });
+        },
+      );
+    },
+    "db-generation-model-button",
+  );
+  resolution.append(
+    el("span", "db-generation-control-tag", "RES"),
+    el("span", "db-generation-control-name"),
+    el("span", "db-generation-control-caret", "▾"),
+  );
+  // Caption under the RES button. The button can only say "🎲 Random"; this
+  // line reports the pixel size that will actually be used — and after a run,
+  // the size Random rolled (or the size the connected image forced in I2I).
+  const resolutionValue = el("div", "db-generation-res-value");
   const batchValue = el("output", "db-generation-value");
   const batch = rangeControl(1, 5, 1, (value) => {
     batchValue.textContent = String(value);
@@ -488,7 +723,11 @@ function setupGenerationNode(node) {
     denoiseValue.textContent = value.toFixed(2);
     setWidget(widgets.denoise, value, node);
   });
-  const i2iWarning = el("div", "db-generation-warning", "Connect an image to use Image → Image.");
+  const i2iWarning = el(
+    "div",
+    "db-generation-warning",
+    "Connect an image to use Image → Image.",
+  );
 
   // Seed mode reads as one segmented control (Fixed / Random / Last). It spans
   // the full panel width below both columns so the three labels have room to
@@ -496,21 +735,59 @@ function setupGenerationNode(node) {
   const seedRow = el("div", "db-generation-seed-row");
   seedRow.append(el("span", "db-generation-field-label", "Seed"));
   const seedSegment = el("div", "db-generation-segment");
-  const fixedSeed = button("Fixed", () => setSeedMode("fixed"), "db-generation-segment-btn");
-  const randomSeed = button("Random", () => setSeedMode("random"), "db-generation-segment-btn");
-  const lastSeed = button("Last", () => {
-    if (node._dbLastSeed != null) setWidget(widgets.seed, node._dbLastSeed, node);
-    setSeedMode("fixed");
-  }, "db-generation-segment-btn");
+  // JS-safe random seed (<= 2**53-1) so it round-trips exactly, matching the
+  // backend cap and the Prompt Builder's roll.
+  const newRandomSeed = () => Math.floor(Math.random() * 0x1fffffffffffff);
+  const fixedSeed = button(
+    "Fixed",
+    () => {
+      // "New Fixed Random": roll a fresh seed on click, then hold it for reruns.
+      setWidget(widgets.seed, newRandomSeed(), node);
+      setSeedMode("fixed");
+    },
+    "db-generation-segment-btn",
+  );
+  const randomSeed = button(
+    "Random",
+    () => setSeedMode("random"),
+    "db-generation-segment-btn",
+  );
+  const lastSeed = button(
+    "Last",
+    () => {
+      if (node._dbLastSeed != null)
+        setWidget(widgets.seed, node._dbLastSeed, node);
+      setSeedMode("fixed");
+    },
+    "db-generation-segment-btn",
+  );
   seedSegment.append(fixedSeed, randomSeed, lastSeed);
-  seedRow.append(seedSegment);
+  const seedValue = el("span", "db-sel-val db-generation-seed-value");
+  seedRow.append(seedSegment, seedValue);
+
+  function paintSeedValue() {
+    const mode = widgets.seed_mode?.value || "fixed";
+    seedValue.textContent =
+      mode === "random"
+        ? node._dbLastSeed != null
+          ? `last: ${node._dbLastSeed}`
+          : "re-rolls each run"
+        : String(widgets.seed?.value ?? "");
+  }
 
   const generationColumns = el("div", "db-generation-workspace");
-  const modelColumn = el("div", "db-generation-column db-generation-model-column");
-  const settingsColumn = el("div", "db-generation-column db-generation-settings-column");
+  const modelColumn = el(
+    "div",
+    "db-generation-column db-generation-model-column",
+  );
+  const settingsColumn = el(
+    "div",
+    "db-generation-column db-generation-settings-column",
+  );
   modelColumn.append(checkpoint, preview);
   settingsColumn.append(
     resolution,
+    resolutionValue,
     field("Batch", batch, batchValue),
     field("Denoise", denoise, denoiseValue),
   );
@@ -524,13 +801,18 @@ function setupGenerationNode(node) {
     imageToImage.classList.toggle("is-active", isI2I);
     denoise.disabled = !isI2I;
     denoise.title = isI2I ? "" : "Denoise only applies in Image → Image mode";
-    denoise.closest(".db-generation-field")?.classList.toggle("is-disabled", !isI2I);
+    denoise
+      .closest(".db-generation-field")
+      ?.classList.toggle("is-disabled", !isI2I);
     const input = findInput(node, "image");
     if (input) input.hidden = !isI2I;
     i2iWarning.hidden = !isI2I || input?.link != null;
     resolution.disabled = isI2I;
-    resolution.title = isI2I ? "Resolution follows the connected image in Image → Image mode" : "";
+    resolution.title = isI2I
+      ? "Resolution follows the connected image in Image → Image mode"
+      : "";
     resolution.classList.toggle("is-disabled", isI2I);
+    paintResolutionValue();
   }
 
   function setWorkflow(value) {
@@ -545,6 +827,7 @@ function setupGenerationNode(node) {
     fixedSeed.classList.toggle("is-active", value !== "random");
     randomSeed.classList.toggle("is-active", value === "random");
     lastSeed.disabled = node._dbLastSeed == null;
+    paintSeedValue();
   }
 
   function updateCheckpointPreview() {
@@ -557,22 +840,72 @@ function setupGenerationNode(node) {
 
   function updateCheckpointControl() {
     const value = widgets.ckpt_name?.value || checkpointValues[0] || "";
-    checkpointName.textContent = value ? value.replace(/\\/g, "/").split("/").pop().replace(/\.[^.]+$/, "") : "Select checkpoint";
+    checkpointName.textContent = value
+      ? value
+          .replace(/\\/g, "/")
+          .split("/")
+          .pop()
+          .replace(/\.[^.]+$/, "")
+      : "Select checkpoint";
     checkpoint.title = value;
   }
 
   function updateResolutionControl() {
     const value = widgets.dimension?.value || "__random__";
     const label = resolution.querySelector(".db-generation-control-name");
-    if (value === "__random__") label.textContent = "🎲 Random";
+    if (isRandomDimension(value)) label.textContent = RANDOM_DIMENSIONS[value];
     else {
-      const match = Object.entries(dimensions).find(([, [width, height]]) => `${width}x${height}` === value);
+      const match = Object.entries(dimensions).find(
+        ([, [width, height]]) => `${width}x${height}` === value,
+      );
       label.textContent = match ? match[0] : value.replace("x", "×");
     }
+    paintResolutionValue();
+  }
+
+  // "832x1216" -> "832 × 1216", plus the preset's name when one matches and
+  // that name says something the numbers don't (presets are often named "WxH").
+  function describeDimension(value, withName) {
+    const [width, height] = String(value).toLowerCase().split("x").map(Number);
+    if (!width || !height) return String(value);
+    const pretty = `${width} × ${height}`;
+    if (!withName) return pretty;
+    const match = Object.entries(dimensions).find(
+      ([, [presetWidth, presetHeight]]) =>
+        presetWidth === width && presetHeight === height,
+    );
+    const name = match?.[0] || "";
+    return name && name.toLowerCase() !== `${width}x${height}`
+      ? `${pretty} · ${name}`
+      : pretty;
+  }
+
+  function paintResolutionValue() {
+    const isI2I = (widgets.workflow?.value || "Text2Image") === "Image2Image";
+    const last = node._dbLastDimension;
+    if (isI2I) {
+      resolutionValue.textContent = last
+        ? `from image: ${describeDimension(last, true)}`
+        : "follows the connected image";
+      return;
+    }
+    const value = widgets.dimension?.value || "__random__";
+    if (!isRandomDimension(value)) {
+      resolutionValue.textContent = describeDimension(value, false);
+      return;
+    }
+    resolutionValue.textContent = last
+      ? `last run: ${describeDimension(last, true)}`
+      : "re-rolls each run";
   }
 
   // Embeddings -------------------------------------------------------------
-  const embeddingsSection = section("Embeddings", "embeddings", state, applyLayout);
+  const embeddingsSection = section(
+    "Embeddings",
+    "embeddings",
+    state,
+    applyLayout,
+  );
   const embeddingGrid = el("div", "db-generation-two-column");
   embeddingsSection.body.append(embeddingGrid);
   let embeddingNames = [];
@@ -580,11 +913,17 @@ function setupGenerationNode(node) {
   function makeEmbeddingSlot(label, widget) {
     const card = el("div", "db-generation-card");
     const controls = el("div", "db-generation-embedding-controls");
-    const enabled = el("input"); enabled.type = "checkbox"; enabled.title = "Enable embedding";
+    const enabled = el("input");
+    enabled.type = "checkbox";
+    enabled.title = "Enable embedding";
     const picker = selectControl(["(none)", ...embeddingNames], (value) => {
       const parsed = readEmbedding(widget?.value);
       const name = value === "(none)" ? "" : value;
-      setWidget(widget, writeEmbedding(name, parsed.strength, enabled.checked), node);
+      setWidget(
+        widget,
+        writeEmbedding(name, parsed.strength, enabled.checked),
+        node,
+      );
       refreshEmbeddingCount();
       updateEmbeddingPreview(card, name);
       applyLayout();
@@ -592,23 +931,50 @@ function setupGenerationNode(node) {
     // Numeric weight box (mirrors the LoRA rows' Model/CLIP inputs) instead of a
     // slider. Embeddings carry a single scalar strength, so there's one box.
     const strength = el("input", "db-generation-number");
-    strength.type = "number"; strength.min = "0"; strength.max = "2"; strength.step = "0.05";
+    strength.type = "number";
+    strength.min = "0";
+    strength.max = "2";
+    strength.step = "0.05";
     strength.title = "Embedding weight";
     strength.addEventListener("change", () => {
       const value = clamp(strength.value, 0, 2);
       strength.value = String(value);
-      setWidget(widget, writeEmbedding(picker.value === "(none)" ? "" : picker.value, value, enabled.checked), node);
+      setWidget(
+        widget,
+        writeEmbedding(
+          picker.value === "(none)" ? "" : picker.value,
+          value,
+          enabled.checked,
+        ),
+        node,
+      );
     });
     enabled.addEventListener("change", () => {
-      setWidget(widget, writeEmbedding(picker.value === "(none)" ? "" : picker.value, Number(strength.value), enabled.checked), node);
+      setWidget(
+        widget,
+        writeEmbedding(
+          picker.value === "(none)" ? "" : picker.value,
+          Number(strength.value),
+          enabled.checked,
+        ),
+        node,
+      );
       card.classList.toggle("is-disabled", !enabled.checked);
     });
     controls.append(enabled, picker);
     const weights = el("div", "db-generation-embed-weights");
-    weights.append(el("span", "db-generation-weight-label", "Weight"), strength);
+    weights.append(
+      el("span", "db-generation-weight-label", "Weight"),
+      strength,
+    );
     const preview = el("div", "db-generation-embed-preview");
     preview.hidden = true;
-    card.append(el("span", "db-generation-card-label", label), controls, weights, preview);
+    card.append(
+      el("span", "db-generation-card-label", label),
+      controls,
+      weights,
+      preview,
+    );
     card._picker = picker;
     card._enabled = enabled;
     card._strength = strength;
@@ -621,11 +987,17 @@ function setupGenerationNode(node) {
   // actually resolves, so `currentPanelHeight()` stays a pure function of state.
   function updateEmbeddingPreview(card, name) {
     card._preview.hidden = !name;
-    if (!name) { card._preview.replaceChildren(); return; }
+    if (!name) {
+      card._preview.replaceChildren();
+      return;
+    }
     const empty = el("span", "db-generation-preview-empty", "No preview");
     card._preview.replaceChildren(empty);
-    loadMedia(card._preview, `/dirtybirds/embedding-preview?name=${encodeURIComponent(name)}`,
-      () => card._preview.replaceChildren(empty));
+    loadMedia(
+      card._preview,
+      `/dirtybirds/embedding-preview?name=${encodeURIComponent(name)}`,
+      () => card._preview.replaceChildren(empty),
+    );
   }
   const posEmbedding = makeEmbeddingSlot("Positive", widgets.pos_embedding);
   const negEmbedding = makeEmbeddingSlot("Negative", widgets.neg_embedding);
@@ -638,19 +1010,34 @@ function setupGenerationNode(node) {
     const active = !raw.startsWith("!");
     if (!active) raw = raw.slice(1);
     const match = raw.match(/^(.*):(-?\d+(?:\.\d+)?)$/);
-    return { name: match ? match[1] : raw, strength: match ? Number(match[2]) : 1, active };
+    return {
+      name: match ? match[1] : raw,
+      strength: match ? Number(match[2]) : 1,
+      active,
+    };
   }
 
   function writeEmbedding(name, strength = 1, active = true) {
     if (!name) return "";
-    const weighted = Math.abs(strength - 1) < 0.001 ? name : `${name}:${Number(strength).toFixed(2)}`;
+    const weighted =
+      Math.abs(strength - 1) < 0.001
+        ? name
+        : `${name}:${Number(strength).toFixed(2)}`;
     return active ? weighted : `!${weighted}`;
   }
 
   function syncEmbeddingCard(card, widget) {
     const parsed = readEmbedding(widget?.value);
-    if (parsed.name && !Array.from(card._picker.options).some((option) => option.value === parsed.name)) {
-      const option = document.createElement("option"); option.value = parsed.name; option.textContent = parsed.name; card._picker.append(option);
+    if (
+      parsed.name &&
+      !Array.from(card._picker.options).some(
+        (option) => option.value === parsed.name,
+      )
+    ) {
+      const option = document.createElement("option");
+      option.value = parsed.name;
+      option.textContent = parsed.name;
+      card._picker.append(option);
     }
     card._picker.value = parsed.name || "(none)";
     card._enabled.checked = parsed.active;
@@ -670,11 +1057,19 @@ function setupGenerationNode(node) {
   const loraSection = section("LoRAs", "loras", state, applyLayout);
   let availableLoraNames = [];
   const loraAddRow = el("div", "db-generation-add-row");
-  const loraAddBtn = button("", () => {
-    showCardPicker("Add LoRA", availableLoraNames, null,
-      (name) => `/dirtybirds/lora-preview?name=${encodeURIComponent(name)}`,
-      (name) => addLora(name));
-  }, "db-generation-model-button");
+  const loraAddBtn = button(
+    "",
+    () => {
+      showCardPicker(
+        "Add LoRA",
+        availableLoraNames,
+        null,
+        (name) => `/dirtybirds/lora-preview?name=${encodeURIComponent(name)}`,
+        (name) => addLora(name),
+      );
+    },
+    "db-generation-model-button",
+  );
   loraAddBtn.append(
     el("span", "db-generation-control-tag", "LORA"),
     el("span", "db-generation-control-name", "+ Add"),
@@ -689,8 +1084,15 @@ function setupGenerationNode(node) {
   const loraColumns = el("div", "db-generation-lora-columns");
   const selectedColumn = el("div", "db-generation-lora-column");
   const triggerColumn = el("div", "db-generation-lora-column");
-  selectedColumn.append(el("span", "db-generation-card-label", "Selected"), loraAddRow, loraList);
-  triggerColumn.append(el("span", "db-generation-card-label", "Trigger Words"), triggers);
+  selectedColumn.append(
+    el("span", "db-generation-card-label", "Selected"),
+    loraAddRow,
+    loraList,
+  );
+  triggerColumn.append(
+    el("span", "db-generation-card-label", "Trigger Words"),
+    triggers,
+  );
   loraColumns.append(selectedColumn, triggerColumn);
   loraSection.body.append(loraColumns);
 
@@ -705,30 +1107,43 @@ function setupGenerationNode(node) {
     if (!name || loras.some((item) => item.name === name)) return;
     loras.push({ name, strength: 1, clip_strength: 1, active: true });
     try {
-      const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`);
+      const meta = await fetchJSON(
+        `/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`,
+      );
       for (const text of meta?.trigger_words || []) {
-        if (!triggerWords.some((item) => item.lora === name && item.text === text)) {
+        if (
+          !triggerWords.some((item) => item.lora === name && item.text === text)
+        ) {
           triggerWords.push({ lora: name, text, active: true });
         }
       }
-    } catch (_) { /* metadata is optional */ }
+    } catch (_) {
+      /* metadata is optional */
+    }
     saveLoras();
   }
 
   function renderLoras() {
     loraThumbObserver?.disconnect();
-    loraThumbObserver = typeof IntersectionObserver === "function"
-      ? new IntersectionObserver((entries) => {
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              entry.target._dbLoadPreview?.();               // load once, on demand
-              entry.target.querySelector("video")?.play?.().catch(() => {});
-            } else {
-              entry.target.querySelector("video")?.pause?.(); // stop decoding off-screen
-            }
-          }
-        }, { root: loraList, rootMargin: "120px" })
-      : null;
+    loraThumbObserver =
+      typeof IntersectionObserver === "function"
+        ? new IntersectionObserver(
+            (entries) => {
+              for (const entry of entries) {
+                if (entry.isIntersecting) {
+                  entry.target._dbLoadPreview?.(); // load once, on demand
+                  entry.target
+                    .querySelector("video")
+                    ?.play?.()
+                    .catch(() => {});
+                } else {
+                  entry.target.querySelector("video")?.pause?.(); // stop decoding off-screen
+                }
+              }
+            },
+            { root: loraList, rootMargin: "120px" },
+          )
+        : null;
     loraList.replaceChildren();
     triggers.replaceChildren();
     for (const item of loras) {
@@ -742,10 +1157,15 @@ function setupGenerationNode(node) {
       thumb._dbLoadPreview = () => {
         if (thumb.dataset.loaded) return;
         thumb.dataset.loaded = "true";
-        loadMedia(thumb, `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`,
+        loadMedia(
+          thumb,
+          `/dirtybirds/lora-preview?name=${encodeURIComponent(item.name)}`,
           // No local preview for this LoRA — show a placeholder instead of an
           // empty gap in the reserved thumb column.
-          () => { thumb.classList.add("db-generation-lora-thumb-empty"); });
+          () => {
+            thumb.classList.add("db-generation-lora-thumb-empty");
+          },
+        );
       };
       // Observe for video play/pause of off-screen previews, but load eagerly:
       // canvas-transformed DOM widgets don't yield reliable intersection
@@ -755,25 +1175,47 @@ function setupGenerationNode(node) {
       const active = el("input");
       active.type = "checkbox";
       active.checked = item.active !== false;
-      active.addEventListener("change", () => { item.active = active.checked; saveLoras(); });
+      active.addEventListener("change", () => {
+        item.active = active.checked;
+        saveLoras();
+      });
       const name = el("span", "db-generation-lora-name", item.name);
       const strength = el("input", "db-generation-number");
-      strength.type = "number"; strength.min = "-2"; strength.max = "2"; strength.step = "0.05";
+      strength.type = "number";
+      strength.min = "-2";
+      strength.max = "2";
+      strength.step = "0.05";
       strength.value = String(item.strength ?? 1);
       strength.title = "Model strength";
-      strength.addEventListener("change", () => { item.strength = clamp(strength.value, -2, 2); saveLoras(); });
+      strength.addEventListener("change", () => {
+        item.strength = clamp(strength.value, -2, 2);
+        saveLoras();
+      });
       const clip = strength.cloneNode();
       clip.value = String(item.clip_strength ?? item.strength ?? 1);
       clip.title = "CLIP strength";
-      clip.addEventListener("change", () => { item.clip_strength = clamp(clip.value, -2, 2); saveLoras(); });
-      const remove = button("×", () => {
-        loras = loras.filter((candidate) => candidate !== item);
-        triggerWords = triggerWords.filter((candidate) => candidate.lora !== item.name);
+      clip.addEventListener("change", () => {
+        item.clip_strength = clamp(clip.value, -2, 2);
         saveLoras();
-      }, "db-generation-remove");
+      });
+      const remove = button(
+        "×",
+        () => {
+          loras = loras.filter((candidate) => candidate !== item);
+          triggerWords = triggerWords.filter(
+            (candidate) => candidate.lora !== item.name,
+          );
+          saveLoras();
+        },
+        "db-generation-remove",
+      );
       top.append(thumb, active, name, remove);
-      weights.append(el("span", "db-generation-weight-label", "Model"), strength,
-        el("span", "db-generation-weight-label", "CLIP"), clip);
+      weights.append(
+        el("span", "db-generation-weight-label", "Model"),
+        strength,
+        el("span", "db-generation-weight-label", "CLIP"),
+        clip,
+      );
       row.append(top, weights);
       loraList.append(row);
     }
@@ -783,7 +1225,10 @@ function setupGenerationNode(node) {
       const active = el("input");
       active.type = "checkbox";
       active.checked = item.active !== false;
-      active.addEventListener("change", () => { item.active = active.checked; saveLoras(); });
+      active.addEventListener("change", () => {
+        item.active = active.checked;
+        saveLoras();
+      });
       const text = el("span", "db-generation-trigger-text", item.text);
       chip.append(active, text);
       chip.addEventListener("dblclick", (event) => {
@@ -800,49 +1245,74 @@ function setupGenerationNode(node) {
         };
         input.addEventListener("keydown", (keyEvent) => {
           if (keyEvent.key === "Enter") input.blur();
-          if (keyEvent.key === "Escape") { input.value = item.text; input.blur(); }
+          if (keyEvent.key === "Escape") {
+            input.value = item.text;
+            input.blur();
+          }
         });
         input.addEventListener("blur", commit, { once: true });
       });
       triggers.append(chip);
     }
-    if (!loras.length) loraList.append(el("div", "db-generation-empty", "No LoRAs selected"));
-    if (!triggerWords.length) triggers.append(el("div", "db-generation-empty", "Trigger words appear here"));
+    if (!loras.length)
+      loraList.append(el("div", "db-generation-empty", "No LoRAs selected"));
+    if (!triggerWords.length)
+      triggers.append(
+        el("div", "db-generation-empty", "Trigger words appear here"),
+      );
     const activeCount = loras.filter((item) => item.active !== false).length;
     loraSection.setCount(activeCount);
   }
 
   node._dbApplyLoras = async (incoming, mode = "append") => {
-    const normalized = (incoming || []).filter((item) => item?.name).map((item) => ({
-      name: item.name,
-      strength: Number(item.strength ?? 1),
-      clip_strength: Number(item.clip_strength ?? item.strength ?? 1),
-      active: item.active !== false,
-    }));
+    const normalized = (incoming || [])
+      .filter((item) => item?.name)
+      .map((item) => ({
+        name: item.name,
+        strength: Number(item.strength ?? 1),
+        clip_strength: Number(item.clip_strength ?? item.strength ?? 1),
+        active: item.active !== false,
+      }));
     if (mode === "replace") {
       loras = normalized;
       // Drop trigger words whose LoRA is no longer selected.
       const names = new Set(normalized.map((item) => item.name));
-      triggerWords = triggerWords.filter((candidate) => names.has(candidate.lora));
+      triggerWords = triggerWords.filter((candidate) =>
+        names.has(candidate.lora),
+      );
     } else {
       for (const item of normalized) {
-        const index = loras.findIndex((candidate) => candidate.name === item.name);
-        if (index >= 0) loras[index] = item; else loras.push(item);
+        const index = loras.findIndex(
+          (candidate) => candidate.name === item.name,
+        );
+        if (index >= 0) loras[index] = item;
+        else loras.push(item);
       }
     }
     // Extract trigger words for each incoming LoRA, same as the picker's addLora.
     // LoRAs sent from LoRA Manager come through here, so without this their
     // trigger words never get pulled from the LoRA's metadata/sidecar.
-    await Promise.all(normalized.map(async (item) => {
-      try {
-        const meta = await fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}`);
-        for (const text of meta?.trigger_words || []) {
-          if (!triggerWords.some((candidate) => candidate.lora === item.name && candidate.text === text)) {
-            triggerWords.push({ lora: item.name, text, active: true });
+    await Promise.all(
+      normalized.map(async (item) => {
+        try {
+          const meta = await fetchJSON(
+            `/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}`,
+          );
+          for (const text of meta?.trigger_words || []) {
+            if (
+              !triggerWords.some(
+                (candidate) =>
+                  candidate.lora === item.name && candidate.text === text,
+              )
+            ) {
+              triggerWords.push({ lora: item.name, text, active: true });
+            }
           }
+        } catch (_) {
+          /* metadata is optional */
         }
-      } catch (_) { /* metadata is optional */ }
-    }));
+      }),
+    );
     saveLoras();
   };
 
@@ -850,7 +1320,9 @@ function setupGenerationNode(node) {
 
   async function loadLibraries() {
     const [loadedDimensions, embeddings, availableLoras] = await Promise.all([
-      fetchJSON("/dirtybirds/dimensions").catch(() => ({ "1024x1024": [1024, 1024] })),
+      fetchJSON("/dirtybirds/dimensions").catch(() => ({
+        "1024x1024": [1024, 1024],
+      })),
       fetchJSON("/dirtybirds/embeddings").catch(() => []),
       fetchJSON("/dirtybirds/loras").catch(() => []),
     ]);
@@ -860,7 +1332,9 @@ function setupGenerationNode(node) {
       const current = card._picker.value;
       card._picker.replaceChildren();
       for (const value of ["(none)", ...embeddingNames]) {
-        const option = document.createElement("option"); option.value = value; option.textContent = value;
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
         card._picker.append(option);
       }
       card._picker.value = current;
@@ -890,6 +1364,12 @@ function setupGenerationNode(node) {
   node._dbGenerationExecuted = (message) => {
     node._dbLastSeed = message?.db_seed_used?.[0];
     lastSeed.disabled = node._dbLastSeed == null;
+    paintSeedValue();
+    const usedDimension = message?.db_dimension_used?.[0];
+    if (usedDimension) {
+      node._dbLastDimension = usedDimension;
+      paintResolutionValue();
+    }
     renderLoras();
   };
 
@@ -921,8 +1401,9 @@ app.registerExtension({
       const targets = [];
       if (numericId === -1) {
         // Broadcast — find all DirtyBirdsLoader nodes
-        const allNodes = app.graph?._nodes || Object.values(app.graph?._nodes_by_id || {});
-        (Array.isArray(allNodes) ? allNodes : []).forEach(n => {
+        const allNodes =
+          app.graph?._nodes || Object.values(app.graph?._nodes_by_id || {});
+        (Array.isArray(allNodes) ? allNodes : []).forEach((n) => {
           if (n?.comfyClass === "DirtyBirdsLoader") targets.push(n);
         });
       } else {
@@ -942,14 +1423,15 @@ app.registerExtension({
         loras.push({
           name: match[1],
           strength: isNaN(strength) ? 1.0 : strength,
-          clip_strength: (clipStrength != null && !isNaN(clipStrength)) ? clipStrength : null,
+          clip_strength:
+            clipStrength != null && !isNaN(clipStrength) ? clipStrength : null,
           active: true,
         });
       }
 
       if (!loras.length) return;
 
-      targets.forEach(n => {
+      targets.forEach((n) => {
         if (typeof n._dbApplyLoras === "function") {
           n._dbApplyLoras(loras, mode);
         }
@@ -966,9 +1448,11 @@ app.registerExtension({
     // is only invoked on a user "Send to node" action, so installing within a
     // couple seconds of load is always in time.
     function installLMRegistryOverride() {
-      const lmExt = app.extensions?.find(e => e.name === "LoraManager.WorkflowRegistry");
+      const lmExt = app.extensions?.find(
+        (e) => e.name === "LoraManager.WorkflowRegistry",
+      );
       if (!lmExt || typeof lmExt.refreshRegistry !== "function") return false;
-      if (lmExt._dbOverrideInstalled) return true;  // idempotent
+      if (lmExt._dbOverrideInstalled) return true; // idempotent
       lmExt._dbOverrideInstalled = true;
 
       const LM_LORA_CLASSES = new Set([
@@ -988,15 +1472,20 @@ app.registerExtension({
             visited.add(gid);
 
             if (Array.isArray(g._nodes)) {
-              const graphName = typeof g.name === "string" && g.name.trim() ? g.name : null;
+              const graphName =
+                typeof g.name === "string" && g.name.trim() ? g.name : null;
               for (const node of g._nodes) {
                 if (!node) continue;
                 const widgetNames = Array.isArray(node.widgets)
-                  ? node.widgets.map(w => w?.name).filter(n => typeof n === "string" && n)
+                  ? node.widgets
+                      .map((w) => w?.name)
+                      .filter((n) => typeof n === "string" && n)
                   : [];
                 const isLMNode = LM_LORA_CLASSES.has(node.comfyClass);
                 const isDBNode = node.comfyClass === "DirtyBirdsLoader";
-                const hasTargetWidget = widgetNames.some(n => LM_TARGET_WIDGETS.has(n));
+                const hasTargetWidget = widgetNames.some((n) =>
+                  LM_TARGET_WIDGETS.has(n),
+                );
                 if (!isLMNode && !isDBNode && !hasTargetWidget) continue;
 
                 workflowNodes.push({
@@ -1019,8 +1508,10 @@ app.registerExtension({
             // Walk subgraphs (mirrors LM's traverseGraphs logic)
             const subs = g._subgraphs;
             if (subs) {
-              const subArr = typeof subs.values === "function"
-                ? [...subs.values()] : Object.values(subs);
+              const subArr =
+                typeof subs.values === "function"
+                  ? [...subs.values()]
+                  : Object.values(subs);
               for (const sg of subArr) {
                 const sub = sg?.graph || sg?._graph || sg;
                 if (sub && sub !== g) collectNodes(sub, visited);
@@ -1030,15 +1521,23 @@ app.registerExtension({
 
           collectNodes(app.graph);
 
-          const dbCount = workflowNodes.filter(n => n.comfy_class === "DirtyBirdsLoader").length;
-          console.debug(`[DirtyBirds] LM refreshRegistry (override): posting ${workflowNodes.length} node(s), ${dbCount} DirtyBirdsLoader`);
+          const dbCount = workflowNodes.filter(
+            (n) => n.comfy_class === "DirtyBirdsLoader",
+          ).length;
+          console.debug(
+            `[DirtyBirds] LM refreshRegistry (override): posting ${workflowNodes.length} node(s), ${dbCount} DirtyBirdsLoader`,
+          );
 
           const resp = await fetch("/api/lm/register-nodes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ nodes: workflowNodes }),
           });
-          if (!resp.ok) console.warn("[DirtyBirds] LM register-nodes failed:", resp.statusText);
+          if (!resp.ok)
+            console.warn(
+              "[DirtyBirds] LM register-nodes failed:",
+              resp.statusText,
+            );
         } catch (e) {
           console.warn("[DirtyBirds] Error in LM registry refresh:", e);
         }
@@ -1056,7 +1555,8 @@ app.registerExtension({
     if (!installLMRegistryOverride()) {
       let tries = 0;
       const lmTimer = setInterval(() => {
-        if (installLMRegistryOverride() || ++tries > 300) clearInterval(lmTimer);
+        if (installLMRegistryOverride() || ++tries > 300)
+          clearInterval(lmTimer);
       }, 100);
     }
   },
@@ -1094,17 +1594,26 @@ app.registerExtension({
 });
 
 api.addEventListener("dirtybirds_set_loras", ({ detail }) => {
-  const node = app.graph?._nodes?.find((candidate) => String(candidate.id) === String(detail?.node_id));
+  const node = app.graph?._nodes?.find(
+    (candidate) => String(candidate.id) === String(detail?.node_id),
+  );
   node?._dbApplyLoras?.(detail?.loras, detail?.mode);
 });
 
 api.addEventListener("dirtybirds_set_embedding", ({ detail }) => {
-  const node = app.graph?._nodes?.find((candidate) => String(candidate.id) === String(detail?.node_id));
+  const node = app.graph?._nodes?.find(
+    (candidate) => String(candidate.id) === String(detail?.node_id),
+  );
   if (!node) return;
-  const widget = findWidget(node, detail?.slot === "negative" ? "neg_embedding" : "pos_embedding");
+  const widget = findWidget(
+    node,
+    detail?.slot === "negative" ? "neg_embedding" : "pos_embedding",
+  );
   const strength = Number(detail?.strength ?? 1);
   const value = detail?.name
-    ? (Math.abs(strength - 1) < 0.001 ? detail.name : `${detail.name}:${strength.toFixed(2)}`)
+    ? Math.abs(strength - 1) < 0.001
+      ? detail.name
+      : `${detail.name}:${strength.toFixed(2)}`
     : "";
   setWidget(widget, value, node);
   node._dbGenerationSync?.();

@@ -4,28 +4,22 @@
 # aiohttp, safetensors, tqdm, kornia, and pyyaml — those are intentionally NOT
 # repeated here. Only packages missing from a base ComfyUI are pinned below.
 #
-# Everything here is used by "The Fixer" face-restore node (Forbidden Vision,
-# vendored under nodes/fixer/vendor). If you never place that node, these are
-# optional: the pack now degrades gracefully and simply skips the Fixer when
-# its dependencies are absent, so the other nodes still load.
+# These support the 🖌️ Inpainting node's face-restore pass. The pack degrades
+# gracefully without them: the package still loads and the pass is skipped, so
+# every other node keeps working.
+#
+# The Forbidden Vision computer-vision stack (segmentation-models-pytorch,
+# ultralytics, opencv-python-headless, scikit-image, timm, onnxruntime) was
+# dropped when the Fixer node was retired — face detection and paste-back now
+# come from facexlib, which the GAN path already used. Nothing here needs them.
 
-# --- The Fixer: computer-vision stack ---
-segmentation-models-pytorch
-ultralytics>=8.3.162
-opencv-python-headless
-scikit-image
-timm
-onnxruntime
-
-# --- The Fixer: GAN face restore (GFPGAN / CodeFormer) via spandrel ---
-# spandrel itself ships with ComfyUI. GFPGAN loads from its main registry;
-# CodeFormer needs this extra-arch package (pure spandrel arch, no basicsr).
+# --- GAN face restore (GFPGAN / CodeFormer) via spandrel ---
+# spandrel itself ships with ComfyUI, and is also what loads upscale models.
+# GFPGAN comes from its main registry; CodeFormer needs this extra-arch package
+# (a pure spandrel arch, no basicsr).
 spandrel_extra_arches
 
 # facexlib provides FaceRestoreHelper: 5-point landmark detection + alignment
 # to the canonical 512 template and inverse-warp paste-back, so GFPGAN /
 # CodeFormer restore angled faces without distorting eyes/mouth.
 facexlib
-
-# --- The Fixer / Library: model downloads from the Hugging Face Hub ---
-huggingface_hub

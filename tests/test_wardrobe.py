@@ -22,7 +22,9 @@ active = wardrobe._active_trigger_words
 
 
 def test_collects_active_words_in_order():
-    data = '[{"text": "sks woman", "active": true}, {"text": "vintage", "active": true}]'
+    data = (
+        '[{"text": "sks woman", "active": true}, {"text": "vintage", "active": true}]'
+    )
     assert active(data) == ["sks woman", "vintage"]
 
 
@@ -47,6 +49,6 @@ def test_whitespace_is_trimmed_and_empties_dropped():
 
 def test_bad_json_and_non_list_yield_empty():
     assert active("not json") == []
-    assert active('{"text": "x"}') == []   # object, not a list
+    assert active('{"text": "x"}') == []  # object, not a list
     assert active("") == []
     assert active("[]") == []
