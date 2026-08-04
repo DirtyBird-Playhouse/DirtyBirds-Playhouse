@@ -42,8 +42,14 @@ async def send_prompt(request):
 
 @PromptServer.instance.routes.get("/dirtybirds/wildcards")
 async def get_wildcards(request):
-    """List available wildcard keys for the 'Load Wildcards' picker."""
-    return web.json_response({"keys": sorted(load_wildcard_dict().keys())})
+    """List available wildcard keys for the 'Load Wildcards' picker.
+
+    File order, not alphabetical. Categories are grouped deliberately in the
+    YAML (Hair, then Eyes, then Skin) and sorting scatters that grouping. The
+    dict is built by walking the document top to bottom, so insertion order is
+    already file order — it just has to survive to the browser.
+    """
+    return web.json_response({"keys": list(load_wildcard_dict().keys())})
 
 
 @PromptServer.instance.routes.get("/dirtybirds/prompt-files")

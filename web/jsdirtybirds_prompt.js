@@ -260,14 +260,21 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       }
 
+      // Map, not a plain object: the menu has to come out in the order the
+      // categories are written in the YAML, and a plain object does not keep
+      // that promise. Integer-like keys ("7", "2024") jump to the front in
+      // numeric order no matter when they were inserted, so a category named
+      // after a number would silently break the file ordering. A Map keeps
+      // every key in insertion order regardless of what it is called.
       function buildTree(keys) {
-        const root = { children: {} };
+        const root = { children: new Map() };
         for (const key of keys) {
           let cur = root;
           const parts = key.split("/");
           parts.forEach((p, i) => {
-            cur.children[p] = cur.children[p] || { children: {} };
-            cur = cur.children[p];
+            if (!cur.children.has(p))
+              cur.children.set(p, { children: new Map() });
+            cur = cur.children.get(p);
             if (i === parts.length - 1) cur.key = key;
           });
         }
@@ -275,31 +282,32 @@ app.registerExtension({
       }
 
       function toItems(treeNode, path = "") {
-        return Object.keys(treeNode.children)
-          .sort()
-          .map((name) => {
-            const child = treeNode.children[name];
-            const hasChildren = Object.keys(child.children).length > 0;
-            const childPath = path ? `${path}/${name}` : name;
-            if (hasChildren) {
-              const options = toItems(child, childPath);
+        // No .sort(): the menu follows the order the categories are written in
+        // the YAML file. The route hands the keys over in file order and
+        // buildTree preserves it, so the tree is already correct — at every
+        // level of nesting, not just the parents.
+        return [...treeNode.children].map(([name, child]) => {
+          const hasChildren = child.children.size > 0;
+          const childPath = path ? `${path}/${name}` : name;
+          if (hasChildren) {
+            const options = toItems(child, childPath);
+            options.unshift({
+              content: "↳ use all in folder",
+              callback: () => insertText(`__${childPath}*__`),
+            });
+            if (child.key) {
               options.unshift({
-                content: "↳ use all in folder",
-                callback: () => insertText(`__${childPath}*__`),
+                content: "↳ use this",
+                callback: () => insertText(`__${child.key}__`),
               });
-              if (child.key) {
-                options.unshift({
-                  content: "↳ use this",
-                  callback: () => insertText(`__${child.key}__`),
-                });
-              }
-              return { content: name, has_submenu: true, submenu: { options } };
             }
-            return {
-              content: name,
-              callback: () => insertText(`__${child.key}__`),
-            };
-          });
+            return { content: name, has_submenu: true, submenu: { options } };
+          }
+          return {
+            content: name,
+            callback: () => insertText(`__${child.key}__`),
+          };
+        });
       }
 
       function openWildcardMenu(event) {
