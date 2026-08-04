@@ -451,15 +451,16 @@ app.registerExtension({
       batchBtn.style.cssText =
         "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
       let _batchOn = !!batchModeWidget?.value;
-      // Python bypasses the picker when batch mode is on, OR when the overlay is
-      // on and there is a cycler line to draw — see should_bypass_picker() in
-      // nodes/sampler/text_overlay.py. The overlay only fires when cycler_line is
-      // actually wired, so the link is what decides, not the toggle alone.
+      // The two buttons ARE the decision: Batch mode or Text Overlay turns the
+      // picker off. Nothing else is consulted — not whether cycler_line is
+      // wired, not what the Cycler contains. Python applies the same rule in
+      // should_bypass_picker() (nodes/sampler/text_overlay.py); the two must
+      // stay identical or the UI promises one thing and the run does another.
       const cyclerWired = () =>
         !!(node.inputs || []).find((slot) => slot?.name === "cycler_line")
           ?.link;
       const overlayOn = () => !!overlayWidget?.value;
-      const pickerOff = () => _batchOn || (overlayOn() && cyclerWired());
+      const pickerOff = () => _batchOn || overlayOn();
       function paintBatchMode() {
         const off = pickerOff();
         batchBtn.textContent = off ? "Pick Image: OFF" : "Pick Image: ON";
@@ -479,19 +480,18 @@ app.registerExtension({
       function paintOverlay() {
         const enabled = overlayOn();
         const wired = cyclerWired();
-        // Say what the toggle actually does right now. "ON" alone hid two very
-        // different states: captioning every image and turning the picker off,
-        // or silently doing nothing because cycler_line was never wired.
-        overlayBtn.textContent = !enabled
-          ? "Text Overlay: OFF"
-          : wired
-            ? "Text Overlay: ON · Picker off"
-            : "Text Overlay: ON · no cycler";
+        // The label states the picker consequence, which is what the button
+        // controls. The wire only decides whether a caption gets drawn, so an
+        // unwired overlay is called out in the tooltip rather than the label —
+        // the picker is off either way.
+        overlayBtn.textContent = enabled
+          ? "Text Overlay: ON · Picker off"
+          : "Text Overlay: OFF";
         // db-lib-btn only styles .db-active; data-tone does nothing here.
         overlayBtn.classList.toggle("db-active", enabled);
         overlayBtn.title =
           enabled && !wired
-            ? "Nothing will be drawn: wire Prompt Builder's cycler_line output into this node's cycler_line input."
+            ? "The picker is off, but no caption will be drawn: wire Prompt Builder's cycler_line output into this node's cycler_line input."
             : "";
       }
       // Mute (or restore) the Finish / Save Image & Prompt nodes fed by this
