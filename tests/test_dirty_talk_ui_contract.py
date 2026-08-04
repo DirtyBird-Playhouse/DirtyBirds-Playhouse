@@ -111,23 +111,24 @@ def test_seed_row_is_first_and_cycler_travels_through_db_pipe():
 
 
 def test_sampler_buttons_report_the_real_picker_state():
-    """The buttons must mirror should_bypass_picker(), not just their own toggle.
+    """The buttons must mirror should_bypass_picker() exactly.
 
-    Overlay + a wired cycler_line turns the picker off in Python. If the UI still
-    says "Pick Image: ON" the user waits for a picker that is never coming.
+    Batch mode or Text Overlay turns the picker off, and nothing else is
+    consulted. The two sides drifted once — the UI checked whether cycler_line
+    was wired while Python required a non-blank line, so an empty Cycler left
+    the button saying "Picker off" while the picker still ran.
     """
     sampler = read_source(ROOT / "web" / "jsdirtybirds_sampler.js")
-    # Python's rule, exercised rather than pattern-matched: bypass on batch mode,
-    # or on overlay + a non-blank cycler line.
-    assert overlay_module.should_bypass_picker(True, False, "")
-    assert overlay_module.should_bypass_picker(False, True, "caption")
-    assert not overlay_module.should_bypass_picker(False, True, "   ")
-    assert not overlay_module.should_bypass_picker(False, False, "caption")
-    # The JS mirror of it, plus the link check the overlay actually depends on.
-    assert "_batchOn || (overlayOn() && cyclerWired())" in sampler
+    # Python's rule, exercised rather than pattern-matched.
+    assert overlay_module.should_bypass_picker(True, False)
+    assert overlay_module.should_bypass_picker(False, True)
+    assert not overlay_module.should_bypass_picker(False, False)
+    # The JS mirror of it: the same two flags, no third condition.
+    assert "_batchOn || overlayOn()" in sampler
+    assert "cyclerWired()" not in sampler.split("const pickerOff")[1][:200]
+    # The wire still decides whether a caption is drawn, so it is still checked
+    # — for the tooltip only, never for the picker state.
     assert 'slot?.name === "cycler_line"' in sampler
-    # An enabled overlay with no wire draws nothing — say so instead of "ON".
-    assert '"Text Overlay: ON · no cycler"' in sampler
     assert '"Text Overlay: ON · Picker off"' in sampler
 
 

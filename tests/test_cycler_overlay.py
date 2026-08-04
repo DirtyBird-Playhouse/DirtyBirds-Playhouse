@@ -108,8 +108,14 @@ def test_empty_overlay_is_a_noop():
     assert overlay.add_text_overlay(images, "") is images
 
 
-def test_picker_bypass_requires_batch_or_active_cycler_overlay():
-    assert overlay.should_bypass_picker(True, False, "")
-    assert overlay.should_bypass_picker(False, True, "caption")
-    assert not overlay.should_bypass_picker(False, True, "  ")
-    assert not overlay.should_bypass_picker(False, False, "caption")
+def test_picker_bypass_is_decided_by_the_buttons_alone():
+    """Batch mode or Text Overlay turns the picker off. Nothing else counts.
+
+    The cycler line used to be part of this: an empty Cycler left the picker
+    running even with Text Overlay on, while the node's button said "Picker
+    off". The button is the control, so the button decides.
+    """
+    assert overlay.should_bypass_picker(True, False)
+    assert overlay.should_bypass_picker(False, True)
+    assert overlay.should_bypass_picker(True, True)
+    assert not overlay.should_bypass_picker(False, False)

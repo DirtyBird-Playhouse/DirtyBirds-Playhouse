@@ -110,6 +110,16 @@ def add_text_overlay(images, text, font_size=None):
     return torch.stack(rendered, dim=0)
 
 
-def should_bypass_picker(batch_mode, overlay_enabled, cycler_text):
-    """Picker bypass policy shared by the sampler and its unit tests."""
-    return bool(batch_mode or (overlay_enabled and str(cycler_text or "").strip()))
+def should_bypass_picker(batch_mode, overlay_enabled):
+    """Picker bypass policy shared by the sampler and its unit tests.
+
+    The buttons decide, and nothing else. Turning on Batch mode or Text Overlay
+    turns the picker off; whether cycler_line is wired, and what it carries, has
+    no say. This previously also required a non-blank cycler line, which meant an
+    empty Cycler left the picker running while the node's own button said
+    "Picker off" — the UI promised one thing and the run did another.
+
+    Whether a caption is actually drawn is a separate question, answered by the
+    cycler text at the call site.
+    """
+    return bool(batch_mode or overlay_enabled)

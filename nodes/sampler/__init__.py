@@ -300,7 +300,7 @@ class DirtyBirdsSampler:
             "noise_mode": mode,
         }
 
-        if should_bypass_picker(batch_mode, overlay_enabled, cycler_text):
+        if should_bypass_picker(batch_mode, overlay_enabled):
             # Batch mode: skip the interactive picker, pass everything through.
             latent_out["samples"] = samples
             pipe = dict(pipe)
