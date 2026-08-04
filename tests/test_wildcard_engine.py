@@ -212,3 +212,29 @@ def test_step_records_where_each_count_came_from():
     _, picker = engine.resolve("__look__", 0, wd, step=0)
     assert {"kind": "list", "size": 1} in picker.counts
     assert {"kind": "options", "size": 3} in picker.counts
+
+
+def test_back_to_back_tokens_resolve_separately():
+    r"""Two tokens written with no gap must resolve to two values.
+
+    Michael authors them this way on purpose: a space between tokens would put a
+    space in the rendered prompt, and stacked YAML options already contribute a
+    fold space. The regex was greedy and `\w` matches `_`, so `__a____b__`
+    matched as ONE key whose name contained the separating underscores. No such
+    key exists, so the resolver handed the token back untouched and the whole
+    run printed literally.
+    """
+    assert (
+        engine.process("__clothing/tops/casual____clothing/bottoms/casual__", 0, WD)
+        == "t-shirtjeans"
+    )
+
+
+def test_keys_containing_underscores_still_resolve():
+    """The non-greedy fix must not break a key with single underscores in it.
+
+    `+?` expands until it finds the closing `__`, so `my_key` is unaffected —
+    this is the case a lazy quantifier could plausibly have broken.
+    """
+    wd = {"hair/wavy_long": ["beach waves"]}
+    assert engine.process("__hair/wavy_long__", 0, wd) == "beach waves"

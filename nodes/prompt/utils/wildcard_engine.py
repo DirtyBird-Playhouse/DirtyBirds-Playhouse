@@ -39,7 +39,12 @@ WILDCARDS_DIR = os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "user_files", "wildcards"
 )
 
-_WILDCARD_RE = re.compile(r"__([\w./\-*?]+)__")
+# Non-greedy on purpose. `\w` matches `_`, so a greedy `+` made two tokens
+# written back to back — `__a____b__` — match as ONE key whose name contained
+# the separating underscores. No such key exists, so the whole run printed
+# literally. `+?` stops at the first closing `__`; keys with single underscores
+# in them still resolve, because the quantifier expands until it finds one.
+_WILDCARD_RE = re.compile(r"__([\w./\-*?]+?)__")
 _DYNAMIC_RE = re.compile(r"\{([^{}]*)\}")
 _WEIGHT_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*::\s*(.*)$", re.DOTALL)
 # Roll-scoped variables. [[name=value]] declares; [[name]] references. The value
