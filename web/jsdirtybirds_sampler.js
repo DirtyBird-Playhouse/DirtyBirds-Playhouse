@@ -635,7 +635,7 @@ app.registerExtension({
       outputControls.className = "db-sampler-output-controls";
       outputControls.append(batchBtn, overlayBtn);
       // Matches .db-sampler-output-controls in style.css. Both must move together
-       // or the row is cropped by the widget, or floats inside it.
+      // or the row is cropped by the widget, or floats inside it.
       const OUTPUT_ROW_H = 34;
       node.addDOMWidget("db_output_controls", "customhtml", outputControls, {
         serialize: false,
@@ -838,13 +838,16 @@ app.registerExtension({
         // flag needed; just make sure any active-pick state is cleared.
         node._dbActivePick = false;
         setPickRowShown(false);
-        setImageSelectShown(false);
         imgPanel.innerHTML = "";
         if (!imgs || !imgs.length) {
+          setImageSelectShown(false);
           imgPanel.appendChild(imgEmpty);
           syncImgH();
           return;
         }
+        // The Audition has to be visible to show the result; hiding it here was
+        // rendering the picked/batch images into a zero-height widget.
+        setImageSelectShown(true);
         const rand = Date.now();
         const cardImages = [];
         imgs.forEach((info) => {
@@ -862,7 +865,7 @@ app.registerExtension({
             d.textContent = dims;
             card.appendChild(d);
           }
-          card.addEventListener("dblclick", () =>
+          card.addEventListener("click", () =>
             openImageViewer(node, cardImages, cardImages.indexOf(img)),
           );
           cardImages.push(img);

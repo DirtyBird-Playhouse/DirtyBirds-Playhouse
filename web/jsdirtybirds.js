@@ -348,6 +348,9 @@ const TRIGGER_ROW_CAP = 4; // 4 * 48 = 192px, matches the CSS max-height
 const UI_VERSION = 12;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
+// Outer bound for LoRA model/CLIP strength and embedding weight. Well past any
+// normal value; the old ±2 stop was cutting off legitimate over-driven weights.
+const LORA_WEIGHT_LIMIT = 5;
 const findWidget = (node, name) =>
   node.widgets?.find((widget) => widget.name === name);
 const findInput = (node, name) =>
@@ -948,11 +951,11 @@ function setupGenerationNode(node) {
     const strength = el("input", "db-generation-number");
     strength.type = "number";
     strength.min = "0";
-    strength.max = "2";
+    strength.max = String(LORA_WEIGHT_LIMIT);
     strength.step = "0.05";
     strength.title = "Embedding weight";
     strength.addEventListener("change", () => {
-      const value = clamp(strength.value, 0, 2);
+      const value = clamp(strength.value, 0, LORA_WEIGHT_LIMIT);
       strength.value = String(value);
       setWidget(
         widget,
@@ -1205,20 +1208,28 @@ function setupGenerationNode(node) {
       const name = el("span", "db-generation-lora-name", item.name);
       const strength = el("input", "db-generation-number");
       strength.type = "number";
-      strength.min = "-2";
-      strength.max = "2";
+      strength.min = String(-LORA_WEIGHT_LIMIT);
+      strength.max = String(LORA_WEIGHT_LIMIT);
       strength.step = "0.05";
       strength.value = String(item.strength ?? 1);
       strength.title = "Model strength";
       strength.addEventListener("change", () => {
-        item.strength = clamp(strength.value, -2, 2);
+        item.strength = clamp(
+          strength.value,
+          -LORA_WEIGHT_LIMIT,
+          LORA_WEIGHT_LIMIT,
+        );
         saveLoras();
       });
       const clip = strength.cloneNode();
       clip.value = String(item.clip_strength ?? item.strength ?? 1);
       clip.title = "CLIP strength";
       clip.addEventListener("change", () => {
-        item.clip_strength = clamp(clip.value, -2, 2);
+        item.clip_strength = clamp(
+          clip.value,
+          -LORA_WEIGHT_LIMIT,
+          LORA_WEIGHT_LIMIT,
+        );
         saveLoras();
       });
       const remove = button(
