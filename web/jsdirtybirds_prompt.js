@@ -1039,7 +1039,13 @@ app.registerExtension({
       });
       paintSeedMode = () => {
         const isRandom = !!rerollWidget?.value;
+        // Light BOTH sides of the pair. Only Random used to paint itself, so with
+        // reroll off the segment showed nothing selected at all — which made a
+        // stuck "off" state look like no state, and cost a debugging session.
+        // "Last" is deliberately not painted: it is an action that lands you in
+        // fixed mode, not a third mode of its own.
         seedRandom.classList.toggle("db-seg-active", isRandom);
+        seedNewFixed.classList.toggle("db-seg-active", !isRandom);
         const hasLast = Number.isFinite(node._dbLastQueuedSeed);
         seedLast.style.opacity = hasLast ? "1" : "0.35";
         seedLast.style.pointerEvents = hasLast ? "auto" : "none";
