@@ -13,7 +13,7 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 5  # bump to auto-invalidate stale cached entries (v5: split comma-joined trigger words)
+CACHE_VERSION = 6  # bump to auto-invalidate stale cached entries (v6: keep each trigger set whole)
 
 # Cache + settings live alongside this module in the loader folder; web/previews
 # stays under the repo-root web/ dir (browser-served via WEB_DIRECTORY).
@@ -190,17 +190,26 @@ def _is_image(path):
 
 
 def _split_trigger_words(trained):
-    """Flatten Civitai trainedWords into individual trigger words. Entries are
-    often comma-joined ('bbc, huge penis'), so split each into its own chip and
-    de-duplicate in order — keeps every source (sidecar / LM / Civitai) uniform.
+    """Keep each trained-words entry whole, as one trigger set.
+
+    A Civitai entry like "FingerInside, fingering, ass, anal fingering" is one
+    trigger *set* the LoRA was trained on, not four independent tags. These were
+    split on the comma into a chip per word, which read as a tidy list but threw
+    the grouping away: a LoRA shipping an "ass" set and a "pussy" set collapsed
+    into one pile, and ticking words from both produced a combination the LoRA
+    was never trained on.
+
+    Entries are trimmed and de-duplicated in order, so every source (sidecar /
+    LM / Civitai) still behaves the same way.
     """
-    words = []
+    sets = []
     for entry in trained or []:
-        for word in str(entry).split(","):
-            word = word.strip()
-            if word and word not in words:
-                words.append(word)
-    return words
+        # Tidy the spacing inside the set without breaking it apart.
+        parts = [part.strip() for part in str(entry).split(",")]
+        phrase = ", ".join(part for part in parts if part)
+        if phrase and phrase not in sets:
+            sets.append(phrase)
+    return sets
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +360,7 @@ def _download_file(url, dest):
 # ---------------------------------------------------------------------------
 
 
-def get_lora_meta(lora_filename, allow_remote=True, use_lm=True):
+def get_lora_meta(lora_filename, allow_remote=True, use_lm=True, refresh=False):
     """
     Returns { trigger_words, has_preview, preview_path, model_name } for a LoRA.
 
@@ -367,9 +376,17 @@ def get_lora_meta(lora_filename, allow_remote=True, use_lm=True):
     # canonical filename so the sidecar + get_full_path lookups resolve.
     lora_filename = resolve_lora_filename(lora_filename)
 
+    if refresh:
+        # Editing a LoRA's trigger words in LoRA Manager (or its sidecar) leaves
+        # this cache holding the old ones forever — the file is only ever read
+        # once. Drop the entry so the sources below are consulted again.
+        _meta_cache.pop(lora_filename, None)
+        _save_cache(_meta_cache)
+
     cached = _meta_cache.get(lora_filename)
     if (
-        cached
+        not refresh
+        and cached
         and cached.get("resolved")
         and cached.get("v") == CACHE_VERSION
         and (cached.get("remote_done") or not allow_remote)
@@ -461,7 +478,8 @@ def get_lora_meta(lora_filename, allow_remote=True, use_lm=True):
         ):
             val = header.get(field, "").strip()
             if val:
-                meta["trigger_words"] = [w.strip() for w in val.split(",") if w.strip()]
+                # One header field is one trigger set; see _split_trigger_words.
+                meta["trigger_words"] = _split_trigger_words([val])
                 break
         if not meta["sha256"]:
             for field in ("modelspec.hash_sha256", "sshs_model_hash"):
@@ -721,8 +739,11 @@ async def api_get_lora_meta(request):
     loop = asyncio.get_event_loop()
     # Local-only: render-time calls must never hit the network. Remote resolution
     # (hash + Civitai) happens only via the explicit /fetch-meta button.
+    # ?refresh=1 re-reads the LoRA's sources instead of trusting the cache, for
+    # when its trigger words have been edited since they were first read.
+    refresh = request.rel_url.query.get("refresh", "") in ("1", "true", "yes")
     meta = await loop.run_in_executor(
-        None, lambda: get_lora_meta(name, allow_remote=False)
+        None, lambda: get_lora_meta(name, allow_remote=False, refresh=refresh)
     )
     return web.json_response(
         {

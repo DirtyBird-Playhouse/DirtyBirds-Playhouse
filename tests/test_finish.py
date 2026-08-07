@@ -423,3 +423,128 @@ def test_inpainting_no_longer_carries_the_finishing_passes():
     for name in ("upscale.py", "face_restore.py", "sharpen.py"):
         assert not (ROOT / "nodes" / "inpaint" / name).exists()
         assert (ROOT / "nodes" / "finish" / name).exists()
+
+
+def test_nodes_that_return_a_ui_payload_are_output_nodes():
+    """A node returning {"ui": ...} must declare OUTPUT_NODE = True.
+
+    ComfyUI only executes nodes on the dependency path of an output node.
+    A node that returns a ui payload but is not an output node gets pruned
+    whenever nothing downstream of it is one — it never runs, and its preview
+    can never render. Finish and Inpaint both shipped without the flag: a
+    Preview Image wired to the sampler still worked, so it looked like the pipe
+    was failing to carry the image rather than the node never executing.
+    """
+    import re
+
+    # Always mid-chain: their outputs feed the sampler, so they are on the
+    # dependency path of an output node in every usable graph and cannot be
+    # pruned. Terminal nodes have no such guarantee — that is the distinction
+    # this test is really about. Move a node out of here if it ever becomes
+    # usable as the end of a chain.
+    ALWAYS_UPSTREAM = {"loader", "prompt"}
+
+    root = Path(__file__).resolve().parents[1] / "nodes"
+    offenders = []
+    for path in sorted(root.rglob("__init__.py")):
+        if path.parent.name in ALWAYS_UPSTREAM:
+            continue
+        source = path.read_text(encoding="utf-8", errors="ignore")
+        # Only the node classes that hand a ui payload back to the frontend.
+        if not re.search(r"return\s*\{\s*[\"']ui[\"']", source) and not re.search(
+            r"[\"']ui[\"']\s*:\s*\w+.*?[\"']result[\"']", source, re.S
+        ):
+            continue
+        if "OUTPUT_NODE = True" not in source:
+            offenders.append(str(path.relative_to(root.parent)))
+    assert not offenders, (
+        "these nodes return a ui payload but are not output nodes, so ComfyUI "
+        f"will prune them and the payload never arrives: {offenders}"
+    )
+
+
+def _upscale():
+    """The node module, with upscaling known to be available.
+
+    The node guards its upscale import so a partial environment cannot stop it
+    loading; without a real ComfyUI there is nothing to test here.
+    """
+    import pytest
+
+    from _comfy_env import ensure_comfy
+
+    # Puts a real ComfyUI on sys.path; without it comfy.utils is missing and the
+    # node's guarded import leaves upscaling disabled.
+    ensure_comfy()
+    module = _load_module()
+    if getattr(module, "_UPSCALE_ERROR", None) is not None:
+        pytest.skip(f"upscaling unavailable: {module._UPSCALE_ERROR}")
+    return module, module
+
+
+def test_upscale_scale_overrides_the_models_own_factor():
+    """A 4x upscaler asked for 2 must produce 2x, not 4x.
+
+    The model still runs at its own factor and the result is resampled down, so
+    the detail it invented survives. Uses the model-free Lanczos path so the
+    test needs no checkpoint on disk.
+    """
+    _, upscale = _upscale()
+    image = torch.rand((1, 32, 48, 3))
+
+    out = upscale.upscale_image(image, "Fast 4x (Lanczos)", 2)
+    assert (int(out.shape[1]), int(out.shape[2])) == (64, 96)
+
+
+def test_upscale_scale_zero_keeps_the_models_own_factor():
+    """0 means "whatever the model does" — what every pre-existing workflow
+    sends, since the widget did not exist when they were saved."""
+    _, upscale = _upscale()
+    image = torch.rand((1, 32, 48, 3))
+
+    for scale in (0, 0.0, None):
+        out = upscale.upscale_image(image, "Fast 4x (Lanczos)", scale)
+        assert (int(out.shape[1]), int(out.shape[2])) == (128, 192), scale
+
+
+def test_upscale_scale_can_exceed_the_models_factor():
+    """Asking for more than the model gives is still honoured, by resampling up."""
+    _, upscale = _upscale()
+    image = torch.rand((1, 32, 48, 3))
+
+    out = upscale.upscale_image(image, "Fast 2x (Lanczos)", 4)
+    assert (int(out.shape[1]), int(out.shape[2])) == (128, 192)
+
+
+def test_upscale_scale_is_ignored_when_no_upscaler_is_selected():
+    """Off means off — the size control must not resize on its own."""
+    _, upscale = _upscale()
+    image = torch.rand((1, 32, 48, 3))
+
+    assert upscale.upscale_image(image, "None", 4) is image
+
+
+def test_upscale_scale_is_the_last_input():
+    """New widgets go at the END of INPUT_TYPES, never in the middle.
+
+    ComfyUI stores a saved workflow's widget values positionally, so inserting
+    an input shifts every value after it into the wrong widget. This one was
+    added between upscale_model and face_restore first, which pushed
+    codeformer_fidelity's 0.45 into face_restore and broke every existing
+    workflow with "Value not in list: face_restore: 0.45 not in
+    ['Off', 'GFPGAN', 'CodeFormer']".
+    """
+    module = _load_module()
+    required = list(module.DirtyBirdsFinish.INPUT_TYPES()["required"])
+
+    assert required[-1] == "upscale_scale", (
+        "upscale_scale must stay last; moving it renumbers every saved "
+        f"workflow's widget values. Order is currently {required}"
+    )
+    # The original four, still in their original order.
+    assert required[:4] == [
+        "upscale_model",
+        "face_restore",
+        "codeformer_fidelity",
+        "sharpen",
+    ]

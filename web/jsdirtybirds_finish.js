@@ -23,12 +23,13 @@ ensureStylesheet();
 //
 //   section label 16 + gap 6                        = 22
 //   Upscale select 24 + gap 6                       = 30
+//   Size slider 24 + gap 6                          = 30
 //   section label 16 + gap 6                        = 22
 //   Face restore select 24 + gap 6                  = 30
 //   Fidelity slider 24                              = 24
-//   ---- tallest column (left) ------------------------ 128
+//   ---- tallest column (left) ------------------------ 158
 //   panel padding/gaps                              = 12
-const PANEL_H = 140;
+const PANEL_H = 170;
 
 // Sharpen is one slider, matching the Sharpen blueprint it is ported from.
 
@@ -51,7 +52,13 @@ app.registerExtension({
       node.bgcolor = DB_BGCOLOR;
 
       const widgets = Object.fromEntries(
-        ["upscale_model", "face_restore", "codeformer_fidelity", "sharpen"].map(
+        [
+          "upscale_model",
+          "upscale_scale",
+          "face_restore",
+          "codeformer_fidelity",
+          "sharpen",
+        ].map(
           (name) => [name, hideWidget(node, name)],
         ),
       );
@@ -107,7 +114,34 @@ app.registerExtension({
       const left = document.createElement("div");
       left.className = "db-finish-column";
 
-      const upscale = selectField("Upscale", widgets.upscale_model);
+      const upscale = selectField("Upscale", widgets.upscale_model, (v) =>
+        paintScale(v),
+      );
+
+      // Final size relative to the input, independent of the model's own
+      // factor. 0 keeps whatever the model does, so an existing workflow is
+      // unchanged; the readout says "model" rather than "0.00" at that end.
+      const scaleRow = slider(
+        "Size",
+        widgets.upscale_scale,
+        0,
+        8,
+        0.25,
+        (v) => (Number(v) > 0 ? `${Number(v).toFixed(2)}x` : "model"),
+      );
+      const scaleField = document.createElement("div");
+      scaleField.className = "db-finish-field";
+      scaleField.style.gridTemplateColumns = "minmax(0, 1fr)";
+      scaleField.append(scaleRow);
+
+      // Nothing to scale when no upscaler is chosen. Dim rather than hide, so
+      // the control below it doesn't jump under the cursor.
+      function paintScale(choice) {
+        scaleField.classList.toggle(
+          "db-finish-inert",
+          String(choice ?? "") === "None",
+        );
+      }
 
       const fidelityRow = slider(
         "Fidelity",
@@ -133,10 +167,12 @@ app.registerExtension({
 
       const restore = selectField("Faces", widgets.face_restore, paintFidelity);
       paintFidelity(widgets.face_restore?.value);
+      paintScale(widgets.upscale_model?.value);
 
       left.append(
         makeSectionLabel("Upscale"),
         upscale.row,
+        scaleField,
         makeSectionLabel("Face Restore"),
         restore.row,
         fidelityField,
@@ -193,8 +229,10 @@ app.registerExtension({
       // onNodeCreated runs before ComfyUI restores a saved workflow's widget
       // values, so the selects above can be built from stale ones. Re-sync once.
       requestAnimationFrame(() => {
-        if (widgets.upscale_model)
+        if (widgets.upscale_model) {
           upscale.select.value = String(widgets.upscale_model.value ?? "");
+          paintScale(widgets.upscale_model.value);
+        }
         if (widgets.face_restore) {
           restore.select.value = String(widgets.face_restore.value ?? "");
           paintFidelity(widgets.face_restore.value);

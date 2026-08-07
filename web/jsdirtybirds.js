@@ -319,18 +319,33 @@ function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
 // 356 not 340: the resolution caption made the settings column (res + caption +
 // batch + denoise = ~115px) taller than the model column (checkpoint + 64px
 // preview = ~100px), so the settings column now sets the workspace height.
+// Measured in a live ComfyUI against a real node, not estimated. This file must
+// never measure at runtime — that is what caused the old resize feedback loop —
+// so the measuring is done once, by hand, from the browser console, and the
+// result is written here. Re-measure that way if a row's contents change.
+// Left at its original value on purpose. Measured content is 302-329 depending
+// on how wide the node is dragged, and trimming this to fit the wide case hid
+// the LoRAs section entirely at the default width. The ~30px saved is not worth
+// a section disappearing.
 const PANEL_BASE_HEIGHT = 356;
 const EMBED_CARD_BASE_H = 86; // enable + picker + weight box, no preview (incl. top accent)
 const EMBED_PREVIEW_H = 74; // added once if either slot reserves a 64px preview
-const LORA_SECTION_BASE_H = 75; // "Selected"/"Trigger Words" labels + add-row chrome
-const LORA_ROW_H = 110; // thumb(64) + weights row + padding/gap, measured
-const LORA_ROW_CAP = 4; // beyond this the list scrolls instead of growing (4 * 110 = 440px, matches CSS max-height)
-const TRIGGER_ROW_H = 26;
-const TRIGGER_ROW_CAP = 6; // 6 * 26 = 156px, matches CSS max-height
+const LORA_SECTION_BASE_H = 70; // "Selected"/"Trigger Words" labels + add-row chrome
+const LORA_EMPTY_H = 33; // the "No LoRAs selected" placeholder, which is not a row
+const LORA_ROW_H = 118; // thumb(64) + name line + weights row + padding/gap, measured
+const LORA_ROW_CAP = 4; // beyond this the list scrolls instead of growing (4 * 118 = 472px, matches the CSS max-height)
+// A trigger chip is a whole trigger set now, not one word, so the text wraps to
+// two lines in this column — measured at 40px plus the 5px gap.
+const TRIGGER_ROW_H = 48;
+const TRIGGER_ROW_CAP = 4; // 4 * 48 = 192px, matches the CSS max-height
 // 10: the resolution caption raised the panel's minimum height. Bumping this
 // re-normalizes already-saved nodes once, which both clears the clipped section
 // header and drops the dead space under it.
-const UI_VERSION = 10;
+// 11: saved nodes were sitting taller than their content — empty space under
+// the LoRA row. Same one-shot re-fit; manual resizing afterwards is preserved.
+// 12: the height constants above were re-measured in a live ComfyUI; the panel
+// reserved ~93px it never used, and ~104px more per collapsed LoRA list.
+const UI_VERSION = 12;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 const findWidget = (node, name) =>
@@ -524,15 +539,15 @@ function setupGenerationNode(node) {
   }
 
   function lorasHeight() {
-    const loraRows = Math.min(Math.max(loras.length, 1), LORA_ROW_CAP);
-    const triggerRows = Math.min(
-      Math.max(triggerWords.length, 1),
-      TRIGGER_ROW_CAP,
-    );
-    return (
-      LORA_SECTION_BASE_H +
-      Math.max(loraRows * LORA_ROW_H, triggerRows * TRIGGER_ROW_H)
-    );
+    // An empty list shows a one-line placeholder, not a row. Reserving a full
+    // row for it left ~100px of blank space under the section.
+    const loraH = loras.length
+      ? Math.min(loras.length, LORA_ROW_CAP) * LORA_ROW_H
+      : LORA_EMPTY_H;
+    const triggerH = triggerWords.length
+      ? Math.min(triggerWords.length, TRIGGER_ROW_CAP) * TRIGGER_ROW_H
+      : LORA_EMPTY_H;
+    return LORA_SECTION_BASE_H + Math.max(loraH, triggerH);
   }
 
   function currentPanelHeight() {
@@ -1110,6 +1125,14 @@ function setupGenerationNode(node) {
       const meta = await fetchJSON(
         `/dirtybirds/lora-meta?name=${encodeURIComponent(name)}`,
       );
+      // The model's own name ("Futanari / Penis anatomy"), which reads far
+      // better in the list than the filename ("Fta_SDXL_epoch_10"). The
+      // filename stays the identity — this is display only.
+      const title = (meta?.model_name || "").trim();
+      if (title) {
+        const entry = loras.find((candidate) => candidate.name === name);
+        if (entry) entry.title = title;
+      }
       for (const text of meta?.trigger_words || []) {
         if (
           !triggerWords.some((item) => item.lora === name && item.text === text)
@@ -1209,14 +1232,81 @@ function setupGenerationNode(node) {
         },
         "db-generation-remove",
       );
-      top.append(thumb, active, name, remove);
+      // The Selected column is ~130px wide and the thumbnail takes 58 of it, so
+      // after the checkbox and the remove button nothing is left beside it —
+      // the name used to render as a single truncated letter there. It gets its
+      // own full-width line instead, with the weights on the line below.
+      // Re-read this LoRA's metadata from disk, past both caches. Trigger words
+      // edited in LoRA Manager are otherwise invisible here: the backend caches
+      // them per file and the node stores them in the workflow, so neither side
+      // ever asks again.
+      const refresh = button(
+        "⟳",
+        async () => {
+          refresh.disabled = true;
+          refresh.textContent = "…";
+          try {
+            const meta = await fetchJSON(
+              `/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}&refresh=1`,
+            );
+            const title = (meta?.model_name || "").trim();
+            if (title) item.title = title;
+            const incoming = meta?.trigger_words || [];
+            if (incoming.length) {
+              // Keep the ticked/unticked state of any set that survived the
+              // edit; anything new arrives ticked, anything gone disappears.
+              const previous = new Map(
+                triggerWords
+                  .filter((entry) => entry.lora === item.name)
+                  .map((entry) => [entry.text, entry.active !== false]),
+              );
+              triggerWords = triggerWords.filter(
+                (entry) => entry.lora !== item.name,
+              );
+              for (const text of incoming) {
+                triggerWords.push({
+                  lora: item.name,
+                  text,
+                  active: previous.has(text) ? previous.get(text) : true,
+                });
+              }
+            }
+            saveLoras();
+          } catch (_) {
+            refresh.textContent = "⟳";
+            refresh.disabled = false;
+          }
+        },
+        "db-generation-refresh",
+      );
+      refresh.title = "Re-read trigger words and name for this LoRA";
+      top.append(thumb, active, refresh, remove);
+      const nameRow = el("div", "db-generation-lora-name-row");
+      nameRow.append(name);
+      // Show the model's name; keep the filename on hover, since that is what
+      // actually identifies the file on disk.
+      name.textContent = item.title || item.name;
+      name.title = item.name;
+      // A LoRA added before titles were stored has none. Fetch it once, in the
+      // background, and fill it in — failure just leaves the filename showing.
+      if (!item.title) {
+        fetchJSON(`/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}`)
+          .then((meta) => {
+            const fetched = (meta?.model_name || "").trim();
+            if (!fetched || fetched === item.title) return;
+            item.title = fetched;
+            name.textContent = fetched;
+            setWidget(widgets.loras_data, JSON.stringify(loras), node);
+          })
+          .catch(() => {});
+      }
       weights.append(
         el("span", "db-generation-weight-label", "Model"),
         strength,
         el("span", "db-generation-weight-label", "CLIP"),
         clip,
       );
-      row.append(top, weights);
+      row.append(top, nameRow, weights);
       loraList.append(row);
     }
     for (const item of triggerWords) {
@@ -1298,6 +1388,8 @@ function setupGenerationNode(node) {
           const meta = await fetchJSON(
             `/dirtybirds/lora-meta?name=${encodeURIComponent(item.name)}`,
           );
+          const title = (meta?.model_name || "").trim();
+          if (title) item.title = title;
           for (const text of meta?.trigger_words || []) {
             if (
               !triggerWords.some(

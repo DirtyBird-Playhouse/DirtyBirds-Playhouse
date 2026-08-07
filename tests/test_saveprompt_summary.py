@@ -1,4 +1,4 @@
-"""The Archive's how-it-was-made record.
+"""Save Image & Prompt's how-it-was-made record.
 
 Guards the reason it exists: 🎲 Random rolls the resolution at run time, so if
 the saved record loses it, a picture you liked can't be reproduced.
@@ -11,7 +11,7 @@ from _source_text import read_source
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "dirtybirds_archive_summary", ROOT / "nodes" / "saveprompt" / "summary.py"
+    "dirtybirds_saveprompt_summary", ROOT / "nodes" / "saveprompt" / "summary.py"
 )
 summary_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(summary_module)
@@ -84,7 +84,7 @@ def test_summary_line_is_readable_and_leads_with_the_resolution():
     assert "LoRA filmgrain:0.80" in line
 
 
-def test_archive_writes_the_record_to_the_png_and_the_node_ui():
+def test_saveprompt_writes_the_record_to_the_png_and_the_node_ui():
     backend = read_source(ROOT / "nodes" / "saveprompt" / "__init__.py")
     frontend = read_source(ROOT / "web" / "jsdirtybirds_saveprompt.js")
     sampler = read_source(ROOT / "nodes" / "sampler" / "__init__.py")
@@ -92,7 +92,7 @@ def test_archive_writes_the_record_to_the_png_and_the_node_ui():
     assert 'metadata.add_text("db_generation", json.dumps(summary))' in backend
     assert 'metadata.add_text("db_settings", settings_line)' in backend
     assert '"db_settings_md": [settings_line]' in backend
-    # The sampler's own settings only reach the Archive through the pipe.
+    # The sampler's own settings only reach this node through the pipe.
     assert 'pipe["db_sampler_settings"] = sampler_settings' in sampler
     assert "db_settings_md" in frontend
     assert "## Settings" in frontend

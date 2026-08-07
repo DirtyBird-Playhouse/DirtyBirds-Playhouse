@@ -98,3 +98,36 @@ def test_loader_ignores_trigger_words_without_an_active_lora():
 #    CodeFormer extra-arch duplicate-registration guard — are in
 #    tests/test_face_restore.py.
 # --------------------------------------------------------------------------- #
+
+
+def test_trigger_word_sets_are_kept_whole():
+    """A trained-words entry is one trigger set, not a list of separate tags.
+
+    "FingerInside, fingering, ass, anal fingering" is a phrase the LoRA was
+    trained on. Splitting it on the comma gave a tidy chip per word but lost the
+    grouping: a LoRA shipping an "ass" set and a "pussy" set collapsed into one
+    pile, and ticking words from both produced a combination the LoRA never saw.
+    """
+    from _comfy_env import ensure_comfy
+
+    ensure_comfy()
+    root = Path(__file__).resolve().parents[1]
+    path = root / "nodes" / "loader" / "library_backend.py"
+    spec = importlib.util.spec_from_file_location("db_library_backend", path)
+    backend = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backend)
+
+    sets = backend._split_trigger_words(
+        [
+            "FingerInside, fingering, ass, anal fingering",
+            "FingerInside, fingering, pussy, pussy fingering",
+        ]
+    )
+    assert sets == [
+        "FingerInside, fingering, ass, anal fingering",
+        "FingerInside, fingering, pussy, pussy fingering",
+    ]
+
+    # Spacing is tidied inside a set, blanks dropped, duplicate sets removed.
+    assert backend._split_trigger_words(["a ,  b ,, c", "a, b, c"]) == ["a, b, c"]
+    assert backend._split_trigger_words([]) == []

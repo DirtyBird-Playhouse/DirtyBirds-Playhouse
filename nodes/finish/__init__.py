@@ -67,7 +67,7 @@ except Exception as exc:  # noqa: BLE001
     def upscale_options():
         return [UPSCALE_OFF]
 
-    def upscale_image(image, choice):  # noqa: ARG001
+    def upscale_image(image, choice, scale=0.0):  # noqa: ARG001
         return image
 
 
@@ -148,6 +148,26 @@ class DirtyBirdsFinish:
                         "tooltip": "Edge sharpen strength. 0 is off.",
                     },
                 ),
+                # LAST on purpose. ComfyUI stores a saved workflow's widget
+                # values positionally, so inserting an input anywhere but the
+                # end shifts every value after it into the wrong widget — this
+                # one was added in the middle first, and codeformer_fidelity's
+                # 0.45 landed in face_restore ("Value not in list"). New inputs
+                # go here.
+                "upscale_scale": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 8.0,
+                        "step": 0.25,
+                        "tooltip": "Final size relative to the input, whatever "
+                        "the model is built for — a 4x model set to 2 gives 2x. "
+                        "The model still runs at its own factor and the result "
+                        "is resampled, so the detail it added survives. "
+                        "0 means use the model's own scale.",
+                    },
+                ),
             },
             # Both optional, because either one can supply the image. Marking
             # `image` required makes ComfyUI refuse to queue a graph that feeds
@@ -164,10 +184,18 @@ class DirtyBirdsFinish:
     RETURN_NAMES = ("db_pipe", "image")
     FUNCTION = "finish"
     CATEGORY = "DirtyBirds"
+    # Required, not cosmetic. ComfyUI only executes nodes on the dependency path
+    # of an output node. Without this, a Finish whose outputs go nowhere — the
+    # normal way to use it, since it saves nothing itself — is pruned before the
+    # run: it never receives the image, and the compare preview it returns below
+    # can never appear. A Preview Image wired to the sampler still worked, which
+    # made it look like the pipe was at fault.
+    OUTPUT_NODE = True
 
     def finish(
         self,
         upscale_model=UPSCALE_OFF,
+        upscale_scale=0.0,
         face_restore=FACE_RESTORE_OFF,
         codeformer_fidelity=0.5,
         sharpen=SHARPEN_OFF,
@@ -189,7 +217,7 @@ class DirtyBirdsFinish:
         # 1. Upscale first: everything downstream then works at final resolution.
         if str(upscale_model or UPSCALE_OFF) != UPSCALE_OFF and _UPSCALE_ERROR:
             raise RuntimeError(f"Upscaling is unavailable: {_UPSCALE_ERROR}")
-        final_image = upscale_image(final_image, upscale_model)
+        final_image = upscale_image(final_image, upscale_model, upscale_scale)
 
         # 2. Face restore after the upscale, which softens faces.
         method = str(face_restore or FACE_RESTORE_OFF)

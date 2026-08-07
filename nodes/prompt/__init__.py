@@ -19,7 +19,7 @@ from . import tag_autocomplete  # noqa: F401
 logger = logging.getLogger(__name__)
 
 # Prompt .txt files live in a "prompts" folder alongside this node.
-# The Archive node owns saving prompts; Dirty Talk only loads them.
+# Save Image & Prompt owns saving prompts; Prompt Builder only loads them.
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 # ---------------------------------------------------------------------------

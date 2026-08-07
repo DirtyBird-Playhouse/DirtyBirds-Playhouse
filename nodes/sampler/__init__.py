@@ -290,7 +290,7 @@ class DirtyBirdsSampler:
             preview["width"] = int(image.shape[2])
             preview["height"] = int(image.shape[1])
 
-        # Ride the sampler's own settings out on the pipe so the Archive node can
+        # Ride the sampler's own settings out on the pipe so Save Image & Prompt can
         # record how the image was actually made (see its _generation_summary).
         sampler_settings = {
             "sampler_name": sampler_name,

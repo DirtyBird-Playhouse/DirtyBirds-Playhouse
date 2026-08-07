@@ -1,5 +1,5 @@
 /**
- * DirtyBirds Playhouse - Save: The Archive node UI.
+ * DirtyBirds Playhouse - 💾 Save Image & Prompt node UI.
  *
  * Displays the final prompt as markdown, saves the generated image through the
  * backend node execution, and saves prompt text only when the user clicks Save
@@ -19,6 +19,7 @@ import {
   makeButton,
   makeTextarea,
   makeInput,
+  openImageViewer,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -146,7 +147,7 @@ function showPromptBrowser(startPath, onPickFolder, onPickFile) {
 }
 
 app.registerExtension({
-  name: "DirtyBirds.Archive",
+  name: "DirtyBirds.SavePrompt",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsSavePrompt") return;
@@ -175,18 +176,18 @@ app.registerExtension({
       onExecuted?.apply(this, arguments);
       const prompts = message?.db_prompts_md;
       const settings = message?.db_settings_md;
-      if (Array.isArray(settings)) this._dbArchiveSettings = settings[0] || "";
+      if (Array.isArray(settings)) this._dbSaveSettings = settings[0] || "";
       if (Array.isArray(prompts)) {
-        this._dbArchivePositive = prompts[0] || "";
-        this._dbArchiveNegative = prompts[1] || "";
-        this._dbArchivePaint?.();
+        this._dbSavePositive = prompts[0] || "";
+        this._dbSaveNegative = prompts[1] || "";
+        this._dbSavePaint?.();
       }
       const imgs = message?.images;
-      if (Array.isArray(imgs)) this._dbArchivePaintImages?.(imgs);
+      if (Array.isArray(imgs)) this._dbSavePaintImages?.(imgs);
       // A run just delivered a result -> reveal it (the panel is collapsed by
       // default, which otherwise makes a successful save look like it did nothing).
       if (Array.isArray(prompts) || Array.isArray(imgs))
-        this._dbArchiveReveal?.();
+        this._dbSaveReveal?.();
     };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -217,16 +218,16 @@ app.registerExtension({
       const fileWidget = hideWidget(node, "prompts_file");
 
       const panel = document.createElement("div");
-      panel.className = "db-archive-panel";
+      panel.className = "db-saveprompt-panel";
 
       const promptBox = makeTextarea();
-      promptBox.className = "db-script-textarea db-archive-markdown";
+      promptBox.className = "db-script-textarea db-saveprompt-markdown";
       promptBox.readOnly = true;
       promptBox.spellcheck = false;
 
       const imageLabel = makeSectionLabel("Saved Image");
       const imagePanel = document.createElement("div");
-      imagePanel.className = "db-url-preview db-archive-image";
+      imagePanel.className = "db-url-preview db-saveprompt-image";
       imagePanel.style.display = "none";
       const previewContent = document.createElement("div");
       previewContent.className = "db-collapsible-content";
@@ -243,9 +244,9 @@ app.registerExtension({
         },
       });
 
-      const archiveLabel = makeSectionLabel("The Archive");
-      const archiveRow = document.createElement("div");
-      archiveRow.className = "db-archive-settings";
+      const saveLabel = makeSectionLabel("Save Location");
+      const saveRow = document.createElement("div");
+      saveRow.className = "db-saveprompt-settings";
 
       function makeTextRow(labelText, widget, placeholder) {
         const row = document.createElement("div");
@@ -311,7 +312,7 @@ app.registerExtension({
 
       const savePromptBtn = makeButton();
       savePromptBtn.className =
-        "db-lib-btn db-lora-add-open-btn db-archive-save-btn";
+        "db-lib-btn db-lora-add-open-btn db-saveprompt-save-btn";
       savePromptBtn.textContent = "Save Prompt";
       const status = document.createElement("div");
       status.className = "db-url-tools-status";
@@ -344,10 +345,10 @@ app.registerExtension({
       });
 
       savePromptBtn.addEventListener("click", async () => {
-        // Pull prompt from Dirty Talk node if Archive's own inputs are empty.
+        // Pull prompt from Prompt Builder if this node's own inputs are empty.
         let positive = (
           posWidget?.value ||
-          node._dbArchivePositive ||
+          node._dbSavePositive ||
           ""
         ).trim();
         if (!positive) {
@@ -373,12 +374,12 @@ app.registerExtension({
         }
         status.textContent = "Saving...";
         status.dataset.tone = "";
-        const data = await fetchJSON("/dirtybirds/archive-save-prompt", {
+        const data = await fetchJSON("/dirtybirds/saveprompt-write-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             positive,
-            negative: negWidget?.value || node._dbArchiveNegative || "",
+            negative: negWidget?.value || node._dbSaveNegative || "",
             prompts_file: fullPromptPath(),
           }),
         });
@@ -392,7 +393,7 @@ app.registerExtension({
         syncPanelH();
       });
 
-      archiveRow.append(
+      saveRow.append(
         prefixRow.row,
         folderRow,
         fileRow,
@@ -400,8 +401,8 @@ app.registerExtension({
         status,
       );
       panel.append(
-        archiveLabel,
-        archiveRow,
+        saveLabel,
+        saveRow,
         previewSection.label,
         previewContent,
       );
@@ -421,15 +422,26 @@ app.registerExtension({
         return hasImage ? PANEL_WITH_IMAGE : PANEL_EXPANDED;
       };
 
-      node.addDOMWidget("db_archive_panel", "customhtml", panel, {
-        serialize: false,
-        height: PANEL_EXPANDED,
-        getMinHeight: panelMinHeight,
-      });
+      // Node height above the panel: the section heading and the widget rows
+      // ComfyUI draws around it. syncPanelH's floor uses the same number, so
+      // "how tall must the node be" and "how tall may the panel be" stay one
+      // fact rather than two that can drift.
+      const PANEL_CHROME_H = 58;
 
-      node._dbArchivePaint = () => {
-        let positive = posWidget?.value || node._dbArchivePositive || "";
-        let negative = negWidget?.value || node._dbArchiveNegative || "";
+      const panelWidget = node.addDOMWidget(
+        "db_saveprompt_panel",
+        "customhtml",
+        panel,
+        {
+          serialize: false,
+          height: PANEL_EXPANDED,
+          getMinHeight: panelMinHeight,
+        },
+      );
+
+      node._dbSavePaint = () => {
+        let positive = posWidget?.value || node._dbSavePositive || "";
+        let negative = negWidget?.value || node._dbSaveNegative || "";
         if (!positive.trim()) {
           const dt = (app.graph?._nodes || []).find(
             (n) =>
@@ -453,16 +465,16 @@ app.registerExtension({
         promptBox.value = markdownPrompt(
           positive,
           negative,
-          node._dbArchiveSettings,
+          node._dbSaveSettings,
         );
         syncPanelH();
       };
 
-      node._dbArchiveReveal = () => {
+      node._dbSaveReveal = () => {
         if (!previewSection.isExpanded()) previewSection.setExpanded(true);
       };
 
-      node._dbArchivePaintImages = (imgs) => {
+      node._dbSavePaintImages = (imgs) => {
         imagePanel.innerHTML = "";
         hasImage = Boolean(imgs && imgs.length);
         if (!hasImage) {
@@ -470,18 +482,51 @@ app.registerExtension({
           syncPanelH();
           return;
         }
-        const img = document.createElement("img");
-        const info = imgs[imgs.length - 1];
-        const q = `filename=${encodeURIComponent(info.filename)}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "output")}&rand=${Date.now()}`;
-        img.src = `/view?${q}`;
-        img.onload = syncPanelH;
-        imagePanel.append(img);
+        // Every image in the batch, not just the last one. A batch of two used
+        // to render one and silently drop the other. More than one gets a
+        // horizontal strip you can scroll; a single image fills the panel as
+        // before.
+        const rand = Date.now();
+        const rendered = [];
+        imgs.forEach((info, index) => {
+          const img = document.createElement("img");
+          const q = `filename=${encodeURIComponent(info.filename)}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "output")}&rand=${rand}`;
+          img.src = `/view?${q}`;
+          if (index === 0) img.onload = syncPanelH;
+          // Same gesture as ComfyUI's Preview Image node. The whole batch is
+          // handed over so the gallery can page through it from wherever you
+          // opened it.
+          img.style.cursor = "zoom-in";
+          img.title =
+            imgs.length > 1
+              ? `Image ${index + 1} of ${imgs.length} — double-click to view full size`
+              : "Double-click to view full size";
+          img.addEventListener("dblclick", () =>
+            openImageViewer(node, rendered, index),
+          );
+          rendered.push(img);
+          imagePanel.append(img);
+        });
+        imagePanel.classList.toggle("db-saveprompt-image-strip", imgs.length > 1);
         imagePanel.style.display = "flex";
         syncPanelH();
       };
 
+      // Width, and the height the panel is allowed to occupy. Dragging the node
+      // taller used to change neither: the panel stayed at its getMinHeight and
+      // the extra height became blank space under it, so the preview appeared to
+      // ignore the resize handle entirely.
+      //
+      // This reads the node's size and writes the panel's — never the reverse —
+      // so it cannot re-enter the way the old scrollHeight measurement did.
       function applyWidths() {
         panel.style.width = nodeInnerW(node) + "px";
+        const available = Math.max(
+          panelMinHeight(),
+          (node.size?.[1] || 0) - PANEL_CHROME_H,
+        );
+        panel.style.height = available + "px";
+        if (panelWidget) panelWidget.computedHeight = available;
       }
 
       // Width only. This used to measure panel.scrollHeight and setSize the node
@@ -497,7 +542,7 @@ app.registerExtension({
         // One-shot floor so the node grows when the saved image first appears.
         // Only ever grows, and is never reached from onResize, so it cannot
         // fight the resize handle the way the old measurement did.
-        const floor = panelMinHeight() + 58;
+        const floor = panelMinHeight() + PANEL_CHROME_H;
         if ((node.size?.[1] || 0) < floor)
           node.setSize?.([node.size[0], floor]);
         node.setDirtyCanvas(true, true);
@@ -517,14 +562,14 @@ app.registerExtension({
           const parts = splitPromptPath(fileWidget?.value || "");
           folderInput.value = parts.folder;
           fileInput.value = parts.filename;
-          node._dbArchivePaint();
+          node._dbSavePaint();
           syncPromptFile();
         });
       };
 
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
-          node._dbArchivePaint();
+          node._dbSavePaint();
           syncPanelH();
         }),
       );

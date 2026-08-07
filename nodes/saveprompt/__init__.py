@@ -1,6 +1,6 @@
-"""DirtyBirds Playhouse — Save — The Archive.
+"""DirtyBirds Playhouse — 💾 Save Image & Prompt.
 
-Final archive/output node. Saves generated images on execution, displays the
+Final output node. Saves generated images on execution, displays the
 final prompt in markdown, and exposes routes for explicit prompt saving.
 """
 
@@ -42,7 +42,7 @@ def _prompt_browser_root(path=""):
 
 @PromptServer.instance.routes.get("/dirtybirds/saveprompt-browse")
 async def api_saveprompt_browse(request):
-    """List folders and prompt filenames for the Save Prompt archive picker.
+    """List folders and prompt filenames for the Save Image & Prompt picker.
 
     This route lists names only. It does not read prompt file contents.
     """
@@ -111,7 +111,7 @@ def _prompt_file_from_name(name):
 async def api_saved_prompts(request):
     """Return saved prompt lines for Dirty Talk's Load Prompt menu.
 
-    The Archive node owns the file location. This route reads only .txt prompt
+    Save Image & Prompt owns the file location. This route reads only .txt prompt
     library files, not wildcard/style files.
     """
     folder = os.path.dirname(DEFAULT_PROMPTS_FILE)
@@ -171,8 +171,8 @@ async def api_delete_saved_prompt(request):
     )
 
 
-@PromptServer.instance.routes.post("/dirtybirds/archive-save-prompt")
-async def api_archive_save_prompt(request):
+@PromptServer.instance.routes.post("/dirtybirds/saveprompt-write-text")
+async def api_saveprompt_write_text(request):
     try:
         data = await request.json()
     except Exception:
@@ -185,14 +185,14 @@ async def api_archive_save_prompt(request):
     try:
         _append_prompt(prompts_file, positive.replace("\n", " ").strip())
     except Exception as e:
-        logger.warning("[DirtyBirds] Archive prompt save failed: %s", e)
+        logger.warning("[DirtyBirds] Save Image & Prompt text save failed: %s", e)
         return web.json_response({"ok": False, "error": str(e)}, status=400)
     path = os.path.expanduser(prompts_file or DEFAULT_PROMPTS_FILE)
     return web.json_response({"ok": True, "path": os.path.basename(path)})
 
 
 class DirtyBirdsSavePrompt:
-    """Archive node: save images and display/save final prompt markdown."""
+    """Save Image & Prompt: save images and display/save final prompt markdown."""
 
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()

@@ -223,14 +223,17 @@ export function hideWidget(node, name) {
   // The default is taken from the widget config if present, else from the widget's
   // current value at hide time (which is normally the freshly-created default), so
   // this works regardless of how the frontend exposes the config default.
+  // Whether the widget is numeric is decided by the widget, never by whether
+  // its current value happens to start with digits. parseFloat("832x1216") is
+  // 832, so testing the value classified the loader's STRING `dimension`
+  // widget as numeric and serialized it as 832 — the resolution silently fell
+  // back to 1024x1024 while the node still displayed 832 × 1216.
   const numericDefault =
     typeof w.options?.default === "number"
       ? w.options.default
       : typeof w.value === "number" && Number.isFinite(w.value)
         ? w.value
-        : Number.isFinite(parseFloat(w.value))
-          ? parseFloat(w.value)
-          : null;
+        : null;
   if (numericDefault !== null) {
     // Repair a currently-blank value now, and guarantee serialization is numeric.
     if (!Number.isFinite(parseFloat(w.value))) w.value = numericDefault;
@@ -297,6 +300,69 @@ export function makeSlider(label, min, max, step, getVal, setVal, fmt) {
   row.append(lbl, slider, valEl);
   paint();
   return { row, paint };
+}
+
+// ── Full-size image lightbox ─────────────────────────────────────────────────
+// Double-click any in-node image thumbnail to see it at full size, matching the
+// gesture ComfyUI's own Preview Image node uses. Lifted out of the Sampler,
+// where it was written inline, so Save Image & Prompt's saved image and any
+// thumbnail behave identically instead of each growing their own. Click
+// anywhere or press Escape to dismiss.
+// Open the ImageGallery-ED carousel when that extension is installed, else fall
+// back to the built-in lightbox. The carousel is the viewer Michael already uses
+// on ComfyUI's Preview Image node; it reads `node.imgs`, and normally fires from
+// a canvas mouse-down that requires ComfyUI's own ImagePreviewWidget to be under
+// the cursor (see ed_imageGallery.js handleMouseDown). Nodes here suppress that
+// widget so the image renders inside their own panel, so the entry point is
+// called directly instead — `imgs` is populated just long enough for the
+// carousel to read it.
+export function openImageViewer(node, images, index = 0) {
+  const carousel = window.app?.ui?.carousel;
+  const list = (images || []).filter(Boolean);
+  if (carousel?.show && node && list.length) {
+    // `imgs` is set only for the instant the carousel needs it, then put back.
+    // Leaving it set makes ComfyUI attach its own preview widget and draw the
+    // images again underneath the node, outside the node's own panel. The
+    // carousel clones what it needs on show(), so restoring immediately is safe.
+    const previous = node.imgs;
+    try {
+      node.imgs = list;
+      carousel.show(node, Math.max(0, Math.min(index, list.length - 1)));
+      return true;
+    } catch (error) {
+      console.error("[DirtyBirds] Image carousel failed, using lightbox:", error);
+    } finally {
+      node.imgs = previous;
+    }
+  }
+  return !!openImageLightbox(list[index]?.src || list[0]?.src);
+}
+
+export function openImageLightbox(src) {
+  if (!src) return null;
+  document.querySelector(".db-lightbox")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "db-lightbox";
+  const full = document.createElement("img");
+  full.className = "db-lightbox-img";
+  full.src = src;
+  overlay.appendChild(full);
+
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  function onKey(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  }
+  overlay.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
+  return { overlay, close };
 }
 
 // ── Scrollable name-list flyout (no previews) ─────────────────────────────────

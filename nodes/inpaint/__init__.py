@@ -345,6 +345,9 @@ class DirtyBirdsInpaint:
     RETURN_NAMES = ("db_pipe", "image", "latent")
     FUNCTION = "inpaint"
     CATEGORY = "DirtyBirds"
+    # See the note on DirtyBirdsFinish: a node returning a `ui` payload has to
+    # be an output node, or ComfyUI prunes it and the preview never renders.
+    OUTPUT_NODE = True
 
     def inpaint(
         self,

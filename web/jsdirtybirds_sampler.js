@@ -22,6 +22,7 @@ import {
   makeTwoColumn,
   makeInput,
   openPickerModal,
+  openImageViewer,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -29,37 +30,21 @@ ensureStylesheet();
 const NOISE_MODES = ["cpu", "both", "gpu"];
 const NOISE_LABELS = { cpu: "CPU", both: "Both", gpu: "GPU" };
 
-// ── Downstream save-node muting ─────────────────────────────────────────────
-// When the picker is off (batch mode, or Text Overlay driving a wired cycler)
-// there is no single chosen image to finish and save, so the terminal nodes
-// hanging off this sampler are muted instead of running on the whole batch.
-// Only nodes actually reachable from THIS sampler's outputs are touched — a
-// blanket sweep of the canvas would kill unrelated branches.
-const MODE_ALWAYS = 0;
-const MODE_NEVER = 2; // LiteGraph "mute": the node and its branch do not run.
-const SAVE_NODE_TYPES = new Set(["DirtyBirdsFinish", "DirtyBirdsSavePrompt"]);
-
-function downstreamNodes(node) {
-  const graph = node.graph;
-  const found = [];
-  if (!graph) return found;
-  const seen = new Set([node.id]);
-  const queue = [node];
-  while (queue.length) {
-    const current = queue.shift();
-    for (const out of current.outputs || []) {
-      for (const linkId of out?.links || []) {
-        const link = graph.links?.[linkId];
-        const next = link && graph.getNodeById(link.target_id);
-        if (!next || seen.has(next.id)) continue;
-        seen.add(next.id);
-        found.push(next);
-        queue.push(next);
-      }
-    }
-  }
-  return found;
-}
+// ── No downstream muting ────────────────────────────────────────────────────
+// This node used to mute the DirtyBirdsFinish / DirtyBirdsSavePrompt nodes
+// hanging off it whenever the picker was off, on the theory that a batch has no
+// single chosen image worth finishing. Do not bring that back.
+//
+// A muted node is stripped from the prompt before it reaches the server, so
+// those two node types simply stopped existing as far as ComfyUI was concerned
+// — while an ordinary PreviewImage on the image output kept working, which made
+// it look like the pipe was failing to carry the image. Worse, `mode` is saved
+// into the workflow but the marker recording which sampler set it is not, so
+// after one save/reload the mute could never be lifted again.
+//
+// Both outputs always carry the generation. Whether a downstream node should
+// run on a whole batch is the user's decision, made with Ctrl+M, not this
+// node's to make for them.
 
 // ── Interactive image picker ────────────────────────────────────────────────
 // After sampling, the Python node blocks and pushes the batch into a modal
@@ -494,40 +479,30 @@ app.registerExtension({
             ? "The picker is off, but no caption will be drawn: wire Prompt Builder's cycler_line output into this node's cycler_line input."
             : "";
       }
-      // Mute (or restore) the Finish / Save Image & Prompt nodes fed by this
-      // sampler, following the same state the two buttons describe.
-      function syncDownstreamSaveNodes() {
-        const mute = pickerOff();
+      // One-time repair for graphs saved while the old muting existed. `mode`
+      // was written into the workflow but the marker naming the responsible
+      // sampler was not, so those nodes stay muted forever with nothing left to
+      // undo it. Anything still carrying the marker in this session is restored
+      // too. A node the user muted by hand is left alone — only nodes this
+      // feature is known to have touched are revived.
+      function clearLegacyMuting() {
         let changed = false;
-        for (const target of downstreamNodes(node)) {
-          if (!SAVE_NODE_TYPES.has(target.type)) continue;
-          if (mute) {
-            if (target.mode === MODE_NEVER) continue;
-            // Remember what it was so toggling back cannot strand a node the
-            // user had deliberately bypassed.
-            target._dbPrevMode = target.mode;
-            target._dbMutedBy = node.id;
-            target.mode = MODE_NEVER;
-            changed = true;
-          } else {
-            // Only un-mute what this sampler muted. A node the user muted by
-            // hand has no _dbMutedBy and is left exactly as they set it — that
-            // also covers reloads, where the marker does not survive the save.
-            if (target._dbMutedBy !== node.id) continue;
-            target.mode = target._dbPrevMode ?? MODE_ALWAYS;
-            delete target._dbPrevMode;
-            delete target._dbMutedBy;
-            changed = true;
-          }
+        for (const target of Object.values(app.graph?._nodes_by_id || {})) {
+          if (target?._dbMutedBy === undefined) continue;
+          target.mode = target._dbPrevMode ?? 0;
+          delete target._dbPrevMode;
+          delete target._dbMutedBy;
+          changed = true;
         }
         if (changed) app.graph?.setDirtyCanvas(true, true);
       }
 
       // Both buttons describe one shared state, so they always repaint together.
+      // They describe it only — no downstream node is touched. See the note at
+      // the top of this file.
       function paintOutputButtons() {
         paintOverlay();
         paintBatchMode();
-        syncDownstreamSaveNodes();
       }
       overlayBtn.addEventListener("click", () => {
         if (overlayWidget) overlayWidget.value = !overlayWidget.value;
@@ -538,7 +513,10 @@ app.registerExtension({
       // onNodeCreated runs before ComfyUI restores a saved graph's links, so the
       // first paint above cannot see the cycler_line wire. Repaint once restore
       // has happened or a loaded workflow reads "no cycler" when it is wired.
-      requestAnimationFrame(() => paintOutputButtons());
+      requestAnimationFrame(() => {
+        paintOutputButtons();
+        clearLegacyMuting();
+      });
       // Connecting or dropping the cycler_line link changes whether the picker
       // runs, so the buttons have to follow the wire, not just the toggles.
       const originalConnectionsChange = node.onConnectionsChange;
@@ -656,10 +634,13 @@ app.registerExtension({
       const outputControls = document.createElement("div");
       outputControls.className = "db-sampler-output-controls";
       outputControls.append(batchBtn, overlayBtn);
+      // Matches .db-sampler-output-controls in style.css. Both must move together
+       // or the row is cropped by the widget, or floats inside it.
+      const OUTPUT_ROW_H = 34;
       node.addDOMWidget("db_output_controls", "customhtml", outputControls, {
         serialize: false,
-        height: 30,
-        getMinHeight: () => 30,
+        height: OUTPUT_ROW_H,
+        getMinHeight: () => OUTPUT_ROW_H,
       });
       widthEls.push(outputControls);
 
@@ -865,6 +846,7 @@ app.registerExtension({
           return;
         }
         const rand = Date.now();
+        const cardImages = [];
         imgs.forEach((info) => {
           const card = document.createElement("div");
           card.className = "db-pick-card";
@@ -880,18 +862,10 @@ app.registerExtension({
             d.textContent = dims;
             card.appendChild(d);
           }
-          card.addEventListener("click", () => {
-            const overlay = document.createElement("div");
-            overlay.style.cssText =
-              "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;";
-            const full = document.createElement("img");
-            full.src = img.src;
-            full.style.cssText =
-              "max-width:95vw;max-height:95vh;object-fit:contain;border-radius:8px;";
-            overlay.appendChild(full);
-            overlay.addEventListener("click", () => overlay.remove());
-            document.body.appendChild(overlay);
-          });
+          card.addEventListener("dblclick", () =>
+            openImageViewer(node, cardImages, cardImages.indexOf(img)),
+          );
+          cardImages.push(img);
           imgPanel.appendChild(card);
         });
         sizeImageCards();

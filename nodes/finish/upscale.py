@@ -127,8 +127,30 @@ def _model_upscale(image, name):
     return torch.clamp(s.movedim(-3, -1), min=0.0, max=1.0)
 
 
-def upscale_image(image, choice):
+def _resample_to_scale(image, original, scale):
+    """Resample ``image`` so it ends up ``scale``x the size of ``original``.
+
+    Used to decouple the requested size from the model's own factor: a 4x model
+    set to 2 upscales to 4x, then comes back down to 2x. Going through the model
+    first and resampling down beats asking for 2x directly — the detail the
+    model invented survives the downsample.
+    """
+    target_h = max(1, int(round(int(original.shape[1]) * scale)))
+    target_w = max(1, int(round(int(original.shape[2]) * scale)))
+    if int(image.shape[1]) == target_h and int(image.shape[2]) == target_w:
+        return image
+    samples = image.movedim(-1, -3)
+    out = comfy.utils.common_upscale(samples, target_w, target_h, "lanczos", "disabled")
+    return out.movedim(-3, -1).clamp(0.0, 1.0)
+
+
+def upscale_image(image, choice, scale=0.0):
     """Upscale the whole image. Returns it unchanged when ``choice`` is off.
+
+    ``scale`` is the final size relative to the input, independent of whatever
+    factor the model is built for — a 4x model with ``scale=2`` yields 2x. Zero
+    (the default) means "whatever the model does", which is what every workflow
+    saved before this argument existed will pass, so their output is unchanged.
 
     A failure here never breaks the graph: the original image is returned with a
     console note, because losing the inpaint you just ran to an upscaler problem
@@ -138,9 +160,15 @@ def upscale_image(image, choice):
     if name == UPSCALE_OFF or not torch.is_tensor(image):
         return image
     try:
+        scale = float(scale or 0.0)
+    except (TypeError, ValueError):
+        scale = 0.0
+    try:
         if name in FAST_UPSCALES:
-            return _fast_upscale(image, FAST_UPSCALES[name])
-        return _model_upscale(image, name)
+            out = _fast_upscale(image, FAST_UPSCALES[name])
+        else:
+            out = _model_upscale(image, name)
+        return _resample_to_scale(out, image, scale) if scale > 0 else out
     except model_management.InterruptProcessingException:
         raise
     except Exception as exc:  # noqa: BLE001

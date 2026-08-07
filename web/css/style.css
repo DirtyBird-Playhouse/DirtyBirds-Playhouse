@@ -1098,34 +1098,101 @@
   color: #8adfb0;
 }
 
-.db-archive-panel {
+/* Full-size image lightbox (openImageLightbox in db_shared.js). Above the
+   flyouts, which sit at z-index 1000, so a thumbnail opened from inside one is
+   not painted behind it. */
+.db-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+}
+
+.db-lightbox-img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.db-saveprompt-panel {
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 100%;
+  /* The panel element is given an explicit pixel height by applyWidths(), which
+     follows the node. height:100% here would resolve against a parent that has
+     no height of its own, so it is deliberately absent. min-height:0 lets the
+     preview below actually shrink inside a flex column. */
+  min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
   padding: 0;
 }
 
-.db-archive-panel .db-section-label {
+.db-saveprompt-panel .db-section-label {
   height: 16px;
   min-height: 16px;
   flex: 0 0 16px;
 }
 
-.db-archive-markdown {
+/* Fixed: the saved prompt is a few lines and does not earn extra room. Every
+   pixel the node gains goes to the image instead. */
+.db-saveprompt-markdown {
   height: 110px;
   min-height: 110px;
   max-height: 110px;
+  flex: 0 0 110px;
   color: #c9d7df;
 }
 
-.db-archive-image {
-  height: 150px;
+/* Takes whatever height is left. This was a hard 150px, so dragging the node
+   taller grew the node and not the preview — the surplus showed up as blank
+   space under a thumbnail that never changed size. The min-height keeps it
+   readable when the node is at its smallest; the flex-basis of 0 stops the
+   150px floor from also acting as a starting size. */
+.db-saveprompt-image {
+  flex: 1 1 0;
+  min-height: 150px;
+  height: auto;
 }
 
-.db-archive-settings {
+/* More than one image in the batch: a horizontal strip you can scroll through,
+   each image full height. A single image keeps the centred layout above. */
+.db-saveprompt-image.db-saveprompt-image-strip {
+  justify-content: flex-start;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.db-control-surface .db-saveprompt-image-strip img,
+.db-saveprompt-image-strip img {
+  flex: 0 0 auto;
+  height: 100%;
+  width: auto;
+  max-width: none;
+}
+
+/* The saved image scales to whatever the preview box currently is, rather than
+   sitting at its natural size inside a bigger box. Qualified with
+   .db-control-surface to outrank the shared `.db-control-surface img` cap of
+   --db-preview-max-height (240px), which is declared later in this file and
+   would otherwise win on source order and stop the preview growing. */
+.db-control-surface .db-saveprompt-image img,
+.db-saveprompt-image img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.db-saveprompt-settings {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1133,7 +1200,7 @@
   box-sizing: border-box;
 }
 
-.db-archive-save-btn {
+.db-saveprompt-save-btn {
   width: 100%;
   height: 26px;
   min-height: 26px;
@@ -1412,6 +1479,11 @@
   flex-direction: column;
   gap: 6px;
   width: 100%;
+  /* Grows with its panel, so a child marked flex:1 (the saved-image
+     preview) has real space to claim. min-height:0 is what allows a flex child
+     to shrink below its content size. */
+  flex: 1 1 auto;
+  min-height: 0;
   box-sizing: border-box;
 }
 
@@ -1493,12 +1565,15 @@
 }
 
 /* ── Sampler output controls + Audition picker grid ───────────────────────── */
+/* Taller than the 28px buttons it holds, so a long label has somewhere to sit
+   instead of being cropped. "Text Overlay: ON - Picker off" is the longest one
+   and used to wrap onto a second line here. */
 .db-sampler-output-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
-  height: 30px;
+  height: 34px;
   padding: 0 0 2px;
   box-sizing: border-box;
   overflow: hidden;
@@ -1714,6 +1789,11 @@
   height: 28px !important;
   min-height: 28px !important;
   margin: 0;
+  /* One line, always. If the node is dragged narrow the label shortens with an
+     ellipsis rather than wrapping and being cut in half. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .db-pick-grid {
@@ -2179,7 +2259,7 @@
   gap: 7px;
 }
 .db-generation-lora-list {
-  max-height: 440px;
+  max-height: 472px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2194,11 +2274,27 @@
   border-radius: var(--db-radius);
   background: var(--db-surface);
 }
+/* thumb | enable | refresh | remove. Nothing else fits beside a 58px thumbnail
+   in a 130px column — that is why the name has its own line below. */
 .db-generation-lora-row-top {
   display: grid;
-  grid-template-columns: var(--db-preview-size) 18px minmax(0, 1fr) 28px;
+  grid-template-columns: var(--db-preview-size) 18px minmax(0, 1fr) minmax(
+      0,
+      1fr
+    );
   align-items: center;
   gap: 5px;
+}
+
+.db-generation-refresh {
+  min-height: 25px;
+  padding: 1px 6px;
+  color: #7fbee9;
+}
+
+/* The LoRA name, on its own line with the full column width. */
+.db-generation-lora-name-row {
+  min-width: 0;
 }
 .db-generation-lora-thumb {
   width: var(--db-preview-size);
@@ -2241,14 +2337,35 @@
   text-transform: uppercase;
 }
 .db-generation-lora-name {
+  display: block;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* The digits were being cut off along the bottom. Two rules set this control's
+   height — the shared one above at --db-control-height, and this one at 25px —
+   and the shorter one won on source order, leaving the text taller than the box
+   it sits in. One height now, with room for the glyphs to sit inside it. */
 .db-generation-number {
   width: 100%;
-  min-height: 25px;
-  padding: 2px 4px;
+  height: var(--db-control-height);
+  min-height: var(--db-control-height);
+  padding: 0 4px;
+  line-height: var(--db-control-height);
+  /* Firefox */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* The browser's own up/down arrows sit inside the box, over the right-hand end
+   of the value. A single digit clears them; "0.7" does not, and its last
+   character was being covered. The boxes are typed into and driven by the
+   slider elsewhere, so the arrows earn nothing. */
+.db-generation-number::-webkit-outer-spin-button,
+.db-generation-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
 }
 .db-generation-remove {
   min-height: 25px;
@@ -2284,7 +2401,7 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  max-height: 156px;
+  max-height: 192px;
   overflow-y: auto;
 }
 .db-generation-trigger {

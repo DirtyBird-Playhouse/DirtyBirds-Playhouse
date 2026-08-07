@@ -143,7 +143,7 @@ def test_optional_panels_share_the_collapsible_ui_contract():
     loader = read_source(ROOT / "web" / "jsdirtybirds.js")
     image = read_source(ROOT / "web" / "jsdirtybirds_image.js")
     muse = read_source(ROOT / "web" / "jsdirtybirds_muse.js")
-    archive = read_source(ROOT / "web" / "jsdirtybirds_saveprompt.js")
+    savePrompt = read_source(ROOT / "web" / "jsdirtybirds_saveprompt.js")
 
     assert "export function addCollapsibleTitle" in shared
     assert "export function setDOMWidgetShown" in shared
@@ -151,19 +151,19 @@ def test_optional_panels_share_the_collapsible_ui_contract():
     assert 'section("LoRAs", "loras", state, applyLayout)' in loader
     assert 'makeCollapsibleSectionLabel("Image Tools"' in image
     assert 'makeCollapsibleSectionLabel("LM Response"' in muse
-    assert 'makeCollapsibleSectionLabel("Saved Output"' in archive
+    assert 'makeCollapsibleSectionLabel("Saved Output"' in savePrompt
 
     # Optional panels start closed and fixed state-based minimums avoid the
     # scrollHeight feedback loop that previously prevented manual resizing.
-    for source in (image, muse, archive):
+    for source in (image, muse, savePrompt):
         assert "expanded: false" in source
     assert "embeddings: Boolean(saved.embeddings)" in loader
     assert "optionalSection.isExpanded() ? 330 : 132" in image
     assert "const responseH = responseSection.isExpanded() ? 90 : 0" in muse
     # Save Prompt's minimum is now a named function over constants rather than an
     # inline ternary, because it also has to account for the saved image.
-    assert "previewSection.isExpanded()" in archive
-    assert "PANEL_COLLAPSED" in archive
+    assert "previewSection.isExpanded()" in savePrompt
+    assert "PANEL_COLLAPSED" in savePrompt
 
 
 def test_generation_setup_has_truthful_grouping_and_stable_resizing():
@@ -193,15 +193,23 @@ def test_generation_setup_has_truthful_grouping_and_stable_resizing():
     # Section height is a formula over known state (item counts, whether a
     # preview is reserved), not a flat per-section constant, so short sections
     # don't reserve dead space and long lists don't clip — they scroll instead.
-    assert "const PANEL_BASE_HEIGHT = 356" in loader
+    assert "const PANEL_BASE_HEIGHT =" in loader
     assert (
         "const SECTION_HEIGHTS = { embeddings: 142, loras: 290, advanced: 86 }"
         not in loader
     )
     assert "function embeddingsHeight()" in loader
     assert "function lorasHeight()" in loader
-    assert "Math.min(Math.max(loras.length, 1), LORA_ROW_CAP)" in loader
-    assert "Math.min(Math.max(triggerWords.length, 1), TRIGGER_ROW_CAP)" in loader
+    # The numbers themselves are measured against a live node and may change;
+    # what must not change is that the height follows the real item counts and
+    # caps at a scroll rather than growing without limit.
+    assert "Math.min(loras.length, LORA_ROW_CAP)" in loader
+    assert "Math.min(triggerWords.length, TRIGGER_ROW_CAP)" in loader
+    # An empty list is a one-line placeholder, not a reserved row. Treating it
+    # as a row left ~100px of blank space under a collapsed LoRA section.
+    assert "LORA_EMPTY_H" in loader
+    assert "Math.max(loras.length, 1)" not in loader
+    assert "Math.max(triggerWords.length, 1)" not in loader
 
     assert "db-generation-workspace" in loader
     assert "db-generation-model-column" in loader
@@ -761,3 +769,31 @@ def test_stylesheet_has_no_unreachable_rules():
         "stylesheet rules that nothing can ever match — delete them, or apply the "
         f"class in the node module that needs it: {unused}"
     )
+
+
+def test_hidden_widget_numeric_repair_never_guesses_from_the_value():
+    r"""hideWidget must decide "is this numeric?" from the widget, not its text.
+
+    It installs a serializeValue that emits a number, so that a blank INT from
+    an older saved workflow cannot reach ComfyUI and fail on int(""). Deciding
+    that by testing parseFloat(w.value) misfires on strings that merely start
+    with digits: parseFloat("832x1216") is 832, so the loader's STRING
+    `dimension` widget serialized as 832. The backend could not parse that,
+    silently fell back to 1024x1024, and the node still displayed 832 x 1216 —
+    the resolution control looked correct and was ignored.
+    """
+    shared = read_source(SHARED_JS)
+
+    # The classification chain must end at null, not fall through to parsing the
+    # text. parseFloat is still used *inside* the repair below, which is fine —
+    # by then the widget is known to be numeric.
+    assert (
+        'typeof w.value === "number" && Number.isFinite(w.value) ? w.value : null'
+        in shared
+    ), (
+        "hideWidget is classifying a widget as numeric by parsing its value; "
+        "any string starting with digits will be truncated on serialize"
+    )
+    # The legitimate signals: the widget's declared default, or a value that is
+    # already a number.
+    assert 'typeof w.options?.default === "number"' in shared
