@@ -248,7 +248,10 @@ def test_finish_ui_sizes_from_a_constant_not_a_measurement():
     content and calling setSize re-triggers the measurement that resized it."""
     source = (ROOT / "web" / "jsdirtybirds_finish.js").read_text(encoding="utf-8")
     assert re.search(r"^const PANEL_H = \d+;", source, re.M)
-    assert "getMinHeight: () => PANEL_H" in source
+    # The constant is a CONTENT height; reserveHeight adds ComfyUI's per-widget
+    # chrome on top of it. That is arithmetic on a known number, not a
+    # measurement, so the no-feedback-loop rule below still holds.
+    assert "getMinHeight: () => reserveHeight(PANEL_H)" in source
     assert "ResizeObserver" not in source
     assert "computeSize()" not in source
 
@@ -401,11 +404,17 @@ def test_both_editing_nodes_share_one_compare_implementation():
         assert "from .._compare import" in source
         assert "PreviewImage" not in source, "saving previews belongs in _compare.py"
 
-    for module in ("finish", "inpaint"):
-        js = (ROOT / "web" / f"jsdirtybirds_{module}.js").read_text(encoding="utf-8")
-        assert "installComparePreview" in js
-        assert "installCompareExecuted" in js
-        assert "makeCompareView" not in js, "build the compare via the installer"
+    # Finish still shows a before/after flip. Inpainting deliberately does not:
+    # it paints the mask overlay mid-run so a bad segment can be cancelled, then
+    # replaces it with the result — two moments in one run, not two halves of a
+    # flip. Both still save previews through _compare.save_preview above.
+    finish_js = (ROOT / "web" / "jsdirtybirds_finish.js").read_text(encoding="utf-8")
+    assert "installComparePreview" in finish_js
+    assert "installCompareExecuted" in finish_js
+    assert "makeCompareView" not in finish_js, "build the compare via the installer"
+
+    inpaint_js = (ROOT / "web" / "jsdirtybirds_inpaint.js").read_text(encoding="utf-8")
+    assert "makeCompareView" not in inpaint_js, "no private copy of the compare"
 
 
 def test_inpainting_no_longer_carries_the_finishing_passes():

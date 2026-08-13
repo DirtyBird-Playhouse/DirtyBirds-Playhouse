@@ -18,7 +18,7 @@ import copy
 import torch
 import torch.nn.functional as F
 
-from .._compare import compare_preview, resolution
+from .._compare import resolution, save_preview
 
 # Fallbacks if comfy.samplers can't be queried (keeps the node importable in
 # non-ComfyUI test contexts and never leaves the dropdowns empty).
@@ -189,6 +189,65 @@ def _blend_feathered(base, fill, mask, feather):
     return base * (1.0 - m) + fill * m
 
 
+def _overlay_mask(image, mask, strength=0.45):
+    """Tint ``image`` red inside ``mask`` so the compare view shows the selection.
+
+    The "before" half of the compare is worth more as evidence of *what got
+    selected* than as a plain copy of the input — a bad SAM3 segment is the most
+    common reason an inpaint disappoints, and it is invisible otherwise. Uses the
+    same grown mask the sampler saw, so the overlay is the real repaint region.
+    """
+    m = mask.clamp(0.0, 1.0)[..., None] * float(strength)  # [B,H,W,1]
+    tint = torch.zeros_like(image)
+    if tint.shape[-1] >= 3:
+        tint[..., 0] = 1.0
+    else:
+        tint[...] = 1.0
+    return (image * (1.0 - m) + tint * m).clamp(0.0, 1.0)
+
+
+# Payload keys and the live event name. Mirrors web/jsdirtybirds_inpaint.js —
+# change one and change the other, which tests/test_inpaint_preview.py checks.
+MASK_EVENT = "dirtybirds-inpaint-mask"
+IMAGES_KEY = "db_inpaint_images"
+CAPTION_KEY = "db_inpaint_caption"
+
+
+def _mask_caption(mask, mask_source, segment_prompt):
+    """One line naming what the mask caught, and how much of the frame."""
+    prompt = str(segment_prompt or "").strip()
+    what = f'"{prompt}"' if prompt and mask_source == "SAM3" else mask_source
+    try:
+        covered = float(mask.clamp(0.0, 1.0).mean()) * 100.0
+    except (AttributeError, TypeError, ValueError):
+        return f"{what} · red = masked"
+    if covered < 0.1:
+        return f"{what} · nothing detected — cancel and retry"
+    return f"{what} · {covered:.1f}% masked (red)"
+
+
+def _push_mask_preview(unique_id, image, mask, mask_source, segment_prompt):
+    """Send the mask overlay to the node mid-run, before sampling starts."""
+    if unique_id is None:
+        return
+    images = save_preview(_overlay_mask(image, mask))
+    if not images:
+        return
+    try:
+        from server import PromptServer
+
+        PromptServer.instance.send_sync(
+            MASK_EVENT,
+            {
+                "node_id": str(unique_id),
+                IMAGES_KEY: images,
+                CAPTION_KEY: [_mask_caption(mask, mask_source, segment_prompt)],
+            },
+        )
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _summarize(segment_prompt, mask_source, denoise, seed, image):
     """One line naming what this run actually repainted, for the compare view."""
     parts = []
@@ -339,6 +398,8 @@ class DirtyBirdsInpaint:
             "optional": {
                 "mask": ("MASK",),
             },
+            # Needed to address the live mask push at the node that produced it.
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("DIRTYBIRDS_PIPE", "IMAGE", "LATENT")
@@ -366,6 +427,7 @@ class DirtyBirdsInpaint:
         blend_feather,
         grow_mask=0,
         mask=None,
+        unique_id=None,
     ):
         pipe = dict(db_pipe or {})
         missing = [
@@ -390,6 +452,11 @@ class DirtyBirdsInpaint:
             mask = _segment_image(image, prompt, float(confidence))
         image, mask = _prepare_inputs(image, mask)
         mask = _grow_mask(mask, int(grow_mask))
+
+        # Push the overlay NOW, before the sampling that costs the minutes. A
+        # SAM3 miss is the usual reason an inpaint disappoints, and seeing it
+        # only in the finished image is seeing it too late to cancel.
+        _push_mask_preview(unique_id, image, mask, mask_source, segment_prompt)
 
         vae = pipe["vae"]
         base_samples = vae.encode(image)
@@ -418,15 +485,20 @@ class DirtyBirdsInpaint:
         pipe["loader_settings"] = copy.copy(pipe.get("loader_settings") or {})
         result = (pipe, final_image, sampled)
 
-        # Before/after compare. Inpainting changes one masked region, so the
-        # final image alone rarely answers "did that help?" — flipping between
-        # the two in the same box does.
-        preview = compare_preview(
-            image,
-            final_image,
-            _summarize(segment_prompt, mask_source, denoise, seed, final_image),
-        )
-        return {"ui": preview, "result": result} if preview else result
+        # The preview box already showed the mask overlay while this was
+        # sampling; the run ends by replacing it with the finished image. No
+        # before/after flip — by the time the result lands, the question worth
+        # answering ("did it mask the right thing?") has already been answered.
+        images = save_preview(final_image)
+        if not images:
+            return result
+        preview = {
+            IMAGES_KEY: images,
+            CAPTION_KEY: [
+                _summarize(segment_prompt, mask_source, denoise, seed, final_image)
+            ],
+        }
+        return {"ui": preview, "result": result}
 
 
 NODE_CLASS_MAPPINGS = {"DirtyBirdsInpaint": DirtyBirdsInpaint}

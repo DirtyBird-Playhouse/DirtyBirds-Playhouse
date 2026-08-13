@@ -1,13 +1,17 @@
 /** DirtyBirds image-only Inpainting node and Image Loader handoff. */
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 import {
   DB_COLOR,
   DB_BGCOLOR,
+  addTitle,
   ensureStylesheet,
   hideWidget,
-  installCompareExecuted,
-  installComparePreview,
+  openImageLightbox,
+  reserveHeight,
+  setDOMWidgetShown,
+  viewURL,
   makeSectionLabel,
   makeSlider,
   nodeInnerW,
@@ -18,6 +22,84 @@ import {
 } from "./db_shared.js";
 
 ensureStylesheet();
+
+// Mirrors nodes/inpaint/__init__.py — change one and change the other.
+const MASK_EVENT = "dirtybirds-inpaint-mask";
+const IMAGES_KEY = "db_inpaint_images";
+const CAPTION_KEY = "db_inpaint_caption";
+
+const PREVIEW_HEADER_H = 30;
+const PREVIEW_IMG_H = 190;
+const PREVIEW_WIDGET_H = 198;
+// Content height of the settings panel, reserved through reserveHeight().
+// 333, not 330: the two settings columns measure 273px and the panel's own
+// chrome 60, so 330 cut 3px off the bottom row of the grid (which is
+// overflow:hidden, so it vanished rather than spilling).
+const INPAINT_PANEL_H = 333;
+
+// A single preview image plus caption. Not the shared compare view: this node
+// paints the mask overlay mid-run and the finished image at the end, and those
+// are two moments in one run rather than two halves of a flip.
+function installMaskPreview(node) {
+  const header = addTitle(
+    node,
+    "db_inpaint_preview_h",
+    "Preview",
+    PREVIEW_HEADER_H,
+  );
+
+  const box = document.createElement("div");
+  box.className = "db-compare";
+  box.style.height = `${PREVIEW_IMG_H}px`;
+  const img = document.createElement("img");
+  img.className = "db-compare-img";
+  const caption = document.createElement("div");
+  caption.className = "db-compare-caption";
+  const state = document.createElement("div");
+  state.className = "db-compare-state";
+  box.append(img, caption, state);
+  box.addEventListener("click", () => {
+    if (img.src) openImageLightbox(img.src);
+  });
+
+  node.addDOMWidget("db_inpaint_preview", "customhtml", box, {
+    serialize: false,
+    height: reserveHeight(PREVIEW_WIDGET_H),
+    getMinHeight: () => reserveHeight(PREVIEW_WIDGET_H),
+  });
+
+  const named = (name) => node.widgets?.find((widget) => widget.name === name);
+  const show = (visible) => {
+    setDOMWidgetShown(node, named("db_inpaint_preview_h"), visible);
+    setDOMWidgetShown(node, named("db_inpaint_preview"), visible);
+    node.setDirtyCanvas?.(true, true);
+  };
+
+  node._dbSetPreview = (images, captionText, label) => {
+    const list = images || [];
+    if (!list.length) {
+      show(false);
+      return;
+    }
+    img.src = viewURL(list[0]);
+    caption.textContent = captionText || "";
+    state.textContent = label || "";
+    show(true);
+  };
+
+  show(false);
+  return [header, box];
+}
+
+// One listener for every Inpainting node on the graph; the payload names which.
+api.addEventListener(MASK_EVENT, ({ detail }) => {
+  const node = app.graph?.getNodeById?.(Number(detail?.node_id));
+  node?._dbSetPreview?.(
+    detail?.[IMAGES_KEY],
+    detail?.[CAPTION_KEY]?.[0],
+    "Mask",
+  );
+});
 
 function findSlot(slots, name) {
   return (slots || []).findIndex(
@@ -30,9 +112,16 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== "DirtyBirdsInpaint") return;
 
-    // A masked edit is exactly the case the final image alone can't answer
-    // "did that help?" for, so it gets the same click-to-flip compare as Finish.
-    installCompareExecuted(nodeType);
+    // The finished image replaces the mask overlay the run already showed.
+    const onExecuted = nodeType.prototype.onExecuted;
+    nodeType.prototype.onExecuted = function (message) {
+      onExecuted?.apply(this, arguments);
+      this._dbSetPreview?.(
+        message?.[IMAGES_KEY],
+        message?.[CAPTION_KEY]?.[0],
+        "Result",
+      );
+    };
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -251,10 +340,10 @@ app.registerExtension({
 
       node.addDOMWidget("db_inpaint_panel", "customhtml", panel, {
         serialize: false,
-        getMinHeight: () => 330,
+        getMinHeight: () => reserveHeight(INPAINT_PANEL_H),
       });
 
-      const previewEls = installComparePreview(node, "db_inpaint");
+      const previewEls = installMaskPreview(node);
 
       // Width is read FROM the node; nothing here measures content and resizes
       // the node back, which is what makes this safe to call on every resize.
