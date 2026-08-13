@@ -1,4 +1,4 @@
-"""Whole-image upscaling for the Inpainting node.
+"""Whole-image upscaling for the ✨ Finish node.
 
 Two kinds of upscale are offered:
 

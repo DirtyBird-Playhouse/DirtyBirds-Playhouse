@@ -1,4 +1,4 @@
-"""Native text cycling helpers used by Dirty Talk.
+"""Native text cycling helpers used by Prompt Builder.
 
 Each physical line produces one output, with a hard limit that prevents an
 accidental paste from scheduling an unbounded ComfyUI list.
@@ -24,7 +24,7 @@ def cycle_text(text):
 
 
 def append_positive(base, addition):
-    """Append a non-empty item using Dirty Talk's existing comma separator."""
+    """Append a non-empty item using Prompt Builder's existing comma separator."""
     base = str(base or "")
     addition = str(addition or "").strip()
     if not addition:

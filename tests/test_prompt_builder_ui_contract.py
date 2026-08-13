@@ -33,8 +33,9 @@ def test_dirty_talk_uses_comfyui_dom_widget_resize_contract():
     source = read_source(PROMPT_JS)
 
     assert (
-        "getMinHeight: () => DB_PANEL_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0)"
-        in source
+        "reserveHeight(\n"
+        "              DB_PANEL_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),\n"
+        "            )" in source
     )
     assert "afterResize: (resizedNode)" in source
     assert "node.resizable = true" in source
@@ -123,8 +124,12 @@ def test_sampler_buttons_report_the_real_picker_state():
     assert overlay_module.should_bypass_picker(True, False)
     assert overlay_module.should_bypass_picker(False, True)
     assert not overlay_module.should_bypass_picker(False, False)
-    # The JS mirror of it: the same two flags, no third condition.
-    assert "_batchOn || overlayOn()" in sampler
+    # The JS mirror of it: the same two flags, no third condition. Both are LIVE
+    # widget reads — batch_mode used to be a copy taken at node creation, before
+    # ComfyUI restores saved values, so a graph saved with batch mode on painted
+    # "Pick Image: ON" while the run bypassed the picker.
+    assert "batchOn() || overlayOn()" in sampler
+    assert "const batchOn = () => !!batchModeWidget?.value" in sampler
     assert "cyclerWired()" not in sampler.split("const pickerOff")[1][:200]
     # The wire still decides whether a caption is drawn, so it is still checked
     # — for the tooltip only, never for the picker state.
@@ -142,7 +147,7 @@ def test_optional_panels_share_the_collapsible_ui_contract():
     shared = read_source(SHARED_JS)
     loader = read_source(ROOT / "web" / "jsdirtybirds.js")
     image = read_source(ROOT / "web" / "jsdirtybirds_image.js")
-    muse = read_source(ROOT / "web" / "jsdirtybirds_muse.js")
+    enhance = read_source(ROOT / "web" / "jsdirtybirds_prompt_enhance.js")
     savePrompt = read_source(ROOT / "web" / "jsdirtybirds_saveprompt.js")
 
     assert "export function addCollapsibleTitle" in shared
@@ -150,16 +155,16 @@ def test_optional_panels_share_the_collapsible_ui_contract():
     assert 'section("Embeddings", "embeddings", state, applyLayout)' in loader
     assert 'section("LoRAs", "loras", state, applyLayout)' in loader
     assert 'makeCollapsibleSectionLabel("Image Tools"' in image
-    assert 'makeCollapsibleSectionLabel("LM Response"' in muse
+    assert 'makeCollapsibleSectionLabel("LM Response"' in enhance
     assert 'makeCollapsibleSectionLabel("Saved Output"' in savePrompt
 
     # Optional panels start closed and fixed state-based minimums avoid the
     # scrollHeight feedback loop that previously prevented manual resizing.
-    for source in (image, muse, savePrompt):
+    for source in (image, enhance, savePrompt):
         assert "expanded: false" in source
     assert "embeddings: Boolean(saved.embeddings)" in loader
     assert "optionalSection.isExpanded() ? 330 : 132" in image
-    assert "const responseH = responseSection.isExpanded() ? 90 : 0" in muse
+    assert "responseSection.isExpanded() ? ENHANCE_RESPONSE_H : 0" in enhance
     # Save Prompt's minimum is now a named function over constants rather than an
     # inline ternary, because it also has to account for the saved image.
     assert "previewSection.isExpanded()" in savePrompt
@@ -532,9 +537,6 @@ def test_sampler_output_controls_are_grouped_at_the_bottom():
     )
     assert ".db-sampler-output-controls" in style
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in style
-    assert "const TITLE_H = 26" in sampler
-    assert "height: TITLE_H, getMinHeight: () => TITLE_H" in sampler
-    assert "height: 30px;" in style
     assert "padding: 0 0 2px;" in style
     assert "hideWidget as hideWidgetShared" in sampler
     assert "return hideWidgetShared(node, name)" in sampler
@@ -596,7 +598,12 @@ def test_image_loader_ui_has_truthful_resize_state():
     assert '["long_side", "Long Side"]' in image
     assert '["custom", "Custom"]' in image
     assert 'sizeControls.style.opacity = on ? "1" : "0.35"' in image
-    assert 'optionalSection.setTitle("Image Tools")' in image
+    # The heading is named once, where the section is built. It used to be
+    # re-set by a paintToolsSummary() helper that only ever wrote back the same
+    # literal the section was already constructed with — a no-op called from
+    # three places.
+    assert 'makeCollapsibleSectionLabel("Image Tools"' in image
+    assert "paintToolsSummary" not in image
     assert 'makeSectionLabel("Segmentation")' not in image
     assert ".db-image-tools-grid" in style
 
@@ -639,8 +646,8 @@ def test_dirty_talk_optional_tool_states_are_clear_and_persisted():
 
 
 def test_prompt_enhance_is_a_plain_text_in_text_out_node():
-    backend = read_source(ROOT / "nodes" / "muse" / "__init__.py")
-    frontend = read_source(ROOT / "web" / "jsdirtybirds_muse.js")
+    backend = read_source(ROOT / "nodes" / "prompt_enhance" / "__init__.py")
+    frontend = read_source(ROOT / "web" / "jsdirtybirds_prompt_enhance.js")
 
     assert '"✍️ Prompt Enhance"' in backend
     assert "The Muse · LLM Prompt Writer" not in backend

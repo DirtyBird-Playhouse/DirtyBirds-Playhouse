@@ -22,7 +22,7 @@ Navigation with rough token estimates. Load the minimum that answers the task.
 | Avoid anti-patterns             | `docs/learnings/common-pitfalls.md`        | ~400        |
 | Optimize VRAM/tensor/UI         | `docs/learnings/performance.md`            | ~400        |
 | Wildcard engine work            | `docs/learnings/wildcard-engine.md`        | ~400        |
-| LM Studio / Muse work           | `docs/learnings/llm-integration.md`        | ~350        |
+| LM Studio / Prompt Enhance work           | `docs/learnings/llm-integration.md`        | ~350        |
 | Install / distribute the pack   | `docs/learnings/deployment.md`             | ~350        |
 | Verify a change in the app      | `docs/learnings/testing-patterns.md`       | ~300        |
 
@@ -38,7 +38,7 @@ What are you changing?
 │   └─ tensor/VRAM heavy? ....... + performance.md
 ├─ Node inputs/outputs/types ... api-design.md (mind backward compat!)
 ├─ Node UI (web/*.js) .......... web-extension-patterns.md + ui-conventions.md
-├─ LLM / Muse calls ............ llm-integration.md
+├─ LLM / Prompt Enhance calls ............ llm-integration.md
 ├─ Wildcard / [[variable]] ..... wildcard-engine.md
 ├─ Install / packaging ......... deployment.md
 └─ About to report "done"? ..... testing-patterns.md (verify live!)

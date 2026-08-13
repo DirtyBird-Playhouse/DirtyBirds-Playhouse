@@ -1,4 +1,4 @@
-"""Fast, self-contained tag autocomplete for Dirty Talk."""
+"""Fast, self-contained tag autocomplete for Prompt Builder."""
 
 import csv
 import os

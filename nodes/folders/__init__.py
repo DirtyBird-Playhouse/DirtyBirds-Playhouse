@@ -25,10 +25,28 @@ from ..utils.paths import pack_root
 
 logger = logging.getLogger(__name__)
 
-# Node pack root (…/custom_nodes/DirtyBirds-Playhouse).
+# This pack's own directory — the SOURCE workspace, which on this install is
+# what custom_nodes/DirtyBirds-Playhouse symlinks to.
 _NODE_DIR = pack_root()
-# …/custom_nodes
-_CUSTOM_NODES_DIR = os.path.dirname(_NODE_DIR)
+
+
+def _custom_nodes_dir():
+    """ComfyUI's real custom_nodes directory.
+
+    Asks ComfyUI, rather than taking ``dirname(_NODE_DIR)``. That shortcut is
+    only correct when the pack sits physically inside custom_nodes; when it is a
+    symlink to a source workspace (the documented layout here — see AGENTS.md)
+    pack_root() resolves to the workspace and its parent is some unrelated
+    folder. Measured on this machine: it opened C:\\Users\\mpick\\My_AI_Tools
+    instead of ...\\ComfyUI\\custom_nodes.
+    """
+    try:
+        paths = folder_paths.get_folder_paths("custom_nodes")
+        if paths:
+            return os.path.abspath(paths[0])
+    except Exception:  # noqa: BLE001 - fall back rather than lose the button
+        pass
+    return os.path.dirname(_NODE_DIR)
 
 
 def _known_folders():
@@ -39,7 +57,7 @@ def _known_folders():
     """
     return {
         "models": os.path.abspath(folder_paths.models_dir),
-        "custom_nodes": _CUSTOM_NODES_DIR,
+        "custom_nodes": _custom_nodes_dir(),
         "dirtybirds": _NODE_DIR,
     }
 

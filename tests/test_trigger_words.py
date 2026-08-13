@@ -1,4 +1,4 @@
-"""Tests for the Wardrobe node's trigger-word selection logic.
+"""Tests for the Trigger Words node's trigger-word selection logic.
 
 The module imports only json/logging, so it loads directly from its file path.
 The dedup/active-filter logic lives in the pure helper `_active_trigger_words`.
@@ -17,8 +17,8 @@ def _load(name, relative_path):
     return module
 
 
-wardrobe = _load("dirtybirds_wardrobe", "nodes/wardrobe/__init__.py")
-active = wardrobe._active_trigger_words
+trigger_words = _load("dirtybirds_trigger_words", "nodes/trigger_words/__init__.py")
+active = trigger_words._active_trigger_words
 
 
 def test_collects_active_words_in_order():

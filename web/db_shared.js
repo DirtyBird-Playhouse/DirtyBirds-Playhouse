@@ -105,6 +105,28 @@ export function nodeInnerW(node) {
   return Math.max(100, (node.size?.[0] || 380) - 32);
 }
 
+// ── DOM-widget height contract ───────────────────────────────────────────────
+// ComfyUI lays a DOM widget's element out inside a slot 20px shorter than the
+// height the widget reserves — the frontend's own per-widget chrome. Measured
+// live against comfyui-frontend-package 1.45 by sweeping one widget's reserved
+// height 30 -> 200px: the element came back at exactly `reserved - 20` every
+// time, at every size.
+//
+// Every height constant in this pack is a CONTENT height (what the rows inside
+// actually need). Handing those straight to addDOMWidget as the reserved height
+// is what left the Prompt Enhance, Save Image & Prompt, Trigger Words, Sampler and Pipe panels
+// clipped along their bottom edge. Reserve through this helper instead, and the
+// per-node constants keep meaning what they say.
+//
+// This is arithmetic on a number the node already knows, NOT a measurement of
+// the DOM — it cannot start the measure -> resize -> re-measure loop the note on
+// applyControlSurface warns about.
+export const DOM_WIDGET_CHROME = 20;
+
+export function reserveHeight(contentHeight) {
+  return Math.max(0, Number(contentHeight) || 0) + DOM_WIDGET_CHROME;
+}
+
 // ── Section label  ─────────── TITLE ─────────────────────────────────────────
 export function makeSectionLabel(text) {
   const el = document.createElement("div");
@@ -170,13 +192,13 @@ export function makeCollapsibleSectionLabel(
 // Register a collapsible section heading as a DOM widget.
 export function addCollapsibleTitle(node, name, text, options = {}, h = 30) {
   const section = makeCollapsibleSectionLabel(text, options);
-  h = Math.max(h || 0, 30);
+  const reserved = reserveHeight(Math.max(h || 0, SECTION_LABEL_H));
   section.label.style.cssText +=
     "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
   section.widget = node.addDOMWidget(name, "customhtml", section.label, {
     serialize: false,
-    height: h,
-    getMinHeight: () => h,
+    height: reserved,
+    getMinHeight: () => reserved,
   });
   return section;
 }
@@ -254,15 +276,21 @@ export function hideWidget(node, name) {
 
 // ── Section-title DOM widget (centered separator label) ───────────────────────
 // `text` is a plain string; builds the label and registers it as a DOM widget.
+//
+// One height for every section heading in the pack. The Sampler used to carry
+// its own 26px copy of this, which is why its "The Method" / "Output" headings
+// sat a few pixels shorter than every other node's.
+export const SECTION_LABEL_H = 30;
+
 export function addTitle(node, name, text, h) {
   const el = makeSectionLabel(text);
-  h = Math.max(h || 0, 30); // room so centered section text isn't clipped
+  const reserved = reserveHeight(Math.max(h || 0, SECTION_LABEL_H));
   el.style.cssText +=
     "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
   node.addDOMWidget(name, "customhtml", el, {
     serialize: false,
-    height: h,
-    getMinHeight: () => h,
+    height: reserved,
+    getMinHeight: () => reserved,
   });
   return el;
 }
@@ -649,8 +677,9 @@ export const COMPARE_KEYS = {
   caption: "db_compare_caption",
 };
 
-// Widget heights, constants for the reason given on applyControlSurface.
-const COMPARE_HEADER_H = 30;
+// Content heights, constants for the reason given on applyControlSurface. They
+// are reserved through reserveHeight(), so they stay honest content numbers.
+const COMPARE_HEADER_H = SECTION_LABEL_H;
 const COMPARE_IMG_H = 190;
 const COMPARE_WIDGET_H = 198;
 const COMPARE_GRID_H = 162;
@@ -672,16 +701,16 @@ export function installComparePreview(node, prefix) {
   const compare = makeCompareView(COMPARE_IMG_H);
   node.addDOMWidget(`${prefix}_compare`, "customhtml", compare.el, {
     serialize: false,
-    height: COMPARE_WIDGET_H,
-    getMinHeight: () => COMPARE_WIDGET_H,
+    height: reserveHeight(COMPARE_WIDGET_H),
+    getMinHeight: () => reserveHeight(COMPARE_WIDGET_H),
   });
 
   // A batch has no single before/after to flip between, so it shows them all.
   const thumbs = makeThumbGrid();
   node.addDOMWidget(`${prefix}_thumbs`, "customhtml", thumbs.el, {
     serialize: false,
-    height: COMPARE_GRID_H,
-    getMinHeight: () => COMPARE_GRID_H,
+    height: reserveHeight(COMPARE_GRID_H),
+    getMinHeight: () => reserveHeight(COMPARE_GRID_H),
   });
 
   const named = (name) => node.widgets?.find((widget) => widget.name === name);

@@ -13,7 +13,7 @@ from server import PromptServer
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 6  # bump to auto-invalidate stale cached entries (v6: keep each trigger set whole)
+CACHE_VERSION = 7  # bump to auto-invalidate stale cached entries (v7: drop the ss_output_name filename echo)
 
 # Cache + settings live alongside this module in the loader folder; web/previews
 # stays under the repo-root web/ dir (browser-served via WEB_DIRECTORY).
@@ -470,11 +470,18 @@ def get_lora_meta(lora_filename, allow_remote=True, use_lm=True, refresh=False):
         (".safetensors", ".sft")
     ):
         header = _read_safetensors_metadata(lora_path)
+        # Only fields that actually hold trained words. `ss_output_name` was in
+        # this list and is NOT one — it is kohya's training OUTPUT FILENAME, so
+        # it manufactured a "trigger word" that was just the filename minus its
+        # hash suffix ("Bondage_garrote-0aae" -> "Bondage_garrote"). Measured
+        # against comfyui-lora-manager across all 270 installed LoRAs: it fired
+        # on 116 of them, and every one of those chips arrives ticked ON and is
+        # appended to the positive prompt. Where LoRA Manager had real trained
+        # words, the two agreed on all 124 and disagreed on none.
         for field in (
             "activation text",
             "trigger_phrase",
             "modelspec.trigger_phrase",
-            "ss_output_name",
         ):
             val = header.get(field, "").strip()
             if val:

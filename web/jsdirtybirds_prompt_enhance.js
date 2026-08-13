@@ -2,9 +2,9 @@
  * DirtyBirds Playhouse — Prompt Enhance node UI.
  *
  * A plain text-in → text-out LLM prompt writer: it enhances whatever STRING is
- * wired into text_in and emits the result on the text output. Backends (LM
- * Studio / KoboldCpp) own the model; this node shows status and lets the user
- * pick a system prompt file from user-files/LM Studio.
+ * wired into text_in and emits the result on the text output. LM Studio owns
+ * the model; this node shows status and lets the user pick a system prompt
+ * file from user-files/LM Studio.
  */
 
 import { app } from "../../../scripts/app.js";
@@ -20,24 +20,37 @@ import {
   makeButton,
   makeTextarea,
   makeInput,
+  makeSlider,
+  reserveHeight,
 } from "./db_shared.js";
 
 ensureStylesheet();
 
-// Both backends speak the OpenAI-compatible API; only endpoint/label differ.
-const DB_MUSE_BACKENDS = {
-  lmstudio: {
-    label: "LM Studio",
-    tag: "LM",
-    endpoint: "http://localhost:1234/v1",
-  },
-  koboldcpp: {
-    label: "KoboldCpp",
-    tag: "KCP",
-    endpoint: "http://localhost:5001/v1",
-  },
+// Hand-maintained content heights, the same convention the rest of the pack
+// uses (see the note on applyControlSurface in db_shared.js — nothing here may
+// measure the panel and resize the node back).
+//
+//   title row 24 + gap 6                               = 30
+//   split: prompt row 24 + status 14 + gap             = 60
+//   "Enhancement Instructions" label 16 + gap 6        = 22
+//   instruction textarea                               = 86
+//   "LM Response" collapsible label 16 + gap 6         = 22
+//   Enhance Prompt button 26 + gap 6                   = 32
+//   panel padding                                      = 12
+// Re-measured live after the backend-selector row was removed (LM Studio is now
+// the only backend). It was 210 before that, which is where the missing 66px at
+// the foot of this node came from: the button and half the instruction box were
+// drawn past the panel.
+const ENHANCE_PANEL_H = 238;
+const ENHANCE_RESPONSE_H = 90;
+
+// LM Studio is the only backend. Mirrors DEFAULT_ENDPOINT / BACKEND_LABEL in
+// nodes/prompt_enhance/__init__.py.
+const LM_STUDIO = {
+  label: "LM Studio",
+  tag: "LM",
+  endpoint: "http://localhost:1234/v1",
 };
-const DB_MUSE_DEFAULT_BACKEND = "lmstudio";
 
 function showPromptFlyout(title, prompts, current, onPick) {
   document.querySelector(".db-flyout-overlay")?.remove();
@@ -100,28 +113,28 @@ function showPromptFlyout(title, prompts, current, onPick) {
 }
 
 app.registerExtension({
-  name: "DirtyBirds.Muse",
+  name: "DirtyBirds.PromptEnhance",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "DirtyBirdsMuse") return;
+    if (nodeData.name !== "DirtyBirdsPromptEnhance") return;
 
     const onExecuted = nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted = function (message) {
       onExecuted?.apply(this, arguments);
-      const data = message?.db_muse_response;
+      const data = message?.db_prompt_enhance_response;
       if (Array.isArray(data)) {
-        this._dbMusePositive = (data[0] || "").trim();
-        this._dbMuseNegative = (data[1] || "").trim();
+        this._dbEnhancePositive = (data[0] || "").trim();
+        this._dbEnhanceNegative = (data[1] || "").trim();
       }
-      const status = message?.db_muse_status;
-      if (Array.isArray(status) && status[0]) this._dbMuseRunStatus = status[0];
-      this._dbMusePaintResponse?.();
+      const status = message?.db_prompt_enhance_status;
+      if (Array.isArray(status) && status[0]) this._dbEnhanceRunStatus = status[0];
+      this._dbEnhancePaintResponse?.();
     };
 
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
       const result = onConfigure?.apply(this, arguments);
-      requestAnimationFrame(() => this._dbMuseRestorePreferences?.());
+      requestAnimationFrame(() => this._dbEnhanceRestorePreferences?.());
       return result;
     };
 
@@ -131,7 +144,10 @@ app.registerExtension({
       const node = this;
       node.color = DB_COLOR;
       node.bgcolor = DB_BGCOLOR;
-      node.size[0] = 420;
+      // Width is the shared control surface's job (DIRTYBIRDS_NODE_WIDTH in
+      // db_shared.js, applied by jsdirtybirds_surface.js). This node used to pin
+      // itself to 420px, which made it the one node in a DirtyBirds row that did
+      // not line up with the others.
 
       if (Array.isArray(node.inputs)) {
         for (let i = node.inputs.length - 1; i >= 0; i--) {
@@ -146,9 +162,9 @@ app.registerExtension({
       }
 
       const staleWidgets = new Set([
-        "db_muselabel",
-        "db_muse_model",
-        "db_muse_panel",
+        "db_enhance_label",
+        "db_enhance_model",
+        "db_enhance_panel",
       ]);
       if (Array.isArray(node.widgets)) {
         for (let i = node.widgets.length - 1; i >= 0; i--) {
@@ -166,35 +182,30 @@ app.registerExtension({
       const temperatureWidget = hideWidget("temperature");
       const maxTokensWidget = hideWidget("max_tokens");
       const promptFileWidget = hideWidget("prompt_file");
-      const backendWidget = hideWidget("backend");
-      hideWidget("model");
-      hideWidget("endpoint");
-      hideWidget("system");
-      hideWidget("style");
 
       let promptOptions = [];
 
       const panel = document.createElement("div");
-      panel.className = "db-muse-panel";
+      panel.className = "db-enhance-panel";
 
       const titleEl = makeSectionLabel("Prompt Enhance");
       const titleRow = document.createElement("div");
-      titleRow.className = "db-muse-title-row";
+      titleRow.className = "db-enhance-title-row";
       const power = makeButton();
       power.type = "button";
-      power.className = "db-muse-power";
+      power.className = "db-enhance-power";
       const powerKnob = document.createElement("span");
-      powerKnob.className = "db-muse-power-knob";
+      powerKnob.className = "db-enhance-power-knob";
       const powerText = document.createElement("span");
-      powerText.className = "db-muse-power-text";
+      powerText.className = "db-enhance-power-text";
       power.append(powerKnob, powerText);
       titleRow.append(titleEl, power);
       const split = document.createElement("div");
-      split.className = "db-muse-split";
+      split.className = "db-enhance-split";
       const leftCol = document.createElement("div");
-      leftCol.className = "db-muse-col";
+      leftCol.className = "db-enhance-col";
       const rightCol = document.createElement("div");
-      rightCol.className = "db-muse-col";
+      rightCol.className = "db-enhance-col";
       const divider = document.createElement("div");
       divider.className = "db-prompt-toybox-divider";
 
@@ -213,58 +224,12 @@ app.registerExtension({
       promptRow.append(promptTag, promptName, promptCaret);
 
       const lmStatus = document.createElement("div");
-      lmStatus.className = "db-lm-status db-muse-status";
+      lmStatus.className = "db-lm-status db-enhance-status";
       lmStatus.textContent = "LM Studio: checking";
 
       node.properties = node.properties || {};
 
-      function currentBackend() {
-        const key = String(
-          node.properties.db_muse_backend ||
-            backendWidget?.value ||
-            DB_MUSE_DEFAULT_BACKEND,
-        );
-        return DB_MUSE_BACKENDS[key] ? key : DB_MUSE_DEFAULT_BACKEND;
-      }
-      function backendInfo() {
-        return DB_MUSE_BACKENDS[currentBackend()];
-      }
-
-      const backendRow = document.createElement("div");
-      backendRow.className = "db-muse-mode-row db-muse-backend-row";
-      const backendButtons = Object.entries(DB_MUSE_BACKENDS).map(
-        ([key, info]) => {
-          const button = makeButton();
-          button.type = "button";
-          button.className = "db-lib-btn db-muse-mode-btn";
-          button.textContent = info.label;
-          button.title = info.endpoint;
-          button.addEventListener("click", () => setBackend(key));
-          backendRow.append(button);
-          return [key, button];
-        },
-      );
-
-      function paintBackend() {
-        const active = currentBackend();
-        for (const [key, button] of backendButtons) {
-          button.classList.toggle("db-active", key === active);
-          button.setAttribute(
-            "aria-pressed",
-            key === active ? "true" : "false",
-          );
-        }
-        promptTag.textContent = backendInfo().tag;
-      }
-
-      function setBackend(key) {
-        if (!DB_MUSE_BACKENDS[key]) return;
-        node.properties.db_muse_backend = key;
-        if (backendWidget) backendWidget.value = key;
-        paintBackend();
-        refreshLmStatus();
-        node.setDirtyCanvas(true, true);
-      }
+      promptTag.textContent = LM_STUDIO.tag;
 
       const tempRow = makeSliderRow(
         "TEMP",
@@ -278,7 +243,7 @@ app.registerExtension({
 
       const requestLabel = makeSectionLabel("Enhancement Instructions");
       const instructionArea = makeTextarea();
-      instructionArea.className = "db-script-textarea db-muse-textarea";
+      instructionArea.className = "db-script-textarea db-enhance-textarea";
       instructionArea.placeholder = "prompt writing request";
       instructionArea.value = instructionWidget?.value || "";
       instructionArea.spellcheck = false;
@@ -288,7 +253,7 @@ app.registerExtension({
       });
 
       const responseBox = makeTextarea();
-      responseBox.className = "db-script-textarea db-muse-response";
+      responseBox.className = "db-script-textarea db-enhance-response";
       responseBox.placeholder = "run the node to see the LM response";
       responseBox.spellcheck = false;
       responseBox.style.display = "none";
@@ -305,7 +270,7 @@ app.registerExtension({
 
       const generateBtn = makeButton();
       generateBtn.className =
-        "db-lib-btn db-lora-add-open-btn db-muse-send-btn";
+        "db-lib-btn db-lora-add-open-btn db-enhance-send-btn";
       generateBtn.textContent = "Enhance Prompt";
 
       const actionRow = document.createElement("div");
@@ -318,25 +283,25 @@ app.registerExtension({
 
       function paintPower() {
         const on = isEnabled();
-        panel.classList.toggle("db-muse-off", !on);
+        panel.classList.toggle("db-enhance-off", !on);
         power.classList.toggle("is-on", on);
         power.setAttribute("aria-pressed", on ? "true" : "false");
         powerText.textContent = on ? "On" : "Off";
         lmStatus.textContent = on
-          ? node._dbMuseLmStatus || `${backendInfo().label}: checking`
+          ? node._dbEnhanceLmStatus || `${LM_STUDIO.label}: checking`
           : "Prompt Enhance: off";
-        lmStatus.dataset.tone = on ? node._dbMuseLmTone || "" : "off";
+        lmStatus.dataset.tone = on ? node._dbEnhanceLmTone || "" : "off";
         promptRow.classList.toggle("db-disabled", !on);
         tempRow.classList.toggle("db-disabled", !on);
         tokenRow.classList.toggle("db-disabled", !on);
         instructionArea.disabled = !on;
-        generateBtn.disabled = !on || !!node._dbMuseGenerating;
+        generateBtn.disabled = !on || !!node._dbEnhanceGenerating;
         syncPanelH();
       }
 
       power.addEventListener("click", () => {
         if (enabledWidget) enabledWidget.value = !isEnabled();
-        node._dbMuseRunStatus = isEnabled() ? "" : "Prompt Enhance: off";
+        node._dbEnhanceRunStatus = isEnabled() ? "" : "Prompt Enhance: off";
         paintPower();
         node.setDirtyCanvas(true, true);
       });
@@ -359,15 +324,15 @@ app.registerExtension({
       }
 
       generateBtn.addEventListener("click", async () => {
-        if (!isEnabled() || node._dbMuseGenerating) return;
-        node._dbMuseGenerating = true;
-        node._dbMuseRunStatus = "Prompt Enhance: generating";
+        if (!isEnabled() || node._dbEnhanceGenerating) return;
+        node._dbEnhanceGenerating = true;
+        node._dbEnhanceRunStatus = "Prompt Enhance: generating";
         responseBox.value = "Generating prompt…";
         if (!responseSection.isExpanded()) responseSection.setExpanded(true);
         paintPower();
         try {
           const sourceText = wiredTextIn();
-          const response = await fetch("/dirtybirds/muse-generate", {
+          const response = await fetch("/dirtybirds/prompt-enhance-generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -377,47 +342,46 @@ app.registerExtension({
               temperature: Number(temperatureWidget?.value ?? 0.7),
               max_tokens: Number(maxTokensWidget?.value ?? 1024),
               prompt_file: promptFileWidget?.value || "",
-              backend: currentBackend(),
               text_in: sourceText,
             }),
           });
           const data = await response.json();
           if (!response.ok)
             throw new Error(data?.error || `HTTP ${response.status}`);
-          node._dbMusePositive = data?.positive || "";
-          node._dbMuseNegative = data?.negative || "";
-          node._dbMuseRunStatus = data?.status || "Prompt Enhance: on";
+          node._dbEnhancePositive = data?.positive || "";
+          node._dbEnhanceNegative = data?.negative || "";
+          node._dbEnhanceRunStatus = data?.status || "Prompt Enhance: on";
         } catch (error) {
-          node._dbMusePositive = "";
-          node._dbMuseNegative = "";
-          node._dbMuseRunStatus = `Prompt Enhance error: ${error?.message || error}`;
+          node._dbEnhancePositive = "";
+          node._dbEnhanceNegative = "";
+          node._dbEnhanceRunStatus = `Prompt Enhance error: ${error?.message || error}`;
         } finally {
-          node._dbMuseGenerating = false;
-          node._dbMusePaintResponse();
+          node._dbEnhanceGenerating = false;
+          node._dbEnhancePaintResponse();
           node.setDirtyCanvas(true, true);
         }
       });
 
-      node._dbMusePositive = node._dbMusePositive || "";
-      node._dbMuseNegative = node._dbMuseNegative || "";
+      node._dbEnhancePositive = node._dbEnhancePositive || "";
+      node._dbEnhanceNegative = node._dbEnhanceNegative || "";
       responseBox.addEventListener("input", () => {
         const text = responseBox.value || "";
         const positiveMatch = text.match(
           /(?:^|\n)POSITIVE:\s*([\s\S]*?)(?=\n\s*NEGATIVE:|$)/i,
         );
         const negativeMatch = text.match(/(?:^|\n)NEGATIVE:\s*([\s\S]*)$/i);
-        node._dbMusePositive = (positiveMatch ? positiveMatch[1] : text).trim();
-        node._dbMuseNegative = (negativeMatch?.[1] || "").trim();
+        node._dbEnhancePositive = (positiveMatch ? positiveMatch[1] : text).trim();
+        node._dbEnhanceNegative = (negativeMatch?.[1] || "").trim();
         paintPower();
       });
-      node._dbMusePaintResponse = function () {
-        const pos = node._dbMusePositive || "";
-        const neg = node._dbMuseNegative || "";
+      node._dbEnhancePaintResponse = function () {
+        const pos = node._dbEnhancePositive || "";
+        const neg = node._dbEnhanceNegative || "";
         responseBox.value = neg
           ? `POSITIVE:\n${pos}\n\nNEGATIVE:\n${neg}`
           : pos;
-        if (node._dbMuseRunStatus && !pos && !neg)
-          responseBox.value = node._dbMuseRunStatus;
+        if (node._dbEnhanceRunStatus && !pos && !neg)
+          responseBox.value = node._dbEnhanceRunStatus;
         // The response box lives in a section that starts collapsed. Auto-open
         // it whenever there's anything to show — an enhanced prompt or an error
         // status — so the result is visible without expanding "LM Response" by
@@ -449,7 +413,7 @@ app.registerExtension({
       }
 
       async function loadPromptOptions() {
-        const data = await fetchJSON("/dirtybirds/muse-prompts");
+        const data = await fetchJSON("/dirtybirds/prompt-enhance-prompts");
         promptOptions = data?.prompts || [];
         if (!promptFileWidget?.value && promptOptions[0]) {
           promptFileWidget.value = promptOptions[0].file;
@@ -462,25 +426,22 @@ app.registerExtension({
           paintPower();
           return;
         }
-        const info = backendInfo();
-        node._dbMuseLmStatus = `${info.label}: checking`;
-        lmStatus.textContent = node._dbMuseLmStatus;
+        const info = LM_STUDIO;
+        node._dbEnhanceLmStatus = `${info.label}: checking`;
+        lmStatus.textContent = node._dbEnhanceLmStatus;
         lmStatus.dataset.tone = "";
         const data = await fetchJSON(
           "/dirtybirds/lm-models?endpoint=" + encodeURIComponent(info.endpoint),
         );
-        // A slow toggle can leave a stale response in flight; ignore it if the
-        // user switched backends before this fetch resolved.
-        if (backendInfo() !== info) return;
         const models = data?.models || [];
         if (models.length) {
-          node._dbMuseLmStatus = `${info.label}: ready`;
+          node._dbEnhanceLmStatus = `${info.label}: ready`;
           lmStatus.title = models[0];
-          node._dbMuseLmTone = "ok";
+          node._dbEnhanceLmTone = "ok";
         } else {
-          node._dbMuseLmStatus = `${info.label}: offline`;
+          node._dbEnhanceLmStatus = `${info.label}: offline`;
           lmStatus.title = data?.error || `No model served at ${info.endpoint}`;
-          node._dbMuseLmTone = "err";
+          node._dbEnhanceLmTone = "err";
         }
         paintPower();
       }
@@ -500,7 +461,7 @@ app.registerExtension({
         );
       });
 
-      leftCol.append(promptRow, backendRow, lmStatus);
+      leftCol.append(promptRow, lmStatus);
       rightCol.append(tempRow, tokenRow);
       split.append(leftCol, divider, rightCol);
       panel.append(
@@ -514,21 +475,22 @@ app.registerExtension({
       );
 
       const panelWidget = node.addDOMWidget(
-        "db_muse_panel",
+        "db_enhance_panel",
         "customhtml",
         panel,
         {
           serialize: false,
-          getMinHeight: () => {
-            const responseH = responseSection.isExpanded() ? 90 : 0;
-            return 210 + responseH;
-          },
+          getMinHeight: () =>
+            reserveHeight(
+              ENHANCE_PANEL_H +
+                (responseSection.isExpanded() ? ENHANCE_RESPONSE_H : 0),
+            ),
         },
       );
 
       function makeSliderRow(label, widget, min, max, step, fmt) {
         const row = document.createElement("div");
-        row.className = "db-slider-row db-muse-control-row";
+        row.className = "db-slider-row db-enhance-control-row";
         const lbl = document.createElement("span");
         lbl.className = "db-slider-label";
         lbl.textContent = label;
@@ -557,13 +519,13 @@ app.registerExtension({
 
       function makeStepperRow(label, widget, min, max, step) {
         const row = document.createElement("div");
-        row.className = "db-slider-row db-muse-control-row";
+        row.className = "db-slider-row db-enhance-control-row";
         const lbl = document.createElement("span");
         lbl.className = "db-slider-label";
         lbl.textContent = label;
         const input = makeInput();
         input.type = "number";
-        input.className = "db-text-input db-muse-token-input";
+        input.className = "db-text-input db-enhance-token-input";
         input.min = String(min);
         input.max = String(max);
         input.step = String(step);
@@ -594,26 +556,14 @@ app.registerExtension({
       };
       node.resizable = true;
       node.min_height = 280;
-      node._dbMuseRestorePreferences = () => {
-        // A saved workflow may carry the backend on the widget; mirror it into
-        // the property the toggle reads from.
-        if (!node.properties.db_muse_backend && backendWidget?.value) {
-          node.properties.db_muse_backend = backendWidget.value;
-        }
-        paintBackend();
+      node._dbEnhanceRestorePreferences = () => {
         refreshLmStatus();
       };
 
-      if (!node.properties.db_muse_backend) {
-        node.properties.db_muse_backend =
-          backendWidget?.value || DB_MUSE_DEFAULT_BACKEND;
-      }
-      if (backendWidget) backendWidget.value = currentBackend();
-      paintBackend();
       loadPromptOptions();
       refreshLmStatus();
       paintPower();
-      node._dbMusePaintResponse();
+      node._dbEnhancePaintResponse();
       requestAnimationFrame(syncPanelH);
     };
   },

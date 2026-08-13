@@ -12,6 +12,7 @@ import {
   makeSelect,
   makeSlider,
   nodeInnerW,
+  reserveHeight,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -203,8 +204,8 @@ app.registerExtension({
 
       node.addDOMWidget("db_finish_panel", "customhtml", panel, {
         serialize: false,
-        height: PANEL_H,
-        getMinHeight: () => PANEL_H,
+        height: reserveHeight(PANEL_H),
+        getMinHeight: () => reserveHeight(PANEL_H),
       });
 
       // Click-to-flip Before/After, shared with 🖌️ Inpainting.

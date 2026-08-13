@@ -22,6 +22,7 @@ import {
   makeButton,
   makeTextarea,
   makeSegment,
+  reserveHeight,
 } from "./db_shared.js";
 import {
   REFRESH,
@@ -720,6 +721,17 @@ app.registerExtension({
         node.setDirtyCanvas(true, true);
       };
       // ── Booru / Caption tools ───────────────────────────────────────────
+      function absolutize(u) {
+        // The caption/booru routes fetch the image server-side with urllib,
+        // which cannot open a root-relative "/view?..." path.
+        if (!u) return "";
+        try {
+          return new URL(u, window.location.origin).href;
+        } catch (e) {
+          return u;
+        }
+      }
+
       function currentImageUrl() {
         const peepShow = (app.graph?._nodes || []).find(
           (n) =>
@@ -729,12 +741,14 @@ app.registerExtension({
         if (!peepShow) return "";
         const urlW = peepShow.widgets?.find((w) => w.name === "image_url");
         const u = String(urlW?.value || "").trim();
-        if (u) return u;
+        if (u) return absolutize(u);
         const imageW = peepShow.widgets?.find((w) => w.name === "image");
         const filename = String(imageW?.value || "").trim();
         if (filename)
-          return `/view?filename=${encodeURIComponent(filename)}&type=input`;
-        return String(peepShow.imgs?.[0]?.src || "").trim();
+          return absolutize(
+            `/view?filename=${encodeURIComponent(filename)}&type=input`,
+          );
+        return absolutize(String(peepShow.imgs?.[0]?.src || "").trim());
       }
 
       const booruBtn = makeButton();
@@ -991,7 +1005,7 @@ app.registerExtension({
 
       // ── Seed mode (Fixed / Random) — visible toggle under The Prompt ──────
       // Reuses the global .db-seg control. Random = reroll_each_run on (fresh
-      // roll every queue); Fixed = reproducible seed shown to the right.
+      // roll every queue); Fixed = a reproducible seed, readable on the tooltip.
       const seedRow = document.createElement("div");
       seedRow.className = "db-prompt-seed-row";
       seedRow.style.cssText += "display:flex;align-items:center;gap:8px;";
@@ -1019,14 +1033,13 @@ app.registerExtension({
       seedLast.textContent = "Last";
       seedLast.style.cssText = "padding:0 2px;font-size:9px;min-width:0;";
       seedSeg.append(seedNewFixed, seedRandom, seedLast);
-      const seedVal = document.createElement("span");
-      seedVal.className = "db-sel-val";
-      // .db-sel-val is a 28px numeric column; this holds words ("re-rolls each
-      // run", "last: 1234…"), so let it take the leftover width on one line
-      // instead of wrapping into a four-line stack. The row's title has the full text.
-      seedVal.style.cssText =
-        "flex:1 1 auto;width:auto;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-      seedRow.append(seedLbl, seedSeg, seedVal);
+      // No readout element here. The three buttons already say which mode is
+      // active, and this column is only wide enough for them once they stopped
+      // clipping their own labels — a "re-rolls each run" span beside them either
+      // got cut, or wrapped under the row below and sat behind the Roll/Step
+      // controls. The seed itself stays available on the row's tooltip and on
+      // Last's own tooltip.
+      seedRow.append(seedLbl, seedSeg);
       seedRandom.addEventListener("click", () => setSeedMode("random"));
       seedNewFixed.addEventListener("click", () => {
         if (seedWidget) seedWidget.value = randomSeedValue();
@@ -1052,13 +1065,13 @@ app.registerExtension({
         seedLast.title = hasLast
           ? `Use last queued seed: ${node._dbLastQueuedSeed}`
           : "No queued seed is available yet";
-        seedVal.textContent = isRandom
-          ? Number.isFinite(node._dbLastQueuedSeed)
-            ? `last: ${node._dbLastQueuedSeed}`
-            : "re-rolls each run"
-          : String(seedWidget?.value ?? "");
+        // The row tooltip is where the seed lives now that the readout is gone,
+        // so it has to carry the last queued seed too — that was the one thing
+        // the old span said which this did not.
         seedRow.title = isRandom
-          ? "Seed: different each run"
+          ? hasLast
+            ? `Seed: different each run · last queued ${node._dbLastQueuedSeed}`
+            : "Seed: different each run"
           : `Fixed seed: ${seedWidget?.value ?? ""}`;
       };
 
@@ -1216,7 +1229,9 @@ app.registerExtension({
         {
           serialize: false,
           getMinHeight: () =>
-            DB_PANEL_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),
+            reserveHeight(
+              DB_PANEL_MIN_H + (toyboxExpanded ? DB_TOYBOX_EXPANDED_H : 0),
+            ),
           afterResize: (resizedNode) => {
             applyWidths();
             applyEditorHeight(resizedNode.size?.[1] || DB_MIN_H);

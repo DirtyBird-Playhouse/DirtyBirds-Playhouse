@@ -29,10 +29,10 @@ EXPECTED_NODES = {
     "DirtyBirdsPrompt",
     "DirtyBirdsLoadImage",
     "DirtyBirdsSampler",
-    "DirtyBirdsMuse",
+    "DirtyBirdsPromptEnhance",
     "DirtyBirdsPipeIn",
     "DirtyBirdsPipeOut",
-    "DirtyBirdsWardrobe",
+    "DirtyBirdsTriggerWords",
     "DirtyBirdsSavePrompt",
     "DirtyBirdsInpaint",
     # DirtyBirdsFixer was retired; face restore, upscale and sharpen became the

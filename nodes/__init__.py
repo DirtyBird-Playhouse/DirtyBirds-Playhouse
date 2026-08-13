@@ -2,7 +2,7 @@
 
 Imports and merges NODE_CLASS_MAPPINGS from every node package, then imports the
 side-effect ``folders`` module for route registration. (The booru tag fetcher is
-a widget of the prompt/Dirty Talk node and registers its route from there.)
+a widget of the prompt/Prompt Builder node and registers its route from there.)
 
 Each package is imported defensively: if one fails to load — most likely because
 an optional dependency is missing (e.g. Inpainting's facexlib / spandrel_extra_arches
@@ -26,9 +26,9 @@ _NODE_PACKAGES = (
     "prompt",
     "image",
     "sampler",
-    "muse",
+    "prompt_enhance",
     "pipe",
-    "wardrobe",
+    "trigger_words",
     "saveprompt",
     "inpaint",
     "finish",

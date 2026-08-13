@@ -131,3 +131,131 @@ def test_trigger_word_sets_are_kept_whole():
     # Spacing is tidied inside a set, blanks dropped, duplicate sets removed.
     assert backend._split_trigger_words(["a ,  b ,, c", "a, b, c"]) == ["a, b, c"]
     assert backend._split_trigger_words([]) == []
+
+
+# --------------------------------------------------------------------------- #
+# 3. LoRA trigger words must not echo the filename
+# --------------------------------------------------------------------------- #
+def test_lora_trigger_words_never_come_from_ss_output_name():
+    """`ss_output_name` is kohya's training OUTPUT FILENAME, not a trigger word.
+
+    It sat in the safetensors-header fallback list, so a LoRA with no sidecar and
+    no Civitai entry got a "trigger word" that was just its own filename minus
+    the hash suffix ("Bondage_garrote-0aae" -> "Bondage_garrote"). Every such chip
+    arrives ticked ON and is appended to the positive prompt.
+
+    Measured against comfyui-lora-manager over all 270 installed LoRAs: it fired
+    on 116. After removal, the two agree exactly — 124 matching, 0 disagreements,
+    and neither side holds words the other lacks.
+    """
+    source = read_source(REPO_ROOT / "nodes" / "loader" / "library_backend.py")
+    # The quoted form is the field lookup. The name still appears unquoted in the
+    # comment above that list explaining why it was removed.
+    assert '"ss_output_name"' not in source
+    # The genuine trained-word header fields stay.
+    for field in ("activation text", "trigger_phrase", "modelspec.trigger_phrase"):
+        assert field in source
+
+
+# --------------------------------------------------------------------------- #
+# 4. Prompt Enhance talks to LM Studio only
+# --------------------------------------------------------------------------- #
+def test_prompt_enhance_has_no_backend_switch():
+    """KoboldCpp was removed: LM Studio is the only backend.
+
+    The node carried a `backend` widget and a two-button switcher whose second
+    option was never used. Removing it also removes the whole notion of a
+    per-backend endpoint/label, so nothing has to stay in step between the two
+    sides any more.
+    """
+    backend = read_source(REPO_ROOT / "nodes" / "prompt_enhance" / "__init__.py")
+    frontend = read_source(REPO_ROOT / "web" / "jsdirtybirds_prompt_enhance.js")
+    css = read_source(REPO_ROOT / "web" / "css" / "style.css")
+
+    for source in (backend, frontend, css):
+        assert "kobold" not in source.lower()
+    # No backend selector on either side.
+    assert '"backend"' not in backend
+    assert "BACKENDS" not in backend
+    assert "_resolve_backend" not in backend
+    assert "currentBackend" not in frontend
+    assert "db-enhance-backend-row" not in css
+    # The single endpoint survives, named once per side.
+    assert 'DEFAULT_ENDPOINT = "http://localhost:1234/v1"' in backend
+    assert "const LM_STUDIO" in frontend
+
+
+# --------------------------------------------------------------------------- #
+# 5. Trigger Words chips must keep toggling after "Send to Prompt Builder"
+# --------------------------------------------------------------------------- #
+def test_trigger_words_send_does_not_orphan_the_chip_handlers():
+    """`activeText()` must not re-parse the chip JSON.
+
+    `restoreChips()` rebinds `chips` to freshly parsed objects. Every chip's
+    click/dblclick/contextmenu handler closed over the PREVIOUS objects, so once
+    `activeText()` ran the handlers were mutating entries the array no longer
+    held and `serialize()` wrote the untouched new array back. Observed live:
+    chips toggled true->false->true normally, then after one press of "Send to
+    Prompt Builder" every chip stopped toggling for the rest of the session,
+    with no error.
+
+    `chips` is already authoritative — every mutation calls serialize() — so the
+    restore was never needed here. renderChips() still restores, because it
+    rebuilds the handlers against the new objects in the same breath.
+    """
+    source = read_source(REPO_ROOT / "web" / "jsdirtybirds_trigger_words.js")
+    active = source.split("function activeText()", 1)[1].split("}", 1)[0]
+    assert "restoreChips()" not in active
+    # The one safe caller keeps it: it re-renders immediately afterwards.
+    render = source.split("function renderChips()", 1)[1]
+    assert "restoreChips();" in render.split("panel.innerHTML", 1)[0]
+
+
+# --------------------------------------------------------------------------- #
+# 6. The "Custom Nodes" folder button must open ComfyUI's custom_nodes
+# --------------------------------------------------------------------------- #
+def test_custom_nodes_folder_comes_from_comfyui_not_from_our_parent():
+    r"""`dirname(pack_root())` is only custom_nodes when the pack lives there.
+
+    This install (and the layout AGENTS.md documents) has
+    custom_nodes/DirtyBirds-Playhouse as a SYMLINK to a separate source
+    workspace, so pack_root() resolves to the workspace and its parent is an
+    unrelated folder. Measured live: the button opened
+    C:\Users\mpick\My_AI_Tools instead of ...\ComfyUI\custom_nodes.
+    """
+    source = read_source(REPO_ROOT / "nodes" / "folders" / "__init__.py")
+    assert 'folder_paths.get_folder_paths("custom_nodes")' in source
+    # The old derivation must not be what the allow-list returns.
+    allow = source.split("def _known_folders()", 1)[1]
+    assert "os.path.dirname(_NODE_DIR)" not in allow
+
+
+# --------------------------------------------------------------------------- #
+# 7. Narrowing a combo must not orphan values already saved in workflows
+# --------------------------------------------------------------------------- #
+def test_loader_accepts_a_vae_name_the_combo_no_longer_offers():
+    """`vae_name` used to be a hardcoded ``[BAKED_VAE, ""]``.
+
+    Graphs saved against that build serialized ``vae_name: ""`` — invisibly,
+    because the widget is hidden. Rebuilding the list from the real models/vae
+    listing removed ``""`` from it, and ComfyUI's combo check then refused to
+    queue those graphs at all: "Value not in list".
+
+    Naming `vae_name` in VALIDATE_INPUTS' signature is what makes ComfyUI skip
+    its built-in check for that ONE input (execution.py gates the whole
+    value_not_in_list block on `x not in validate_function_inputs`). Verified
+    against the real validator: '' / 'Baked VAE' / a real VAE / a deleted VAE all
+    validate, while bad ckpt_name, workflow and seed_mode are still rejected.
+    """
+    import inspect
+
+    source = read_source(REPO_ROOT / "nodes" / "loader" / "__init__.py")
+    assert "def VALIDATE_INPUTS(cls, vae_name" in source
+    # Built from the real listing; the blank option must NOT come back, since it
+    # is what created the orphan value in the first place. Matched on the combo
+    # declaration itself — the retired literal is still quoted in the docstring
+    # above, which is exactly where it belongs.
+    assert '"vae_name": ([BAKED_VAE, *_vae_options()]' in source
+    assert '"vae_name": ([BAKED_VAE, ""]' not in source
+    # process() must still treat a blank/unknown name as "use the baked VAE".
+    assert 'if vae_name and vae_name != BAKED_VAE:' in source

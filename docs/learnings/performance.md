@@ -13,7 +13,7 @@ tensor work, and UI responsiveness, not web request throughput.
   unchanged (big win for expensive nodes).
 - Release large intermediates; mind VRAM on the RTX 4060 Ti 16GB target.
 
-## LLM (Muse / LM Studio)
+## LLM (Prompt Enhance / LM Studio)
 
 - Vision tokens scale with image resolution; uncapped high-res images can
   overflow context and slow generation. Resize or cap image size (in the LM

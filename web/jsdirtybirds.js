@@ -17,6 +17,7 @@ import {
   hideWidget as hideWidgetShared,
   makeSectionLabel,
   makeCollapsibleSectionLabel,
+  reserveHeight,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -328,12 +329,19 @@ function showResolutionPicker(dimensions, current, onPick, onCustom, onEdit) {
 // the LoRAs section entirely at the default width. The ~30px saved is not worth
 // a section disappearing.
 const PANEL_BASE_HEIGHT = 356;
-const EMBED_CARD_BASE_H = 86; // enable + picker + weight box, no preview (incl. top accent)
+// label 13 + controls 26 + weights 26 + three 5px gaps + 6px top accent = 98,
+// re-measured in a live ComfyUI with the section expanded. Was 86, which clipped
+// the bottom of the weight boxes once Embeddings was opened.
+const EMBED_CARD_BASE_H = 98; // enable + picker + weight box, no preview (incl. top accent)
 const EMBED_PREVIEW_H = 74; // added once if either slot reserves a 64px preview
 const LORA_SECTION_BASE_H = 70; // "Selected"/"Trigger Words" labels + add-row chrome
 const LORA_EMPTY_H = 33; // the "No LoRAs selected" placeholder, which is not a row
-const LORA_ROW_H = 118; // thumb(64) + name line + weights row + padding/gap, measured
-const LORA_ROW_CAP = 4; // beyond this the list scrolls instead of growing (4 * 118 = 472px, matches the CSS max-height)
+// Row PITCH, not row height: a row measures 124px and the list puts a 5px gap
+// after it. Was 118, which under-reserved by 11px per row — one row hid inside
+// the panel's slack, but three clipped 14px off the bottom of the LoRA list.
+// Re-measured in a live ComfyUI with three LoRAs selected.
+const LORA_ROW_H = 129; // thumb(64) + name line + weights row + padding + 5px gap
+const LORA_ROW_CAP = 4; // beyond this the list scrolls instead of growing (4 * 129 = 516px, matches the CSS max-height)
 // A trigger chip is a whole trigger set now, not one word, so the text wraps to
 // two lines in this column — measured at 40px plus the 5px gap.
 const TRIGGER_ROW_H = 48;
@@ -420,7 +428,7 @@ function field(label, control, valueElement = null) {
 }
 
 // Centered "═ TITLE ▸ expand ═" heading — the same convention every other
-// DirtyBirds node uses for its optional sections (Muse, Image Loader, Save
+// DirtyBirds node uses for its optional sections (Prompt Enhance, Image Loader, Save
 // Prompt). Only the label markup is reused here, not `addCollapsibleTitle`:
 // this node's sections stay plain children of the single owning panel widget,
 // with height driven by `state`/`applyLayout`, not a widget of their own.
@@ -519,7 +527,7 @@ function setupGenerationNode(node) {
     panel,
     {
       serialize: false,
-      getMinHeight: () => currentPanelHeight(),
+      getMinHeight: () => reserveHeight(currentPanelHeight()),
       afterResize: (resizedNode) => syncPanelWidth(resizedNode),
     },
   );
@@ -589,7 +597,7 @@ function setupGenerationNode(node) {
     const currentWidth = node.size?.[0] || 0;
     const currentHeight = node.size?.[1] || 0;
     const targetWidth = currentWidth;
-    panelWidget.computedHeight = panelHeight;
+    panelWidget.computedHeight = reserveHeight(panelHeight);
     panel.style.height = `${panelHeight}px`;
     syncPanelWidth(node);
     const minimumHeight = naturalNodeHeight(panelHeight);

@@ -1,9 +1,15 @@
 """
-DirtyBirds Playhouse — The Wardrobe node (formerly "Pillow Talk").
+DirtyBirds Playhouse — 👗 Trigger Words node.
 
 Pick LoRAs and toggle their trigger words on/off. The active words are pushed
-straight into the Dirty Talk positive prompt via the node's "Send to Dirty
-Talk" button — no output wiring required.
+straight into the Prompt Builder positive prompt by the node's "Send to Prompt
+Builder" button — no output wiring required.
+
+That push happens entirely in the browser (web/jsdirtybirds_trigger_words.js),
+so this module has no outputs and nothing downstream depends on it. It exists so
+the chip state has a widget to live in and a node to be saved with; ``build``
+only reports what is active. Do not add a STRING output here expecting the words
+to travel by wire — they never have.
 
 This node does NOT load LoRA weights — it only manages trigger words. Weight
 loading stays in the Loader, so you can mix-and-match trigger-word sets without
@@ -22,7 +28,7 @@ def _active_trigger_words(trigger_words_data="[]"):
     try:
         chips = json.loads(trigger_words_data or "[]")
     except Exception as e:
-        logger.warning("[DirtyBirds] The Wardrobe: bad trigger_words_data (%s)", e)
+        logger.warning("[DirtyBirds] Trigger Words: bad trigger_words_data (%s)", e)
         chips = []
 
     words, seen = [], set()
@@ -36,8 +42,8 @@ def _active_trigger_words(trigger_words_data="[]"):
     return words
 
 
-class DirtyBirdsWardrobe:
-    """Emit selected LoRA trigger words as a prompt-ready STRING."""
+class DirtyBirdsTriggerWords:
+    """Hold the LoRA trigger-word chip state; the UI sends it to Prompt Builder."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -61,9 +67,9 @@ class DirtyBirdsWardrobe:
 
     def build(self, trigger_words_data="[]"):
         words = _active_trigger_words(trigger_words_data)
-        logger.info("[DirtyBirds] The Wardrobe -> %d active trigger words", len(words))
+        logger.info("[DirtyBirds] Trigger Words -> %d active trigger words", len(words))
         return ()
 
 
-NODE_CLASS_MAPPINGS = {"DirtyBirdsWardrobe": DirtyBirdsWardrobe}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsWardrobe": "👗 Trigger Words"}
+NODE_CLASS_MAPPINGS = {"DirtyBirdsTriggerWords": DirtyBirdsTriggerWords}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsTriggerWords": "👗 Trigger Words"}

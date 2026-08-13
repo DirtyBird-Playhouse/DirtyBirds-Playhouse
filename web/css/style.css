@@ -615,7 +615,7 @@
   font-weight: 700;
 }
 
-/* ── Dirty Talk — compact script panel ──────────────────────────────────── */
+/* ── Prompt Builder — compact script panel ──────────────────────────────────── */
 .db-script-panel {
   display: flex;
   flex-direction: column;
@@ -871,7 +871,7 @@
   color: #e06c6c;
 }
 
-.db-muse-panel {
+.db-enhance-panel {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -881,23 +881,23 @@
   padding: 0;
 }
 
-.db-muse-panel .db-section-label {
+.db-enhance-panel .db-section-label {
   height: 16px;
   min-height: 16px;
   flex: 0 0 16px;
 }
 
-.db-muse-title-row {
+.db-enhance-title-row {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.db-muse-title-row .db-section-label {
+.db-enhance-title-row .db-section-label {
   flex: 1;
 }
 
-.db-muse-power {
+.db-enhance-power {
   width: 58px;
   height: 24px;
   border: 1px solid #34343a;
@@ -915,7 +915,7 @@
   box-sizing: border-box;
 }
 
-.db-muse-power-knob {
+.db-enhance-power-knob {
   width: 16px;
   height: 16px;
   border-radius: 50%;
@@ -926,32 +926,32 @@
   flex-shrink: 0;
 }
 
-.db-muse-power.is-on {
+.db-enhance-power.is-on {
   border-color: rgba(90, 204, 138, 0.45);
   background: rgba(90, 204, 138, 0.12);
   color: #8adfb0;
 }
 
-.db-muse-power.is-on .db-muse-power-knob {
+.db-enhance-power.is-on .db-enhance-power-knob {
   background: #5acc8a;
   transform: translateX(23px);
 }
 
-.db-muse-power.is-on .db-muse-power-text {
+.db-enhance-power.is-on .db-enhance-power-text {
   transform: translateX(-18px);
 }
 
-.db-muse-off .db-muse-textarea,
-.db-muse-off .db-muse-control-row,
-.db-muse-off .db-sel-row.db-disabled {
+.db-enhance-off .db-enhance-textarea,
+.db-enhance-off .db-enhance-control-row,
+.db-enhance-off .db-sel-row.db-disabled {
   opacity: 0.45;
 }
 
-.db-muse-off .db-muse-textarea {
+.db-enhance-off .db-enhance-textarea {
   cursor: not-allowed;
 }
 
-.db-muse-split {
+.db-enhance-split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
   gap: 6px;
@@ -960,63 +960,63 @@
   align-items: start;
 }
 
-.db-muse-col {
+.db-enhance-col {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
 }
 
-.db-muse-status {
+.db-enhance-status {
   width: 100%;
 }
 
-.db-muse-status[data-tone="off"] {
+.db-enhance-status[data-tone="off"] {
   color: #888;
   border-color: #34343a;
 }
 
-.db-muse-control-row {
+.db-enhance-control-row {
   height: 26px;
   min-height: 26px;
   margin: 0;
   gap: 6px;
 }
 
-.db-muse-control-row .db-slider-label {
+.db-enhance-control-row .db-slider-label {
   flex: 0 0 42px;
 }
 
-.db-muse-control-row .db-sel-slider {
+.db-enhance-control-row .db-sel-slider {
   min-width: 0;
 }
 
-.db-muse-token-input {
+.db-enhance-token-input {
   width: 100%;
   min-width: 0;
   height: 24px;
   flex: 1;
 }
 
-.db-muse-textarea {
+.db-enhance-textarea {
   height: 64px;
   min-height: 64px;
   max-height: 64px;
 }
 
-.db-muse-response {
+.db-enhance-response {
   height: 80px;
   min-height: 80px;
   max-height: 80px;
   color: #c9d7df;
 }
 
-.db-muse-response:focus {
+.db-enhance-response:focus {
   border-color: #5aadff;
   box-shadow: 0 0 0 1px rgba(90, 173, 255, 0.18);
 }
 
-.db-muse-send-btn {
+.db-enhance-send-btn {
   width: 100%;
   height: 26px;
   min-height: 26px;
@@ -1231,32 +1231,6 @@
 }
 .db-url-tools-status[data-tone="err"] {
   color: #e06c6c;
-}
-
-.db-muse-mode-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
-  width: 100%;
-}
-
-.db-muse-backend-row {
-  margin: 4px 0 2px;
-}
-
-.db-muse-mode-btn {
-  height: 24px;
-  min-width: 0;
-  margin: 0;
-  padding: 0 5px;
-  color: #89939b;
-  font-size: 9px;
-}
-
-.db-muse-mode-btn.db-active {
-  border-color: #5aadff;
-  color: #78bdff;
-  background: rgba(90, 173, 255, 0.12);
 }
 
 /* Embedding slot color-coded accents (positive/negative visual distinction) */
@@ -1515,7 +1489,11 @@
 
 .db-prompt-primary-row .db-seg {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* max-content floor: equal 1fr columns shrank every option to the width of
+     the narrowest, so "Random" lost 8px and "Fixed" 2px to the ellipsis. A
+     button that cannot show its own label is not a button. Columns still share
+     any spare width equally. */
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
   flex: 1 1 auto !important;
   width: auto;
   min-width: 0;
@@ -1523,7 +1501,7 @@
 }
 
 .db-prompt-primary-row .db-seg-opt {
-  min-width: 0;
+  /* No min-width:0 here — that is what allowed the label to be clipped. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1821,7 +1799,13 @@
 .db-pick-card img {
   display: block;
   width: 100%;
-  height: auto;
+  /* Bounded. With height:auto a portrait 832x1216 result rendered ~480px tall
+     inside a widget that reserved 96, so the images ran past the bottom of the
+     node and the Output heading, the two mode buttons and the Pick Timeout row
+     were drawn on top of them. Click a thumbnail for full size. */
+  height: 150px;
+  object-fit: contain;
+  background: #0d0d0f;
 }
 .db-pick-badge {
   position: absolute;
@@ -2259,7 +2243,8 @@
   gap: 7px;
 }
 .db-generation-lora-list {
-  max-height: 472px;
+  /* LORA_ROW_CAP * LORA_ROW_H in jsdirtybirds.js (4 * 129). Change both. */
+  max-height: 516px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2512,7 +2497,12 @@
 }
 .db-generation-picker-card {
   position: relative;
-  aspect-ratio: 1 / 1;
+  /* The thumbnail stays square; the CARD grows for however many lines the name
+     needs. It used to be aspect-ratio:1/1 with the label absolutely positioned
+     over the bottom, so a long name ran off the top of the card and was cut by
+     overflow:hidden — you cannot pick a model by a name you cannot read. */
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   padding: 0;
   border: 2px solid transparent;
@@ -2524,10 +2514,13 @@
   border-color: #58b8f1;
 }
 .db-generation-picker-media {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
+  overflow: hidden;
   color: #66717a;
   font-size: 9px;
 }
@@ -2538,16 +2531,20 @@
   object-fit: cover;
 }
 .db-generation-picker-label {
-  position: absolute;
-  inset: auto 0 0;
-  padding: 18px 6px 6px;
+  position: static;
+  flex: 1 1 auto;
+  padding: 5px 6px 6px;
   color: white;
   font-size: 10px;
   text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.9));
+  /* Wrap to two lines instead of ellipsing. This is the grid you pick a model
+     BY NAME in, and one line cut "realityBoundxl_indigoBoldV12" down to
+     "realityBoundxl_indigo…" — indistinguishable from its siblings. Long names
+     break mid-word because model filenames have no spaces to break on. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+  background: rgba(0, 0, 0, 0.55);
 }
 .db-generation-picker-empty {
   padding: 20px;

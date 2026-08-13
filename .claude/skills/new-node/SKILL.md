@@ -13,9 +13,9 @@ is the usual reason a new node doesn't appear in the menu.
 
 If not given in the invocation, ask for:
 
-1. **Class name** — `DirtyBirds<Thing>`, e.g. `DirtyBirdsWardrobe`.
-2. **Package name** — lowercase dir under `nodes/`, e.g. `wardrobe`.
-3. **Menu label** — with emoji, matching the house style (`📤 Pipe Out`, `👗 Wardrobe`).
+1. **Class name** — `DirtyBirds<Thing>`, e.g. `DirtyBirdsTriggerWords`.
+2. **Package name** — lowercase dir under `nodes/`, e.g. `trigger_words`.
+3. **Menu label** — with emoji, matching the house style (`📤 Pipe Out`, `👗 Trigger Words`).
 4. **What it does** — one sentence, plus its inputs and outputs if known.
 
 Don't guess the label or the emoji. Ask.

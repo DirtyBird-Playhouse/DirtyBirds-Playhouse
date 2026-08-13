@@ -435,7 +435,15 @@ app.registerExtension({
       batchBtn.className = "db-lib-btn db-lora-add-open-btn";
       batchBtn.style.cssText =
         "height:24px;min-height:24px;padding:0 8px;font-size:11px;width:100%;box-sizing:border-box;";
-      let _batchOn = !!batchModeWidget?.value;
+      // Read the widget, every time. This was a `let _batchOn` copy taken here,
+      // at node creation — which runs BEFORE ComfyUI restores a saved
+      // workflow's widget values. Loading a graph saved with batch_mode on left
+      // the copy at its default false, so the button painted "Pick Image: ON"
+      // while the queued prompt carried batch_mode true and
+      // should_bypass_picker() skipped the picker: the label promised a picker
+      // that could never appear. overlayOn() was already a live read; this now
+      // matches it, and the widget is the single source of truth.
+      const batchOn = () => !!batchModeWidget?.value;
       // The two buttons ARE the decision: Batch mode or Text Overlay turns the
       // picker off. Nothing else is consulted — not whether cycler_line is
       // wired, not what the Cycler contains. Python applies the same rule in
@@ -445,7 +453,7 @@ app.registerExtension({
         !!(node.inputs || []).find((slot) => slot?.name === "cycler_line")
           ?.link;
       const overlayOn = () => !!overlayWidget?.value;
-      const pickerOff = () => _batchOn || overlayOn();
+      const pickerOff = () => batchOn() || overlayOn();
       function paintBatchMode() {
         const off = pickerOff();
         batchBtn.textContent = off ? "Pick Image: OFF" : "Pick Image: ON";
@@ -453,7 +461,7 @@ app.registerExtension({
         batchBtn.classList.toggle("db-active", !off);
         batchBtn.title = !off
           ? ""
-          : (_batchOn
+          : (batchOn()
               ? "Batch mode is on, so every image is kept — there is nothing to pick."
               : "Text Overlay is on with a cycler line, so every captioned image is kept — there is nothing to pick.") +
             " Finish and Save Image & Prompt downstream of this node are muted while it is off.";
@@ -527,7 +535,7 @@ app.registerExtension({
         return result;
       };
       function syncPickerVisibility() {
-        const showSelect = !_batchOn && !!node._dbActivePick;
+        const showSelect = !batchOn() && !!node._dbActivePick;
         const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
         for (const w of node.widgets || []) {
           if (!names.includes(w.name)) continue;
@@ -550,8 +558,7 @@ app.registerExtension({
         node.setSize(node.computeSize());
       }
       batchBtn.addEventListener("click", () => {
-        _batchOn = !_batchOn;
-        if (batchModeWidget) batchModeWidget.value = _batchOn;
+        if (batchModeWidget) batchModeWidget.value = !batchOn();
         paintOutputButtons();
         syncPickerVisibility();
         node.setDirtyCanvas(true, true);
@@ -667,7 +674,15 @@ app.registerExtension({
         requestAnimationFrame(() => {
           const h = Math.max(96, imgPanel.scrollHeight || 96);
           if (imgWidget) imgWidget.computedHeight = h;
-          node.setDirtyCanvas(true);
+          // Grow the NODE too. Reserving space on the widget alone left the node
+          // at its empty height, so ComfyUI kept drawing Output, the mode
+          // buttons and Pick Timeout at their old offsets — over the images —
+          // and the last thumbnail fell outside the node body. Grow-only, so it
+          // never fights a manual resize.
+          const needed = node.computeSize();
+          if ((node.size?.[1] || 0) < needed[1])
+            node.setSize([node.size[0], needed[1]]);
+          node.setDirtyCanvas(true, true);
         });
       }
 

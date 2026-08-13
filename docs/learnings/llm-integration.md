@@ -1,6 +1,6 @@
-# LLM Integration (Muse / LM Studio)
+# LLM Integration (Prompt Enhance / LM Studio)
 
-DirtyBirds nodes that call a local LLM (e.g. Muse) use LM Studio's
+DirtyBirds nodes that call a local LLM (e.g. Prompt Enhance) use LM Studio's
 OpenAI-compatible HTTP endpoint, not the llama.cpp CLI.
 
 ## Endpoint

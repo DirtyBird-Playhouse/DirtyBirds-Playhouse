@@ -16,6 +16,7 @@ import {
   nodeInnerW,
   makeButton,
   makeInput,
+  reserveHeight,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -442,7 +443,6 @@ app.registerExtension({
         resizeMaxRow.style.display = mode === "long_side" ? "flex" : "none";
         resizeWidthRow.style.display = mode === "custom" ? "flex" : "none";
         resizeHeightRow.style.display = mode === "custom" ? "flex" : "none";
-        paintToolsSummary();
       }
       resizeToggle.addEventListener("click", () => {
         if (resizeWidget) resizeWidget.value = !resizeWidget.value;
@@ -464,7 +464,6 @@ app.registerExtension({
         const mode = String(sharpenWidget?.value || "auto").toLowerCase();
         sharpenButton.textContent = `Sharpen: ${mode}`;
         sharpenButton.dataset.tone = mode === "off" ? "fixed" : "random";
-        paintToolsSummary();
       }
       sharpenButton.addEventListener("click", () => {
         const current = String(sharpenWidget?.value || "auto").toLowerCase();
@@ -507,11 +506,6 @@ app.registerExtension({
           });
         },
       });
-      function paintToolsSummary() {
-        if (!optionalSection) return;
-        optionalSection.setTitle("Image Tools");
-      }
-
       // ── Assemble panel ────────────────────────────────────────────────────
       panel.append(
         fileInput,
@@ -536,7 +530,7 @@ app.registerExtension({
                   100,
                   Number.parseFloat(previewWrap.style.height) || 240,
                 ) + 8;
-          return controls + preview;
+          return reserveHeight(controls + preview);
         },
       });
 
@@ -560,7 +554,6 @@ app.registerExtension({
       paintResizeWidth();
       paintResizeHeight();
       paintSharpen();
-      paintToolsSummary();
       requestAnimationFrame(() => {
         hideStockWidgets();
         clearDefaultImageWidget(node);

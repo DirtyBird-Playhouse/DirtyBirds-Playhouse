@@ -11,7 +11,7 @@ from server import PromptServer
 from .utils.wildcard_engine import load_wildcard_dict, process, resolve
 from .cycler import append_positive, cycle_text
 
-# Booru tag fetcher: a widget of this (Dirty Talk) node. Imported for the
+# Booru tag fetcher: a widget of this (Prompt Builder) node. Imported for the
 # side-effect of registering its /dirtybirds/booru-search route.
 from . import booru  # noqa: F401
 from . import tag_autocomplete  # noqa: F401
@@ -29,7 +29,7 @@ PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 @PromptServer.instance.routes.post("/dirtybirds/send-prompt")
 async def send_prompt(request):
-    """Inject a positive prompt into every live Dirty Talk node in ComfyUI."""
+    """Inject a positive prompt into every live Prompt Builder node in ComfyUI."""
     data = await request.json()
     positive = str(data.get("positive", "") or "").strip()
     if not positive:
@@ -248,7 +248,7 @@ class DirtyBirdsPrompt:
             len(cycle_items),
         )
 
-        # Emit the resolved prompt to the node UI (Dirty Talk preview) so it shows
+        # Emit the resolved prompt to the node UI (Prompt Builder preview) so it shows
         # before the sampler runs, letting the user cancel early if it's wrong.
         # db_seed_used echoes the seed actually rolled so the UI's "Last" recall
         # can reproduce the wildcard roll.

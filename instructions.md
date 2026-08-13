@@ -1,7 +1,7 @@
 # DirtyBirds — Wildcard Prompt Guide (start here)
 
-A plain, step-by-step guide to writing prompts with the **Dirty Talk - The
-Script** node. No coding needed. Read top to bottom the first time.
+A plain, step-by-step guide to writing prompts with the **🗨️ Prompt Builder**
+node. No coding needed. Read top to bottom the first time.
 
 ---
 
@@ -26,7 +26,7 @@ node. The files are there when you want to save and reuse things.
 
 ## 2. Make your first prompt (do this)
 
-1. In ComfyUI, find the **Dirty Talk - The Script** node.
+1. In ComfyUI, find the **🗨️ Prompt Builder** node.
 2. Click in the big **positive** box.
 3. Type a prompt. To drop in a random word from a list, wrap a list name in double
    underscores, like `__hair/color__`.
@@ -181,8 +181,8 @@ and you edit your saved prompts in one small place.
 
 - Word lists and scenarios load from every `.yaml` / `.yml` / `.txt` in
   `user_files/wildcards/`, re-read on every run (no restart to see edits).
-- Engine code: `dirtybirds_wildcard_engine.py` (the resolver) and
-  `dirtybirds_prompt.py` (the ComfyUI node). Tests in `tests/`.
+- Engine code: `nodes/prompt/utils/wildcard_engine.py` (the resolver) and
+  `nodes/prompt/__init__.py` (the ComfyUI node). Tests in `tests/`.
 - A second safety net exists in the Wildcard Studio app: an Expand-tab "Check
   coherence" button that asks your local model to flag any contradictions a
   register lock cannot catch (scene/weather, body type, free `{a|b}` picks).

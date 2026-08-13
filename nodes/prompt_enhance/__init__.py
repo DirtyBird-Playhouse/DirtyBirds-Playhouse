@@ -1,9 +1,8 @@
 """
 DirtyBirds Playhouse — Prompt Enhance node.
 
-Calls a local OpenAI-compatible LLM server (LM Studio or KoboldCpp) to
-expand/write prompt text. Captioning lives in the Booru/Image URL tools, so
-this node is text-only.
+Calls LM Studio's local OpenAI-compatible LLM server to expand/write prompt
+text. Captioning lives in the Booru/Image URL tools, so this node is text-only.
 """
 
 import os
@@ -22,20 +21,7 @@ from ..utils.paths import pack_root, user_files_dir
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENDPOINT = "http://localhost:1234/v1"
-
-# Both backends speak the OpenAI-compatible chat/completions + models API, so
-# the only per-backend difference is the endpoint and its display label.
-BACKENDS = {
-    "lmstudio": {"label": "LM Studio", "endpoint": "http://localhost:1234/v1"},
-    "koboldcpp": {"label": "KoboldCpp", "endpoint": "http://localhost:5001/v1"},
-}
-DEFAULT_BACKEND = "lmstudio"
-
-
-def _resolve_backend(backend):
-    """Return (endpoint, label) for a backend key, defaulting to LM Studio."""
-    info = BACKENDS.get((backend or "").strip().lower()) or BACKENDS[DEFAULT_BACKEND]
-    return info["endpoint"], info["label"]
+BACKEND_LABEL = "LM Studio"
 
 
 DEFAULT_SYSTEM = (
@@ -55,7 +41,7 @@ def _parse_prompt_file(path, name_fallback):
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.read().splitlines()
     except Exception as e:
-        logger.warning("[DirtyBirds] Muse preset read failed %s: %s", path, e)
+        logger.warning("[DirtyBirds] Prompt Enhance preset read failed %s: %s", path, e)
         return None
     name = name_fallback
     body = []
@@ -190,12 +176,12 @@ def _clean_completion(content):
     return text.strip()
 
 
-class DirtyBirdsMuse:
+class DirtyBirdsPromptEnhance:
     """Text-in → text-out LLM prompt enhancer.
 
-    Reads the STRING wired into ``text_in``, enhances it via the selected
-    backend, and returns the enhanced text on the ``text`` output. Also shows
-    the response in the node UI."""
+    Reads the STRING wired into ``text_in``, enhances it via LM Studio, and
+    returns the enhanced text on the ``text`` output. Also shows the response in
+    the node UI."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -218,7 +204,6 @@ class DirtyBirdsMuse:
                     {"default": 1024, "min": 16, "max": 8192, "step": 16},
                 ),
                 "prompt_file": ("STRING", {"default": ""}),
-                "backend": (["lmstudio", "koboldcpp"], {"default": DEFAULT_BACKEND}),
             },
             "optional": {
                 "text_in": (
@@ -242,7 +227,6 @@ class DirtyBirdsMuse:
         temperature=0.7,
         max_tokens=1024,
         prompt_file="",
-        backend=DEFAULT_BACKEND,
         text_in="",
     ):
         if not enabled:
@@ -255,7 +239,6 @@ class DirtyBirdsMuse:
             max_tokens,
             resolved_file,
             system,
-            backend,
             text_in,
         )
 
@@ -266,7 +249,6 @@ class DirtyBirdsMuse:
         temperature=0.7,
         max_tokens=1024,
         prompt_file="",
-        backend=DEFAULT_BACKEND,
         text_in="",
     ):
         if not enabled:
@@ -274,25 +256,25 @@ class DirtyBirdsMuse:
             source = (text_in or instruction or "").strip()
             return {
                 "ui": {
-                    "db_muse_response": [source, ""],
-                    "db_muse_status": ["Prompt Enhance: off"],
+                    "db_prompt_enhance_response": [source, ""],
+                    "db_prompt_enhance_status": ["Prompt Enhance: off"],
                 },
                 "result": (source,),
             }
 
-        endpoint, label = _resolve_backend(backend)
+        endpoint, label = DEFAULT_ENDPOINT, BACKEND_LABEL
         try:
             model = _resolve_lmstudio_model(endpoint)
         except Exception as e:
             logger.warning(
-                "[DirtyBirds] Muse model resolve failed (%s): %s", endpoint, e
+                "[DirtyBirds] Prompt Enhance model resolve failed (%s): %s", endpoint, e
             )
-            msg = f"[Muse error: {e} — is {label} running at {endpoint}?]"
+            msg = f"[Prompt Enhance error: {e} — is {label} running at {endpoint}?]"
             # On failure pass the original text through so the graph still runs.
             return {
                 "ui": {
-                    "db_muse_response": [msg, ""],
-                    "db_muse_status": ["Prompt Enhance: error"],
+                    "db_prompt_enhance_response": [msg, ""],
+                    "db_prompt_enhance_status": ["Prompt Enhance: error"],
                 },
                 "result": ((text_in or "").strip(),),
             }
@@ -312,7 +294,7 @@ class DirtyBirdsMuse:
             user_text = instruction
 
         logger.info(
-            "[DirtyBirds] Muse request (%s): instruction=%r source=%r",
+            "[DirtyBirds] Prompt Enhance request (%s): instruction=%r source=%r",
             label,
             instruction[:120],
             source[:200],
@@ -332,12 +314,12 @@ class DirtyBirdsMuse:
         try:
             resp = _chat_completion(endpoint, payload)
         except Exception as e:
-            logger.warning("[DirtyBirds] Muse request failed (%s): %s", endpoint, e)
-            msg = f"[Muse error: {e} — is {label}'s server running at {endpoint}?]"
+            logger.warning("[DirtyBirds] Prompt Enhance request failed (%s): %s", endpoint, e)
+            msg = f"[Prompt Enhance error: {e} — is {label}'s server running at {endpoint}?]"
             return {
                 "ui": {
-                    "db_muse_response": [msg, ""],
-                    "db_muse_status": ["Prompt Enhance: error"],
+                    "db_prompt_enhance_response": [msg, ""],
+                    "db_prompt_enhance_status": ["Prompt Enhance: error"],
                 },
                 "result": (source,),
             }
@@ -349,30 +331,30 @@ class DirtyBirdsMuse:
             # to fix it rather than silently emitting nothing.
             if resp["reasoning"] and resp["finish_reason"] == "length":
                 logger.warning(
-                    "[DirtyBirds] Muse: model used all %s tokens reasoning, no answer.",
+                    "[DirtyBirds] Prompt Enhance: model used all %s tokens reasoning, no answer.",
                     max_tokens,
                 )
                 msg = (
-                    f"[Muse error: '{model}' is a reasoning model and used all "
+                    f"[Prompt Enhance error: '{model}' is a reasoning model and used all "
                     f"{max_tokens} tokens thinking before answering. Raise max_tokens "
                     f"(~2000+) or pick a non-reasoning model for prompt writing.]"
                 )
                 return {
                     "ui": {
-                        "db_muse_response": [msg, ""],
-                        "db_muse_status": ["Prompt Enhance: error"],
+                        "db_prompt_enhance_response": [msg, ""],
+                        "db_prompt_enhance_status": ["Prompt Enhance: error"],
                     },
                     "result": (source,),
                 }
             logger.warning(
-                "[DirtyBirds] Muse: empty completion (finish=%s).",
+                "[DirtyBirds] Prompt Enhance: empty completion (finish=%s).",
                 resp["finish_reason"],
             )
-            msg = "[Muse error: model returned empty text.]"
+            msg = "[Prompt Enhance error: model returned empty text.]"
             return {
                 "ui": {
-                    "db_muse_response": [msg, ""],
-                    "db_muse_status": ["Prompt Enhance: error"],
+                    "db_prompt_enhance_response": [msg, ""],
+                    "db_prompt_enhance_status": ["Prompt Enhance: error"],
                 },
                 "result": (source,),
             }
@@ -382,7 +364,7 @@ class DirtyBirdsMuse:
         neg_out = raw_neg
 
         logger.info(
-            "[DirtyBirds] Muse (%s) -> pos=%r neg=%r",
+            "[DirtyBirds] Prompt Enhance (%s) -> pos=%r neg=%r",
             resolved_file or "default",
             pos_out[:120],
             neg_out[:80],
@@ -390,8 +372,8 @@ class DirtyBirdsMuse:
         # The node emits a single enhanced-text output (the positive prompt).
         return {
             "ui": {
-                "db_muse_response": [pos_out, neg_out],
-                "db_muse_status": ["Prompt Enhance: on"],
+                "db_prompt_enhance_response": [pos_out, neg_out],
+                "db_prompt_enhance_status": ["Prompt Enhance: on"],
             },
             "result": (pos_out,),
         }
@@ -400,24 +382,23 @@ class DirtyBirdsMuse:
 # ---------------------------------------------------------------------------
 # Model-list proxy (server-side, avoids browser CORS to LM Studio)
 # ---------------------------------------------------------------------------
-@PromptServer.instance.routes.post("/dirtybirds/muse-generate")
-async def api_muse_generate(request):
-    """Run Muse directly without queueing the surrounding ComfyUI graph."""
+@PromptServer.instance.routes.post("/dirtybirds/prompt-enhance-generate")
+async def api_prompt_enhance_generate(request):
+    """Run Prompt Enhance directly without queueing the surrounding ComfyUI graph."""
     try:
         data = await request.json()
         result = await asyncio.to_thread(
-            DirtyBirdsMuse().generate,
+            DirtyBirdsPromptEnhance().generate,
             enabled=bool(data.get("enabled", True)),
             instruction=str(data.get("instruction", "")),
             temperature=float(data.get("temperature", 0.7)),
             max_tokens=int(data.get("max_tokens", 1024)),
             prompt_file=str(data.get("prompt_file", "")),
-            backend=str(data.get("backend", DEFAULT_BACKEND)),
             text_in=str(data.get("text_in", "")),
         )
         ui = result.get("ui", {})
-        response = ui.get("db_muse_response", ["", ""])
-        status = ui.get("db_muse_status", ["Prompt Enhance: error"])
+        response = ui.get("db_prompt_enhance_response", ["", ""])
+        status = ui.get("db_prompt_enhance_status", ["Prompt Enhance: error"])
         return web.json_response(
             {
                 "positive": response[0] if response else "",
@@ -426,7 +407,7 @@ async def api_muse_generate(request):
             }
         )
     except Exception as e:
-        logger.warning("[DirtyBirds] direct Muse generation failed: %s", e)
+        logger.warning("[DirtyBirds] direct Prompt Enhance generation failed: %s", e)
         return web.json_response(
             {
                 "positive": "",
@@ -457,18 +438,18 @@ async def api_lm_models(request):
         return web.json_response({"models": [], "error": str(e)})
 
 
-@PromptServer.instance.routes.get("/dirtybirds/muse-prompts")
-async def api_muse_prompts(request):
+@PromptServer.instance.routes.get("/dirtybirds/prompt-enhance-prompts")
+async def api_prompt_enhance_prompts(request):
     """System prompts from user-files/LM Studio for the prompt flyout."""
     try:
         return web.json_response({"prompts": _load_lm_studio_prompts()})
     except Exception as e:
-        logger.warning("[DirtyBirds] muse-prompts failed: %s", e)
+        logger.warning("[DirtyBirds] prompt-enhance-prompts failed: %s", e)
         return web.json_response({"prompts": [], "error": str(e)})
 
 
-@PromptServer.instance.routes.get("/dirtybirds/muse-presets")
-async def api_muse_presets(request):
+@PromptServer.instance.routes.get("/dirtybirds/prompt-enhance-presets")
+async def api_prompt_enhance_presets(request):
     """Compatibility alias for older web UIs."""
     try:
         prompts = _load_lm_studio_prompts()
@@ -486,9 +467,9 @@ async def api_muse_presets(request):
             }
         )
     except Exception as e:
-        logger.warning("[DirtyBirds] muse-presets failed: %s", e)
+        logger.warning("[DirtyBirds] prompt-enhance-presets failed: %s", e)
         return web.json_response({"presets": [], "error": str(e)})
 
 
-NODE_CLASS_MAPPINGS = {"DirtyBirdsMuse": DirtyBirdsMuse}
-NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsMuse": "✍️ Prompt Enhance"}
+NODE_CLASS_MAPPINGS = {"DirtyBirdsPromptEnhance": DirtyBirdsPromptEnhance}
+NODE_DISPLAY_NAME_MAPPINGS = {"DirtyBirdsPromptEnhance": "✍️ Prompt Enhance"}

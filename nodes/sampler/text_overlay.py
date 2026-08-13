@@ -1,4 +1,4 @@
-"""Native Pillow text overlay for The Audition.
+"""Native Pillow text overlay for the 🎬 Sampler & Picker node.
 
 Kept separate from the ComfyUI node module so behavior can be unit tested and
 so DirtyBirds never needs another custom-node pack for image captioning.

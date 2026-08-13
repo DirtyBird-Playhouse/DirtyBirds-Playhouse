@@ -109,7 +109,7 @@ def _prompt_file_from_name(name):
 
 @PromptServer.instance.routes.get("/dirtybirds/saved-prompts")
 async def api_saved_prompts(request):
-    """Return saved prompt lines for Dirty Talk's Load Prompt menu.
+    """Return saved prompt lines for Prompt Builder's Load Prompt menu.
 
     Save Image & Prompt owns the file location. This route reads only .txt prompt
     library files, not wildcard/style files.

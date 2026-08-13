@@ -20,6 +20,8 @@ import {
   makeTextarea,
   makeInput,
   openImageViewer,
+  reserveHeight,
+  DOM_WIDGET_CHROME,
 } from "./db_shared.js";
 
 ensureStylesheet();
@@ -408,25 +410,31 @@ app.registerExtension({
       );
       syncPromptFile();
 
-      // Hand-maintained heights, because nothing measures the panel any more.
-      //   COLLAPSED  settings rows only
-      //   EXPANDED   + the saved-prompt textarea
-      //   WITH_IMAGE + the saved image thumbnail
-      // Adding a row to the panel means bumping these.
-      const PANEL_COLLAPSED = 210;
-      const PANEL_EXPANDED = 420;
-      const PANEL_WITH_IMAGE = 620;
+      // Hand-maintained CONTENT heights, because nothing measures the panel any
+      // more. They are reserved through reserveHeight() below, so they stay
+      // honest numbers about what the rows need.
+      //   COLLAPSED  "Save Location" 16 + settings block 132 + "Saved Output" 16
+      //              + two 6px gaps                                       = 176
+      //   EXPANDED   + prompt textarea 110 + "Saved Image" 16 + gaps      = 314
+      //   WITH_IMAGE + the saved image thumbnail 150 + gap                = 470
+      // Adding a row to the panel means bumping these. They were re-measured by
+      // hand in a live ComfyUI (the same way the constants in jsdirtybirds.js
+      // were); the old 210/420/620 were guesses that left the Save Prompt button
+      // and the status line drawn through the foot of the node.
+      const PANEL_COLLAPSED = 176;
+      const PANEL_EXPANDED = 314;
+      const PANEL_WITH_IMAGE = 470;
       let hasImage = false;
       const panelMinHeight = () => {
         if (!previewSection.isExpanded()) return PANEL_COLLAPSED;
         return hasImage ? PANEL_WITH_IMAGE : PANEL_EXPANDED;
       };
 
-      // Node height above the panel: the section heading and the widget rows
-      // ComfyUI draws around it. syncPanelH's floor uses the same number, so
-      // "how tall must the node be" and "how tall may the panel be" stay one
-      // fact rather than two that can drift.
-      const PANEL_CHROME_H = 58;
+      // Node height above and below the panel: the title bar, the node's own
+      // padding, and ComfyUI's per-widget chrome. syncPanelH's floor uses the
+      // same number, so "how tall must the node be" and "how tall may the panel
+      // be" stay one fact rather than two that can drift.
+      const PANEL_CHROME_H = 58 + DOM_WIDGET_CHROME;
 
       const panelWidget = node.addDOMWidget(
         "db_saveprompt_panel",
@@ -434,8 +442,8 @@ app.registerExtension({
         panel,
         {
           serialize: false,
-          height: PANEL_EXPANDED,
-          getMinHeight: panelMinHeight,
+          height: reserveHeight(PANEL_EXPANDED),
+          getMinHeight: () => reserveHeight(panelMinHeight()),
         },
       );
 
@@ -521,12 +529,17 @@ app.registerExtension({
       // so it cannot re-enter the way the old scrollHeight measurement did.
       function applyWidths() {
         panel.style.width = nodeInnerW(node) + "px";
-        const available = Math.max(
+        // Fill the slot ComfyUI actually gave this widget, which is its reserved
+        // height less the frontend's per-widget chrome. Deriving the panel height
+        // from the node's size instead — which is what this did — overshoots that
+        // slot by exactly DOM_WIDGET_CHROME, and the overshoot is drawn through
+        // the bottom of the node. `computedHeight` is a number ComfyUI computed,
+        // not a DOM measurement, so reading it cannot start a resize loop.
+        const slot = Math.max(
           panelMinHeight(),
-          (node.size?.[1] || 0) - PANEL_CHROME_H,
+          (Number(panelWidget?.computedHeight) || 0) - DOM_WIDGET_CHROME,
         );
-        panel.style.height = available + "px";
-        if (panelWidget) panelWidget.computedHeight = available;
+        panel.style.height = slot + "px";
       }
 
       // Width only. This used to measure panel.scrollHeight and setSize the node

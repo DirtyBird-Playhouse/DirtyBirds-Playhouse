@@ -2,6 +2,7 @@ import torch
 import json
 import os
 import logging
+from collections import OrderedDict
 import folder_paths
 from aiohttp import web
 from server import PromptServer
@@ -21,10 +22,47 @@ from .seed_util import resolve_seed
 
 logger = logging.getLogger(__name__)
 
-_CHECKPOINT_CACHE = {}
-_VAE_CACHE = {}
-
 BAKED_VAE = "Baked VAE"
+
+
+def _vae_options():
+    """Standalone VAEs on disk, for the vae_name combo. Never raises."""
+    try:
+        return sorted(folder_paths.get_filename_list("vae") or [])
+    except Exception:  # noqa: BLE001 - a VAE listing must not break registration
+        return []
+
+
+# Loaded checkpoints and VAEs, kept across runs so "random" seed / resolution
+# modes (which force re-execution every queue via IS_CHANGED) don't reload the
+# checkpoint from disk each time.
+#
+# Bounded, because these hold whole models. Unbounded, every checkpoint the user
+# ever selected in a session stayed resident — seven checkpoints is tens of GB of
+# host RAM that nothing ever frees. Two is enough to make A/B-ing a pair of
+# checkpoints free while still releasing the rest.
+_CHECKPOINT_CACHE_SIZE = 2
+_VAE_CACHE_SIZE = 2
+_CHECKPOINT_CACHE = OrderedDict()
+_VAE_CACHE = OrderedDict()
+
+
+def _cache_get(cache, key):
+    """Fetch and mark most-recently-used, or None."""
+    if key not in cache:
+        return None
+    cache.move_to_end(key)
+    return cache[key]
+
+
+def _cache_put(cache, key, value, limit):
+    """Insert as most-recently-used, evicting the least-recently-used."""
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > limit:
+        evicted, _ = cache.popitem(last=False)
+        logger.info("[DirtyBirds] Released cached model: %s", evicted)
+    return value
 
 
 def _load_vae(vae_name):
@@ -35,13 +73,13 @@ def _load_vae(vae_name):
         if not vae_path or not os.path.exists(vae_path):
             logger.warning("[DirtyBirds] VAE not found, using baked: %s", vae_name)
             return None
-        if vae_path in _VAE_CACHE:
-            return _VAE_CACHE[vae_path]
+        cached = _cache_get(_VAE_CACHE, vae_path)
+        if cached is not None:
+            return cached
         import comfy.sd
 
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
-        _VAE_CACHE[vae_path] = vae
-        return vae
+        return _cache_put(_VAE_CACHE, vae_path, vae, _VAE_CACHE_SIZE)
     except Exception as e:
         logger.warning(
             "[DirtyBirds] Failed to load VAE %s, using baked: %s", vae_name, e
@@ -199,7 +237,14 @@ class DirtyBirdsLoader:
                 # Appended last so existing saved workflows keep their widget order.
                 "clip_skip": ("INT", {"default": 1, "min": 1, "max": 12, "step": 1}),
                 # VAE override — BAKED_VAE keeps the checkpoint's own VAE.
-                "vae_name": ([BAKED_VAE, ""], {"default": BAKED_VAE}),
+                # Built from the real models/vae listing. The second entry used
+                # to be a hardcoded "", which advertised a blank, unselectable
+                # option and meant _load_vae could never be reached by any value
+                # the combo actually offered.
+                "vae_name": (
+                    [BAKED_VAE, *_vae_options()],
+                    {"default": BAKED_VAE},
+                ),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -214,6 +259,23 @@ class DirtyBirdsLoader:
     RETURN_NAMES = ("db_pipe",)
     FUNCTION = "process"
     CATEGORY = "DirtyBirds"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, vae_name=None):
+        """Accept a vae_name this build's combo no longer offers.
+
+        The combo used to be a hardcoded ``[BAKED_VAE, ""]``, so graphs saved
+        against it serialized ``vae_name: ""`` — and the widget is hidden, so
+        nobody ever saw it. Now that the list is built from the real models/vae
+        listing, ComfyUI's own combo check rejects that blank with "Value not in
+        list" before the node ever runs.
+
+        Naming ``vae_name`` in this signature tells ComfyUI to skip only that
+        input's built-in validation, so every other widget is still checked
+        normally. ``process()`` already treats a blank or unknown name as "use
+        the checkpoint's baked VAE", which is exactly what those graphs meant.
+        """
+        return True
 
     @classmethod
     def IS_CHANGED(cls, dimension="", seed_mode="fixed", **kwargs):
@@ -257,11 +319,17 @@ class DirtyBirdsLoader:
 
         # ── Checkpoint ──────────────────────────────────────────────────────
         ckpt_path = folder_paths.get_full_path("checkpoints", ckpt_name)
-        if ckpt_path in _CHECKPOINT_CACHE:
-            model, clip, vae = _CHECKPOINT_CACHE[ckpt_path]
+        cached = _cache_get(_CHECKPOINT_CACHE, ckpt_path)
+        if cached is not None:
+            model, clip, vae = cached
         else:
             model, clip, vae = load_checkpoint_guess_config(ckpt_path)[:3]
-            _CHECKPOINT_CACHE[ckpt_path] = (model, clip, vae)
+            _cache_put(
+                _CHECKPOINT_CACHE,
+                ckpt_path,
+                (model, clip, vae),
+                _CHECKPOINT_CACHE_SIZE,
+            )
 
         # ── VAE override ────────────────────────────────────────────────────
         # Default keeps the checkpoint's baked VAE; otherwise load the chosen one.

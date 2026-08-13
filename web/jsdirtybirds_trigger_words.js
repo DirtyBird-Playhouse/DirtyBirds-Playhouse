@@ -1,10 +1,10 @@
 /**
- * DirtyBirds Playhouse — The Wardrobe node UI (formerly "Pillow Talk").
+ * DirtyBirds Playhouse — Trigger Words node UI (formerly "Trigger Words").
  *
  * Themed to match the suite. Add LoRAs via a flyout (from /dirtybirds/loras);
  * each LoRA's trigger words (from /dirtybirds/lora-meta) become toggleable,
  * editable chips. Active chip text is serialized into the hidden
- * `trigger_words_data` widget and pushed into the Dirty Talk positive prompt
+ * `trigger_words_data` widget and pushed into the Prompt Builder positive prompt
  * via the "Send to Prompt Builder" button.
  */
 
@@ -20,7 +20,19 @@ import {
   setWidgetHeight,
   makeButton,
   makeInput,
+  reserveHeight,
 } from "./db_shared.js";
+
+// Content heights. Reserved through reserveHeight() so ComfyUI's per-widget
+// chrome does not eat the bottom of the two buttons and the status line.
+const ADD_ROW_H = 34;
+const CHIPS_MIN_H = 44;
+const CHIPS_MAX_H = 180;
+const STATUS_H = 14;
+const SEND_ROW_H = 34;
+
+const chipsContentHeight = (panel) =>
+  Math.min(CHIPS_MAX_H, Math.max(CHIPS_MIN_H, panel.scrollHeight || CHIPS_MIN_H));
 
 ensureStylesheet();
 
@@ -32,9 +44,9 @@ const loraDisplay = (f) =>
     .replace(/\.[^.]+$/, "");
 
 app.registerExtension({
-  name: "DirtyBirds.Wardrobe",
+  name: "DirtyBirds.TriggerWords",
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "DirtyBirdsWardrobe") return;
+    if (nodeData.name !== "DirtyBirdsTriggerWords") return;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
@@ -52,12 +64,12 @@ app.registerExtension({
 
       const widthEls = [];
 
-      // Header already reads "The Wardrobe" — no redundant in-node title.
+      // Header already reads "Trigger Words" — no redundant in-node title.
 
       // ── Add-LoRA button ──────────────────────────────────────────────────────
       const addBtn = makeButton();
       addBtn.className = "db-lib-btn db-lora-add-open-btn";
-      addBtn.textContent = "👗  Add Outfit (LoRA)";
+      addBtn.textContent = "👗  Add LoRA";
       addBtn.style.cssText +=
         "box-sizing:border-box;overflow:hidden;width:100%;";
       const addWrap = document.createElement("div");
@@ -66,8 +78,8 @@ app.registerExtension({
       addWrap.appendChild(addBtn);
       node.addDOMWidget("db_wd_add", "customhtml", addWrap, {
         serialize: false,
-        height: 34,
-        getMinHeight: () => 34,
+        height: reserveHeight(ADD_ROW_H),
+        getMinHeight: () => reserveHeight(ADD_ROW_H),
       });
       widthEls.push(addWrap);
 
@@ -75,16 +87,15 @@ app.registerExtension({
       const panel = document.createElement("div");
       panel.className = "db-tw-panel";
       panel.style.cssText +=
-        "box-sizing:border-box;overflow:auto;width:100%;max-height:180px;";
+        `box-sizing:border-box;overflow:auto;width:100%;max-height:${CHIPS_MAX_H}px;`;
       const panelWidget = node.addDOMWidget(
         "db_wd_chips",
         "customhtml",
         panel,
         {
           serialize: false,
-          height: 44,
-          getMinHeight: () =>
-            Math.min(180, Math.max(44, panel.scrollHeight || 44)),
+          height: reserveHeight(CHIPS_MIN_H),
+          getMinHeight: () => reserveHeight(chipsContentHeight(panel)),
         },
       );
       widthEls.push(panel);
@@ -95,14 +106,19 @@ app.registerExtension({
         "font-size:10px;color:#888;padding:0 2px;width:100%;box-sizing:border-box;";
       node.addDOMWidget("db_wd_status", "customhtml", status, {
         serialize: false,
-        height: 14,
-        getMinHeight: () => 14,
+        height: reserveHeight(STATUS_H),
+        getMinHeight: () => reserveHeight(STATUS_H),
       });
       widthEls.push(status);
 
       function serialize() {
         if (dataW) dataW.value = JSON.stringify(chips);
       }
+      // Rebinds `chips` to freshly parsed objects, so every chip's click,
+      // dblclick and contextmenu handler — which closed over the PREVIOUS
+      // objects — is now editing entries this array no longer contains.
+      // ONLY call this immediately before renderChips(), which rebuilds those
+      // handlers against the new objects. renderChips() does exactly that.
       function restoreChips() {
         try {
           const parsed = JSON.parse(dataW?.value || "[]");
@@ -113,7 +129,11 @@ app.registerExtension({
         return chips.filter((c) => c.active).length;
       }
       function activeText() {
-        restoreChips();
+        // Deliberately does NOT restore. `chips` is already authoritative —
+        // every mutation calls serialize() — and re-parsing here swapped the
+        // array out from under the live chip handlers, so after one press of
+        // "Send to Prompt Builder" every chip silently stopped toggling for the
+        // rest of the session.
         return chips
           .filter((c) => c.active && String(c.text || "").trim())
           .map((c) => String(c.text).trim())
@@ -132,10 +152,7 @@ app.registerExtension({
       }
       function syncH() {
         requestAnimationFrame(() => {
-          setWidgetHeight(
-            panelWidget,
-            Math.min(180, Math.max(44, panel.scrollHeight || 44)),
-          );
+          setWidgetHeight(panelWidget, reserveHeight(chipsContentHeight(panel)));
           fitNode();
           node.setDirtyCanvas(true, true);
         });
@@ -254,10 +271,10 @@ app.registerExtension({
       addBtn.addEventListener("click", async () => {
         const list = await fetchJSON("/dirtybirds/loras");
         const names = Array.isArray(list) ? list : [];
-        showListFlyout("Add Outfit (LoRA)", names, null, loraDisplay, addLora);
+        showListFlyout("Add LoRA", names, null, loraDisplay, addLora);
       });
 
-      // ── Send active trigger words to Dirty Talk positive prompt ────────────
+      // ── Send active trigger words to Prompt Builder positive prompt ────────────
       const sendBtn = makeButton();
       sendBtn.className = "db-lib-btn db-lora-add-open-btn";
       sendBtn.textContent = "Send to Prompt Builder";
@@ -269,8 +286,8 @@ app.registerExtension({
       sendWrap.appendChild(sendBtn);
       node.addDOMWidget("db_wd_send", "customhtml", sendWrap, {
         serialize: false,
-        height: 34,
-        getMinHeight: () => 34,
+        height: reserveHeight(SEND_ROW_H),
+        getMinHeight: () => reserveHeight(SEND_ROW_H),
       });
       widthEls.push(sendWrap);
 
