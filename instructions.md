@@ -13,7 +13,7 @@ so each image gets a fresh, varied prompt.
 There are two files behind the scenes, both in this folder:
 
 ```
-C:\Users\mpick\My_AI_Tools\DirtyBirds-Playhouse\user_files\wildcards\
+C:\Users\mpick\My_AI_Tools\Projects\DirtyBirds-Playhouse\user_files\wildcards\
 ```
 
 - **Wildcard_Master.yaml** = your _word lists_ (hair colors, clothing, poses...).
