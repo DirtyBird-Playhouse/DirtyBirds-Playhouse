@@ -79,13 +79,29 @@ def load_wildcard_dict():
 
     Re-read on each call so edits to the files show up without a restart."""
     result = {}
-    os.makedirs(WILDCARDS_DIR, exist_ok=True)
+    try:
+        os.makedirs(WILDCARDS_DIR, exist_ok=True)
+    except Exception as e:
+        logger.warning(
+            "[DirtyBirds] Could not create/access wildcards folder %s: %s",
+            WILDCARDS_DIR,
+            e,
+        )
+        return result
     try:
         import yaml
     except Exception:
         yaml = None
 
-    for root, _dirs, files in os.walk(WILDCARDS_DIR, followlinks=True):
+    try:
+        walker = list(os.walk(WILDCARDS_DIR, followlinks=True))
+    except Exception as e:
+        logger.warning(
+            "[DirtyBirds] Could not walk wildcards folder %s: %s", WILDCARDS_DIR, e
+        )
+        return result
+
+    for root, _dirs, files in walker:
         for file in files:
             path = os.path.join(root, file)
             try:

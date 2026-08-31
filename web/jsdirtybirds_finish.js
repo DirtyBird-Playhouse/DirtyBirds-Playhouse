@@ -192,9 +192,9 @@ app.registerExtension({
 
       const hint = document.createElement("div");
       hint.className = "db-finish-hint";
-      // No invented "useful range" here. 0.5 is the Sharpen blueprint's own
+      // No invented "useful range" here. 0.15 is the Sharpen blueprint's own
       // default and 3 its own maximum; anything else would be my guess.
-      hint.textContent = "0 = off · blueprint default 0.50";
+      hint.textContent = "0 = off · blueprint default 0.15";
       right.append(hint);
 
       const grid = document.createElement("div");

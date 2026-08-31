@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from .._compare import resolution, save_preview
+from .._pipe_type import PIPE_INPUT, PIPE_TYPE
 
 # Fallbacks if comfy.samplers can't be queried (keeps the node importable in
 # non-ComfyUI test contexts and never leaves the dropdowns empty).
@@ -333,7 +334,7 @@ class DirtyBirdsInpaint:
         samplers, schedulers = _sampler_options()
         return {
             "required": {
-                "db_pipe": ("DIRTYBIRDS_PIPE",),
+                "db_pipe": (PIPE_INPUT,),
                 "image": ("IMAGE",),
                 "segment_prompt": (
                     "STRING",
@@ -402,7 +403,7 @@ class DirtyBirdsInpaint:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("DIRTYBIRDS_PIPE", "IMAGE", "LATENT")
+    RETURN_TYPES = (PIPE_TYPE, "IMAGE", "LATENT")
     RETURN_NAMES = ("db_pipe", "image", "latent")
     FUNCTION = "inpaint"
     CATEGORY = "DirtyBirds"

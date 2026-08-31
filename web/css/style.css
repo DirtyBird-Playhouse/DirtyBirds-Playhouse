@@ -2741,3 +2741,195 @@
   max-height: var(--db-preview-max-height);
   object-fit: contain;
 }
+
+/* ── Wildcards sidebar ─────────────────────────────────────────────────── */
+.db-wc {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: var(--db-font);
+  font-size: var(--db-text-size);
+  color: var(--db-text);
+  background: var(--db-surface);
+}
+.db-wc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--db-panel-padding);
+  border-bottom: 1px solid var(--db-border);
+}
+.db-wc-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.db-wc-badge {
+  font-size: var(--db-small-size);
+  color: var(--db-muted);
+  white-space: nowrap;
+}
+.db-wc-btn {
+  background: var(--db-control);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  color: var(--db-text);
+  font-size: var(--db-small-size);
+  padding: 3px 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.db-wc-btn:hover {
+  border-color: var(--db-accent);
+  color: var(--db-accent);
+}
+.db-wc-btn.db-wc-spin {
+  animation: db-wc-spin 0.6s linear infinite;
+}
+@keyframes db-wc-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.db-wc-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--db-panel-padding);
+  border-bottom: 1px solid var(--db-border);
+}
+.db-wc-search {
+  flex: 1;
+  background: var(--db-control);
+  border: 1px solid var(--db-border);
+  border-radius: var(--db-radius);
+  color: var(--db-text);
+  font-size: var(--db-text-size);
+  padding: 4px 8px;
+}
+.db-wc-search:focus {
+  outline: none;
+  border-color: var(--db-accent);
+}
+.db-wc-search-count {
+  font-size: var(--db-small-size);
+  color: var(--db-muted);
+  white-space: nowrap;
+}
+.db-wc-message {
+  padding: 8px var(--db-panel-padding);
+  color: var(--db-danger);
+  font-size: var(--db-small-size);
+}
+.db-wc-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.db-wc-empty {
+  padding: 20px var(--db-panel-padding);
+  color: var(--db-muted);
+  text-align: center;
+}
+.db-wc-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px var(--db-panel-padding);
+}
+.db-wc-folder-toggle {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--db-text);
+  font-size: var(--db-text-size);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.db-wc-folder-toggle:hover {
+  color: var(--db-accent);
+}
+.db-wc-folder-count {
+  font-size: var(--db-small-size);
+  color: var(--db-muted);
+  white-space: nowrap;
+}
+.db-wc-folder-content {
+  border-left: 1px dashed var(--db-border);
+  margin-left: 12px;
+}
+.db-wc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--db-text);
+  text-align: left;
+  padding: 5px var(--db-panel-padding);
+  cursor: pointer;
+}
+.db-wc-item:hover {
+  background: var(--db-control);
+}
+.db-wc-item-selected {
+  border-left-color: var(--db-accent);
+  background: var(--db-accent-bg);
+}
+.db-wc-item-text {
+  flex: 1;
+  min-width: 0;
+}
+.db-wc-item-token {
+  font-family: monospace;
+  font-size: var(--db-text-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-wc-item-meta {
+  font-size: var(--db-small-size);
+  color: var(--db-muted);
+}
+.db-wc-copy {
+  flex: none;
+}
+.db-wc-detail {
+  padding: 6px var(--db-panel-padding) 10px calc(var(--db-panel-padding) + 12px);
+  background: var(--db-control);
+}
+.db-wc-detail-summary {
+  font-size: var(--db-small-size);
+  color: var(--db-muted);
+  margin-bottom: 6px;
+}
+.db-wc-detail-error {
+  color: var(--db-danger);
+  font-size: var(--db-small-size);
+}
+.db-wc-detail-loading {
+  color: var(--db-muted);
+  font-size: var(--db-small-size);
+}
+.db-wc-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: var(--db-preview-max-height);
+  overflow-y: auto;
+}
+.db-wc-detail-entry {
+  font-size: var(--db-text-size);
+  padding: 4px 6px;
+  border-radius: var(--db-radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.db-wc-detail-entry:hover {
+  border-color: var(--db-accent);
+  background: var(--db-surface);
+}

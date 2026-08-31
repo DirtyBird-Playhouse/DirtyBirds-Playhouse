@@ -15,6 +15,7 @@ from .cycler import append_positive, cycle_text
 # side-effect of registering its /dirtybirds/booru-search route.
 from . import booru  # noqa: F401
 from . import tag_autocomplete  # noqa: F401
+from . import wildcard_helper  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

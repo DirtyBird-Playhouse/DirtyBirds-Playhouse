@@ -181,7 +181,7 @@ def test_prompt_enhance_has_no_backend_switch():
     assert "currentBackend" not in frontend
     assert "db-enhance-backend-row" not in css
     # The single endpoint survives, named once per side.
-    assert 'DEFAULT_ENDPOINT = "http://localhost:1234/v1"' in backend
+    assert 'DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1"' in backend
     assert "const LM_STUDIO" in frontend
 
 

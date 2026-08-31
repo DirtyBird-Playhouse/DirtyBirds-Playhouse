@@ -37,9 +37,9 @@ import torch.nn.functional as F
 
 # Straight from the blueprint's Float node, which feeds u_float0:
 #   "properties": {"min": 0, "max": 3, "precision": 2, "step": 0.05}
-#   "widgets_values": [0.5]
+#   "widgets_values": [0.15]
 SHARPEN_OFF = 0.0
-SHARPEN_DEFAULT = 0.5
+SHARPEN_DEFAULT = 0.15
 SHARPEN_MAX = 3.0
 SHARPEN_STEP = 0.05
 

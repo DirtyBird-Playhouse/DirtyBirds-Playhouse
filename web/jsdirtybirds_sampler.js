@@ -81,15 +81,40 @@ async function postPick(token, selection) {
     throw new Error("Picker reply was not accepted by the active sampler");
 }
 
-async function finishPick(selection) {
+// Every message the picker has for the user goes through here.
+//
+// It used to write only to node._dbPickStatus, which is the inline pick row's
+// status line -- and _dbStartPick hides that row before opening the modal. So
+// a rejected or failed send updated an element nobody could see: the picker
+// stayed open, Send and Cancel looked dead, and there was nothing on screen
+// saying why. The modal is the visible surface while it is up; the inline row
+// still gets the text for when it isn't.
+function pickStatus(text) {
+  _fs?.setStatus?.(text);
+  _pick?.node?._dbPickStatus?.(text);
+}
+
+async function finishPick(selection, { forceCloseOnError = false } = {}) {
   if (!_pick) return;
   const { token, node } = _pick;
   try {
     await postPick(token, selection);
   } catch (err) {
     console.error("[DirtyBirds] Sampler pick reply failed:", err);
-    node?._dbPickStatus?.("Send failed — retry.");
-    return;
+    if (!forceCloseOnError) {
+      // Say what actually went wrong. "Send failed — retry." hid the useful
+      // half: a stale token (a second browser tab answered first, or the run
+      // already timed out) needs a different response from a dead connection.
+      pickStatus(`Send failed: ${err?.message || err} · Esc to abandon`);
+      return;
+    }
+    // A cancel that cannot reach the server still has to let go of the UI --
+    // the alternative is a modal with no working exit. The sampler is still
+    // blocked; it stops on its own when the pick timeout expires.
+    console.warn(
+      "[DirtyBirds] Cancel could not reach the sampler; closing the picker. " +
+        "The run stops when its Pick Timeout expires.",
+    );
   }
   closeFullScreen();
   node?._dbEndPick?.();
@@ -97,15 +122,18 @@ async function finishPick(selection) {
 }
 function sendPick() {
   if (!_pick?.node) return;
-  const selection = [..._pick.node._dbSel].sort((a, b) => a - b);
+  const selection = [...(_pick.node._dbSel || [])].sort((a, b) => a - b);
   if (!selection.length) {
-    _pick.node._dbPickStatus?.("Select at least one image, or Cancel.");
+    pickStatus("Select at least one image, or Cancel.");
     return;
   }
+  pickStatus(`Sending ${selection.length}…`);
   finishPick(selection);
 }
 function cancelPick() {
-  if (_pick) finishPick([]);
+  if (!_pick) return;
+  pickStatus("Cancelling…");
+  finishPick([], { forceCloseOnError: true });
 }
 
 // ── Image picker popup ──────────────────────────────────────────────────────
@@ -142,11 +170,25 @@ api.addEventListener(PICK_EVENT, (e) => {
           app.graph?.getNodeById?.(d.node_id)
         : null;
     if (!node) {
-      postPick(
-        d.token,
-        Array.from({ length: d.count || d.images.length }, (_, i) => i),
-      ).catch((err) =>
-        console.error("[DirtyBirds] Sampler pick fallback failed:", err),
+      // Stay silent. This used to answer "keep every image" on the user's
+      // behalf, which is a confirmation gate failing OPEN -- and send_sync
+      // broadcasts the pick to EVERY connected client, not just the one
+      // driving the run. A second ComfyUI tab, a stale tab, or any tab with a
+      // different workflow loaded cannot resolve node_id, so it auto-approved
+      // the whole batch milliseconds after the picker opened. _PickState locks
+      // the token on the first reply, so the real user's Cancel then landed on
+      // a spent token and was rejected: the picker appeared, Cancel did
+      // nothing, and every image went downstream anyway.
+      //
+      // Answering nothing is the safe move and needs no fallback of its own:
+      // the sampler stops waiting at its Pick Timeout and treats no reply as
+      // an empty selection, which raises InterruptProcessingException and ends
+      // the run cleanly. A client that cannot see the node has no business
+      // deciding what that node keeps.
+      console.debug(
+        `[DirtyBirds] Sampler pick for node ${d.node_id} ignored: not in this ` +
+          `tab's graph. If this is the tab running the graph, the picker will ` +
+          `not open and the run stops at its Pick Timeout.`,
       );
       return;
     }
@@ -515,6 +557,9 @@ app.registerExtension({
       overlayBtn.addEventListener("click", () => {
         if (overlayWidget) overlayWidget.value = !overlayWidget.value;
         paintOutputButtons();
+        // Same collapse as the batch button — Text Overlay turns the picker off,
+        // so the results panel must fold away with it.
+        syncPickerVisibility();
         node.setDirtyCanvas(true, true);
       });
       paintOutputButtons();
@@ -535,7 +580,10 @@ app.registerExtension({
         return result;
       };
       function syncPickerVisibility() {
-        const showSelect = !batchOn() && !!node._dbActivePick;
+        // pickerOff(), not batchOn(): Text Overlay suppresses the picker too, so
+        // checking batch mode alone left the results panel expanded after an
+        // overlay run with nothing to pick.
+        const showSelect = !pickerOff() && !!node._dbActivePick;
         const names = ["db_payofflabel", "db_payoff_imgs", "db_payoff_pick"];
         for (const w of node.widgets || []) {
           if (!names.includes(w.name)) continue;
@@ -606,7 +654,7 @@ app.registerExtension({
         {
           serialize: false,
           height: 96,
-          getMinHeight: () => Math.max(96, imgPanel.scrollHeight || 96),
+          getMinHeight: () => panelHeight(),
         },
       );
       widthEls.push(imgPanel);
@@ -627,7 +675,20 @@ app.registerExtension({
         }
         requestAnimationFrame(() =>
           requestAnimationFrame(() => {
-            node.setSize(node.computeSize());
+            const needed = node.computeSize();
+            // Grow-only while the panel is up. This used to setSize()
+            // unconditionally, one frame AFTER syncImgH had already grown the
+            // node for the cards — and at that point the <img> elements have not
+            // loaded, so imgPanel.scrollHeight is still the 96px floor. The node
+            // snapped back to the empty height and ComfyUI kept drawing Output,
+            // the mode buttons and Pick Timeout at their old offsets, on top of
+            // the images, with the last card outside the node body.
+            if (shown) {
+              if ((node.size?.[1] || 0) < needed[1])
+                node.setSize([node.size[0], needed[1]]);
+            } else {
+              node.setSize(needed);
+            }
             node.setDirtyCanvas(true, true);
           }),
         );
@@ -670,9 +731,46 @@ app.registerExtension({
       });
       widthEls.push(pickTimeout.row);
 
+      // One result card: the 150px image cap in .db-pick-card img, plus its
+      // 1px border top and bottom. Kept in sync with style.css by
+      // test_sampler_audition_panel.py.
+      const CARD_H = 152;
+      const CARD_GAP = 6;
+
+      // Cached, because getMinHeight is on LiteGraph's per-frame layout path.
+      // Reading imgPanel.scrollHeight there forces a synchronous layout flush
+      // on every frame the node is visible, which stalls the whole canvas once
+      // you zoom in close enough for the node to be drawn at size. The height
+      // only changes when the card set changes, so recompute it there instead.
+      let panelH = 96;
+
+      function panelHeight() {
+        return panelH;
+      }
+
+      function recomputePanelHeight() {
+        // Computed from the card count, not measured. imgPanel.scrollHeight is
+        // read inside a rAF that can land before the grid's row heights
+        // resolve, and a short reading means the widget reserves less than the
+        // grid paints — .db-pick-grid is overflow:visible, so the images then
+        // render straight over Output, the mode buttons and Pick Timeout.
+        const cards = imgPanel.querySelectorAll(".db-pick-card").length;
+        if (!cards) {
+          panelH = 96;
+          return panelH;
+        }
+        const rows = Math.ceil(cards / (cards > 1 ? 2 : 1));
+        panelH = Math.max(
+          96,
+          rows * CARD_H + (rows - 1) * CARD_GAP,
+          imgPanel.scrollHeight || 0,
+        );
+        return panelH;
+      }
+
       function syncImgH() {
         requestAnimationFrame(() => {
-          const h = Math.max(96, imgPanel.scrollHeight || 96);
+          const h = recomputePanelHeight();
           if (imgWidget) imgWidget.computedHeight = h;
           // Grow the NODE too. Reserving space on the widget alone left the node
           // at its empty height, so ComfyUI kept drawing Output, the mode
@@ -854,6 +952,16 @@ app.registerExtension({
         node._dbActivePick = false;
         setPickRowShown(false);
         imgPanel.innerHTML = "";
+        // Picker off (Batch mode or Text Overlay) means the run was never about
+        // choosing an image, so the results panel has no job to do. Showing it
+        // anyway grew the node by a card's height on every queue during
+        // batch testing. The images still flow downstream untouched.
+        if (pickerOff()) {
+          recomputePanelHeight();
+          setImageSelectShown(false);
+          imgPanel.appendChild(imgEmpty);
+          return;
+        }
         if (!imgs || !imgs.length) {
           setImageSelectShown(false);
           imgPanel.appendChild(imgEmpty);

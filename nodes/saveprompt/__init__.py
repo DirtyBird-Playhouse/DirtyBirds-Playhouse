@@ -18,6 +18,7 @@ from server import PromptServer
 
 from ..utils.paths import pack_root
 from .summary import generation_summary, summary_line
+from .._pipe_type import PIPE_INPUT
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class DirtyBirdsSavePrompt:
                 "prompts_file": ("STRING", {"default": DEFAULT_PROMPTS_FILE}),
             },
             "optional": {
-                "pipe": ("DIRTYBIRDS_PIPE",),
+                "pipe": (PIPE_INPUT,),
                 "images": ("IMAGE",),
                 "positive": (
                     "STRING",

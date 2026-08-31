@@ -28,6 +28,7 @@ through with ``images`` updated.
 import copy
 
 from .._compare import compare_preview, resolution
+from .._pipe_type import PIPE_INPUT, PIPE_TYPE
 
 # sharpen is pure torch and always available.
 from .sharpen import (
@@ -176,11 +177,11 @@ class DirtyBirdsFinish:
             # connected" is in finish() instead, same as 💾 Save Prompt.
             "optional": {
                 "image": ("IMAGE",),
-                "db_pipe": ("DIRTYBIRDS_PIPE",),
+                "db_pipe": (PIPE_INPUT,),
             },
         }
 
-    RETURN_TYPES = ("DIRTYBIRDS_PIPE", "IMAGE")
+    RETURN_TYPES = (PIPE_TYPE, "IMAGE")
     RETURN_NAMES = ("db_pipe", "image")
     FUNCTION = "finish"
     CATEGORY = "DirtyBirds"

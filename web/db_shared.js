@@ -645,7 +645,11 @@ export function makeCompareView(height = 190) {
   // what it was before.
   let showAfter = true;
   const paint = () => {
+    // Both images are hidden/shown, never just the top one. Leaving `before`
+    // permanently displayed underneath keeps its decoded bitmap alive for the
+    // life of the node, which after an upscale is the larger half of the cost.
     after.style.display = showAfter ? "block" : "none";
+    before.style.display = showAfter ? "none" : "block";
     state.textContent = showAfter ? "After" : "Before";
   };
   el.addEventListener("click", () => {
@@ -771,6 +775,11 @@ export function makeThumbGrid() {
         const card = document.createElement("div");
         card.className = "db-thumb-card";
         const img = document.createElement("img");
+        // Off-screen cards in a long strip cost nothing until scrolled to, and
+        // decoding off the main thread keeps the canvas interactive while a
+        // batch's worth of thumbnails arrives at once.
+        img.loading = "lazy";
+        img.decoding = "async";
         img.src = src;
         img.className = "db-thumb-img";
         if (onLoad) img.addEventListener("load", onLoad, { once: true });
@@ -817,6 +826,22 @@ export function openPickerModal({
       `&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${encodeURIComponent(img.type || "temp")}`);
   let relayout = () => {};
 
+  // relayout() forces a synchronous layout (getBoundingClientRect) and then
+  // writes the grid template. Calling it straight from each image's load
+  // handler meant one read/write thrash per image on a full-screen grid --
+  // every arrival re-laid out every card already in it. Coalesce a burst of
+  // loads into a single pass on the next frame; the geometry only depends on
+  // the image count and the box, so running it once is running it enough.
+  let relayoutPending = false;
+  const scheduleRelayout = () => {
+    if (relayoutPending) return;
+    relayoutPending = true;
+    requestAnimationFrame(() => {
+      relayoutPending = false;
+      relayout();
+    });
+  };
+
   const overlay = document.createElement("div");
   overlay.className = "db-flyout-overlay db-sampler-picker-overlay";
   const panel = document.createElement("div");
@@ -846,9 +871,10 @@ export function openPickerModal({
     wrap.className = "db-lp-img-wrap";
     const thumb = document.createElement("img");
     thumb.className = "db-lp-thumb";
+    thumb.decoding = "async";
     const reveal = () => {
       thumb.classList.add("db-lp-thumb-loaded");
-      relayout();
+      scheduleRelayout();
     };
     thumb.addEventListener("load", reveal);
     thumb.addEventListener("error", () => {
@@ -965,13 +991,13 @@ export function openPickerModal({
 
   const close = () => {
     overlay.remove();
-    window.removeEventListener("resize", relayout);
+    window.removeEventListener("resize", scheduleRelayout);
     document.removeEventListener("keydown", keydown);
   };
 
   updateStatus();
   requestAnimationFrame(relayout);
-  window.addEventListener("resize", relayout);
+  window.addEventListener("resize", scheduleRelayout);
   document.addEventListener("keydown", keydown);
 
   return {

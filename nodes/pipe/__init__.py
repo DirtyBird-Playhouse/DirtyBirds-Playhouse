@@ -18,6 +18,7 @@ The pipe is the same Easy_Use-compatible dict the Loader builds:
 
 import copy
 import logging
+from .._pipe_type import PIPE_INPUT, PIPE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,12 @@ class DirtyBirdsPipeOut:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "db_pipe": ("DIRTYBIRDS_PIPE",),
+                "db_pipe": (PIPE_INPUT,),
             },
         }
 
     RETURN_TYPES = (
-        "DIRTYBIRDS_PIPE",
+        PIPE_TYPE,
         "MODEL",
         "CLIP",
         "VAE",
@@ -112,7 +113,7 @@ class DirtyBirdsPipeIn:
             "required": {},
             "optional": {
                 # Start from an existing pipe; wired sockets below override it.
-                "db_pipe": ("DIRTYBIRDS_PIPE",),
+                "db_pipe": (PIPE_INPUT,),
                 "model": ("MODEL",),
                 "clip": ("CLIP",),
                 "vae": ("VAE",),
@@ -132,7 +133,7 @@ class DirtyBirdsPipeIn:
             },
         }
 
-    RETURN_TYPES = ("DIRTYBIRDS_PIPE",)
+    RETURN_TYPES = (PIPE_TYPE,)
     RETURN_NAMES = ("db_pipe",)
     FUNCTION = "pack"
     CATEGORY = "DirtyBirds"

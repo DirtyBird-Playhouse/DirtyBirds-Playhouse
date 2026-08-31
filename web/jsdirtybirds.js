@@ -1642,7 +1642,13 @@ app.registerExtension({
           const resp = await fetch("/api/lm/register-nodes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ nodes: workflowNodes }),
+            // LoRA Manager keys each workflow registry by the active ComfyUI
+            // websocket client. Current releases reject registrations without
+            // this value, which made "Send to node" silently lose DirtyBirds.
+            body: JSON.stringify({
+              nodes: workflowNodes,
+              client_id: api.clientId ?? api.initialClientId ?? "",
+            }),
           });
           if (!resp.ok)
             console.warn(

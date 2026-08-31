@@ -185,9 +185,9 @@ def test_every_pass_is_off_by_default():
 
     assert schema["upscale_model"][1]["default"] == module.UPSCALE_OFF
     assert schema["face_restore"][1]["default"] == module.FACE_RESTORE_OFF
-    # Sharpen is the exception: it carries the blueprint's own default of 0.5,
+    # Sharpen is the exception: it carries the blueprint's own default of 0.15,
     # matching the node it is ported from rather than starting at off.
-    assert schema["sharpen"][1]["default"] == module.SHARPEN_DEFAULT == 0.5
+    assert schema["sharpen"][1]["default"] == module.SHARPEN_DEFAULT == 0.15
     assert schema["sharpen"][1]["max"] == 3.0
     assert schema["sharpen"][1]["step"] == 0.05
 

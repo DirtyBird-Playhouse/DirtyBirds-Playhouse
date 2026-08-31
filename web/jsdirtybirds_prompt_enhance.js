@@ -49,7 +49,7 @@ const ENHANCE_RESPONSE_H = 90;
 const LM_STUDIO = {
   label: "LM Studio",
   tag: "LM",
-  endpoint: "http://localhost:1234/v1",
+  endpoint: "http://127.0.0.1:1234/v1",
 };
 
 function showPromptFlyout(title, prompts, current, onPick) {
@@ -184,6 +184,8 @@ app.registerExtension({
       const promptFileWidget = hideWidget("prompt_file");
 
       let promptOptions = [];
+      let lmStatusRequest = 0;
+      let lmStatusTimer = null;
 
       const panel = document.createElement("div");
       panel.className = "db-enhance-panel";
@@ -427,17 +429,37 @@ app.registerExtension({
           return;
         }
         const info = LM_STUDIO;
-        node._dbEnhanceLmStatus = `${info.label}: checking`;
-        lmStatus.textContent = node._dbEnhanceLmStatus;
-        lmStatus.dataset.tone = "";
-        const data = await fetchJSON(
-          "/dirtybirds/lm-models?endpoint=" + encodeURIComponent(info.endpoint),
-        );
+        const requestId = ++lmStatusRequest;
+        // Only show "checking" before the first result. Background probes must
+        // not replace a known-good state with a several-second loading flash.
+        if (!node._dbEnhanceLmStatus) {
+          node._dbEnhanceLmStatus = `${info.label}: checking`;
+          lmStatus.textContent = node._dbEnhanceLmStatus;
+          lmStatus.dataset.tone = "";
+        }
+        let data = null;
+        try {
+          const response = await fetch(
+            "/dirtybirds/lm-models?endpoint=" + encodeURIComponent(info.endpoint),
+            { cache: "no-store" },
+          );
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          data = await response.json();
+        } catch (error) {
+          data = { models: [], error: error?.message || String(error) };
+        }
+        // Node creation and workflow restoration can start overlapping probes.
+        // Never let an older, slower result replace the latest status.
+        if (requestId !== lmStatusRequest) return;
         const models = data?.models || [];
         if (models.length) {
           node._dbEnhanceLmStatus = `${info.label}: ready`;
           lmStatus.title = models[0];
           node._dbEnhanceLmTone = "ok";
+        } else if (!data?.error) {
+          node._dbEnhanceLmStatus = `${info.label}: no model loaded`;
+          lmStatus.title = `LM Studio is reachable at ${info.endpoint}`;
+          node._dbEnhanceLmTone = "err";
         } else {
           node._dbEnhanceLmStatus = `${info.label}: offline`;
           lmStatus.title = data?.error || `No model served at ${info.endpoint}`;
@@ -560,8 +582,18 @@ app.registerExtension({
         refreshLmStatus();
       };
 
+      const previousOnRemoved = node.onRemoved;
+      node.onRemoved = function () {
+        if (lmStatusTimer) clearInterval(lmStatusTimer);
+        lmStatusTimer = null;
+        return previousOnRemoved?.apply(this, arguments);
+      };
+
       loadPromptOptions();
       refreshLmStatus();
+      // A temporary startup miss must not leave the node falsely offline for
+      // the rest of the session. Keep the indicator aligned with LM Studio.
+      lmStatusTimer = setInterval(refreshLmStatus, 10000);
       paintPower();
       node._dbEnhancePaintResponse();
       requestAnimationFrame(syncPanelH);

@@ -19,6 +19,7 @@ from .dimension_store import (
     save_dimensions as persist_dimensions,
 )
 from .seed_util import resolve_seed
+from .._pipe_type import PIPE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +256,7 @@ class DirtyBirdsLoader:
             },
         }
 
-    RETURN_TYPES = ("DIRTYBIRDS_PIPE",)
+    RETURN_TYPES = (PIPE_TYPE,)
     RETURN_NAMES = ("db_pipe",)
     FUNCTION = "process"
     CATEGORY = "DirtyBirds"

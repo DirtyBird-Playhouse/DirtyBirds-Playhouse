@@ -20,7 +20,10 @@ from ..utils.paths import pack_root, user_files_dir
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ENDPOINT = "http://localhost:1234/v1"
+# LM Studio commonly binds IPv4 only on Windows. Using ``localhost`` can try
+# ::1 first and make a healthy server look offline until the IPv6 attempt times
+# out, so use the loopback address explicitly.
+DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1"
 BACKEND_LABEL = "LM Studio"
 
 

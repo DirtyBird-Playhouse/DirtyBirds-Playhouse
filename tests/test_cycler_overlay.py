@@ -3,6 +3,8 @@ from pathlib import Path
 
 import torch
 
+from _source_text import read_source
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -119,3 +121,27 @@ def test_picker_bypass_is_decided_by_the_buttons_alone():
     assert overlay.should_bypass_picker(False, True)
     assert overlay.should_bypass_picker(True, True)
     assert not overlay.should_bypass_picker(False, False)
+
+
+def test_sampler_consumes_the_whole_cycler_batch_in_one_call():
+    """A wired multi-line Cycler must not turn one picker into N pickers.
+
+    Prompt Builder declares OUTPUT_IS_LIST on positive/cycler_line, so ComfyUI
+    maps every downstream node lacking INPUT_IS_LIST over the cycler lines one
+    at a time -- including the Sampler. A mapped node only releases its output
+    once every mapped call has finished, so the picker opened once per line and
+    the picked image never reached Finish / Save Image & Prompt: the run just
+    looked like it kept re-sampling after every pick.
+
+    The Sampler must instead declare INPUT_IS_LIST so ComfyUI hands it the
+    whole cycler batch in a single call, and it must call the blocking picker
+    handshake (_wait_for_pick) exactly once for that whole batch, not once per
+    pipe in the loop that samples them.
+    """
+    sampler_source = read_source(ROOT / "nodes" / "sampler" / "__init__.py")
+    assert "INPUT_IS_LIST = True" in sampler_source
+    assert sampler_source.count("selection = _wait_for_pick(") == 1
+    # The one call site sits in sample(), after the per-pipe sampling loop --
+    # not inside _sample_one, which is what would put it back on every pipe.
+    sample_body = sampler_source.split("def sample(")[1]
+    assert "_wait_for_pick(" in sample_body

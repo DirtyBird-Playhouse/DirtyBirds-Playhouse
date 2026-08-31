@@ -574,6 +574,15 @@ def test_generation_setup_has_no_external_custom_node_dependency():
                 assert "impact" not in stripped.lower()
 
 
+def test_lora_manager_registry_includes_the_comfy_client_id():
+    """LoRA Manager stores node registries per websocket client and rejects
+    register-nodes requests that omit client_id."""
+    loader = read_source(ROOT / "web" / "jsdirtybirds.js")
+    registry = loader.split('fetch("/api/lm/register-nodes"', 1)[1][:900]
+    assert "client_id:" in registry
+    assert "api.clientId" in registry
+
+
 def test_image_tools_include_the_url_source_control():
     image = read_source(ROOT / "web" / "jsdirtybirds_image.js")
     assert (
@@ -664,6 +673,13 @@ def test_prompt_enhance_is_a_plain_text_in_text_out_node():
     assert "text_in: sourceText" in frontend
     assert 'responseBox.addEventListener("input"' in frontend
     assert "node.resizable = true" in frontend
+    # Status probes recover from a transient startup miss and overlapping
+    # workflow-restore checks cannot overwrite a newer successful result.
+    assert "requestId !== lmStatusRequest" in frontend
+    assert "setInterval(refreshLmStatus, 10000)" in frontend
+    assert 'endpoint: "http://127.0.0.1:1234/v1"' in frontend
+    assert "if (!node._dbEnhanceLmStatus)" in frontend
+    assert "no model loaded" in frontend
 
     # The old auto-detect-and-apply-to-Prompt-Builder machinery is gone.
     assert "promptBuildersByDistance" not in frontend
