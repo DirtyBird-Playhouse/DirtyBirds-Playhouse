@@ -18,7 +18,7 @@ lora_meta_cache.json
 web/previews/
 
 # User data directory (symlinks to external DirtyBirds-Playhouse_User)
-user_files/
+user_files
 
 # Master wildcard configuration — local user data only
 master.yaml
