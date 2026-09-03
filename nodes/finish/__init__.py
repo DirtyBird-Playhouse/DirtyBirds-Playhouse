@@ -27,6 +27,8 @@ through with ``images`` updated.
 
 import copy
 
+import torch
+
 from .._compare import compare_preview, resolution
 from .._pipe_type import PIPE_INPUT, PIPE_TYPE
 
@@ -169,6 +171,19 @@ class DirtyBirdsFinish:
                         "0 means use the model's own scale.",
                     },
                 ),
+                # LAST: saved workflows serialize widget values positionally.
+                "face_restore_strength": (
+                    "FLOAT",
+                    {
+                        "default": 0.75,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.05,
+                        "tooltip": "Blend between the original upscaled face and "
+                        "the restored face. Lower values retain more freckles, "
+                        "pores, and identity detail; 1 uses the restored face fully.",
+                    },
+                ),
             },
             # Both optional, because either one can supply the image. Marking
             # `image` required makes ComfyUI refuse to queue a graph that feeds
@@ -200,6 +215,7 @@ class DirtyBirdsFinish:
         face_restore=FACE_RESTORE_OFF,
         codeformer_fidelity=0.5,
         sharpen=SHARPEN_OFF,
+        face_restore_strength=0.75,
         image=None,
         db_pipe=None,
     ):
@@ -233,9 +249,21 @@ class DirtyBirdsFinish:
                 fidelity = float(codeformer_fidelity)
             except (TypeError, ValueError):
                 fidelity = 0.5
-            final_image = FaceRestoreManager.get_instance().restore(
-                final_image, method, fidelity, align=True
+            original_faces = final_image
+            restored_faces = FaceRestoreManager.get_instance().restore(
+                original_faces, method, fidelity, align=True
             )
+            try:
+                restore_strength = max(0.0, min(1.0, float(face_restore_strength)))
+            except (TypeError, ValueError):
+                restore_strength = 0.75
+            # Model-backed restoration runs on ComfyUI's model device, while
+            # incoming IMAGE tensors commonly live on CPU. lerp requires both
+            # operands to share device and dtype.
+            blend_source = original_faces.to(
+                device=restored_faces.device, dtype=restored_faces.dtype
+            )
+            final_image = torch.lerp(blend_source, restored_faces, restore_strength)
 
         # 3. Sharpen last, for the same reason. Its stencil has to widen by
         # however much the upscale enlarged the image, or the same strength

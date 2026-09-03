@@ -59,6 +59,7 @@ app.registerExtension({
           "face_restore",
           "codeformer_fidelity",
           "sharpen",
+          "face_restore_strength",
         ].map(
           (name) => [name, hideWidget(node, name)],
         ),
@@ -157,12 +158,29 @@ app.registerExtension({
       fidelityField.style.gridTemplateColumns = "minmax(0, 1fr)";
       fidelityField.append(fidelityRow);
 
+      const restoreStrengthRow = slider(
+        "Restore",
+        widgets.face_restore_strength,
+        0,
+        1,
+        0.05,
+        twoDp,
+      );
+      const restoreStrengthField = document.createElement("div");
+      restoreStrengthField.className = "db-finish-field";
+      restoreStrengthField.style.gridTemplateColumns = "minmax(0, 1fr)";
+      restoreStrengthField.append(restoreStrengthRow);
+
       // Fidelity is a CodeFormer-only parameter; GFPGAN ignores it entirely.
       // Dim rather than hide, so the control doesn't move under the cursor.
       function paintFidelity(method) {
         fidelityField.classList.toggle(
           "db-finish-inert",
           String(method) !== CODEFORMER,
+        );
+        restoreStrengthField.classList.toggle(
+          "db-finish-inert",
+          String(method ?? "") === "Off",
         );
       }
 
@@ -196,6 +214,10 @@ app.registerExtension({
       // default and 3 its own maximum; anything else would be my guess.
       hint.textContent = "0 = off · blueprint default 0.15";
       right.append(hint);
+      right.append(
+        makeSectionLabel("Face Detail"),
+        restoreStrengthField,
+      );
 
       const grid = document.createElement("div");
       grid.className = "db-finish-grid";

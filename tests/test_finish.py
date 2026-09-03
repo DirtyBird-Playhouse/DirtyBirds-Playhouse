@@ -185,6 +185,7 @@ def test_every_pass_is_off_by_default():
 
     assert schema["upscale_model"][1]["default"] == module.UPSCALE_OFF
     assert schema["face_restore"][1]["default"] == module.FACE_RESTORE_OFF
+    assert schema["face_restore_strength"][1]["default"] == 0.75
     # Sharpen is the exception: it carries the blueprint's own default of 0.15,
     # matching the node it is ported from rather than starting at off.
     assert schema["sharpen"][1]["default"] == module.SHARPEN_DEFAULT == 0.15
@@ -262,6 +263,16 @@ def test_finish_ui_marks_fidelity_inert_for_non_codeformer():
     assert "db-finish-inert" in source
     css = (ROOT / "web" / "css" / "style.css").read_text(encoding="utf-8")
     assert ".db-finish-inert" in css
+
+
+def test_face_detail_control_fits_existing_finish_node_height():
+    """The blend belongs in the shorter right column so saved nodes do not clip it."""
+    source = (ROOT / "web" / "jsdirtybirds_finish.js").read_text(encoding="utf-8")
+
+    assert 'makeSectionLabel("Face Detail")' in source
+    assert "right.append(\n        makeSectionLabel(\"Face Detail\")," in source
+    left_body = source.split("left.append(", 1)[1].split(");", 1)[0]
+    assert "restoreStrengthField" not in left_body
 
 
 # --------------------------------------------------------------------------- #
@@ -533,7 +544,7 @@ def test_upscale_scale_is_ignored_when_no_upscaler_is_selected():
     assert upscale.upscale_image(image, "None", 4) is image
 
 
-def test_upscale_scale_is_the_last_input():
+def test_new_finish_inputs_are_appended_without_renumbering_saved_workflows():
     """New widgets go at the END of INPUT_TYPES, never in the middle.
 
     ComfyUI stores a saved workflow's widget values positionally, so inserting
@@ -546,8 +557,8 @@ def test_upscale_scale_is_the_last_input():
     module = _load_module()
     required = list(module.DirtyBirdsFinish.INPUT_TYPES()["required"])
 
-    assert required[-1] == "upscale_scale", (
-        "upscale_scale must stay last; moving it renumbers every saved "
+    assert required[-2:] == ["upscale_scale", "face_restore_strength"], (
+        "new controls must stay appended; moving them renumbers every saved "
         f"workflow's widget values. Order is currently {required}"
     )
     # The original four, still in their original order.
@@ -557,3 +568,30 @@ def test_upscale_scale_is_the_last_input():
         "codeformer_fidelity",
         "sharpen",
     ]
+
+
+def test_face_restore_strength_preserves_original_texture(monkeypatch):
+    module = _load_module()
+    original = torch.tensor([[[[0.1, 0.4, 0.9]]]], dtype=torch.float64)
+    restored = torch.tensor([[[[0.9, 0.2, 0.1]]]], dtype=torch.float32)
+
+    class FakeManager:
+        @classmethod
+        def get_instance(cls):
+            return cls()
+
+        def restore(self, image, method, fidelity, align=True):
+            return restored
+
+    monkeypatch.setattr(module, "FaceRestoreManager", FakeManager)
+    _, blended = module.DirtyBirdsFinish().finish(
+        image=original,
+        face_restore="GFPGAN",
+        face_restore_strength=0.25,
+        sharpen=0,
+    )
+
+    expected_source = original.to(device=restored.device, dtype=restored.dtype)
+    assert blended.device == restored.device
+    assert blended.dtype == restored.dtype
+    assert torch.allclose(blended, torch.lerp(expected_source, restored, 0.25))

@@ -1,4 +1,5 @@
 import importlib.util
+import random
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,17 @@ def test_unfiltered_random_can_reach_every_preset():
     assert picks == set(PRESETS)
 
 
+def test_random_resolution_is_reproducible_from_the_generation_seed():
+    first = dimension_store.pick_random_dimension(
+        "__random__", PRESETS, rng=random.Random(4242)
+    )
+    repeated = dimension_store.pick_random_dimension(
+        "__random__", PRESETS, rng=random.Random(4242)
+    )
+
+    assert first == repeated
+
+
 def test_random_falls_back_when_the_requested_shape_has_no_presets():
     only_square = {"square": [1024, 1024]}
     assert (
@@ -116,10 +128,11 @@ def test_random_sentinels_agree_between_backend_and_ui():
         assert sentinel in store
         assert sentinel in frontend
 
-    # Every random shape must force re-execution and re-roll, not just the
-    # unfiltered one — that was the original "stuck resolution" shape of bug.
-    assert "is_random_dimension(dimension) or seed_mode ==" in loader
-    assert "pick_random_dimension(dimension, dims_data)" in loader
+    # Random resolution follows the resolved generation seed. Random seed mode
+    # forces each queue to execute; fixed mode can reproduce and cache the roll.
+    assert 'if seed_mode == "random":' in loader
+    assert "is_random_dimension(dimension) or seed_mode ==" not in loader
+    assert "rng=random.Random(seed)" in loader
     assert 'dimension == "__random__"' not in loader
 
 

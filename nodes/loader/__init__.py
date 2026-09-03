@@ -2,6 +2,7 @@ import torch
 import json
 import os
 import logging
+import random
 from collections import OrderedDict
 import folder_paths
 from aiohttp import web
@@ -280,11 +281,10 @@ class DirtyBirdsLoader:
 
     @classmethod
     def IS_CHANGED(cls, dimension="", seed_mode="fixed", **kwargs):
-        # Force re-execution every run when resolution OR seed is randomized so a
-        # fresh value is picked each time, rather than caching one random result.
-        if is_random_dimension(dimension) or seed_mode == "random":
-            import random
-
+        # Random seed mode drives both the sampling seed and any random resolution,
+        # so it must execute on every queue. With a fixed seed, random resolution
+        # is deterministic and normal input caching is desirable.
+        if seed_mode == "random":
             return random.random()
         return dimension
 
@@ -483,8 +483,12 @@ class DirtyBirdsLoader:
         if workflow == "Text2Image":
             if is_random_dimension(dimension):
                 # 🎲 Random (optionally filtered to portrait/landscape/square)
-                # rolls here, per run — IS_CHANGED already forces re-execution.
-                dimension = pick_random_dimension(dimension, dims_data)
+                # is tied to the resolved generation seed. A fixed seed therefore
+                # reproduces both image noise and resolution; random seed mode
+                # naturally re-rolls both on every execution.
+                dimension = pick_random_dimension(
+                    dimension, dims_data, rng=random.Random(seed)
+                )
                 logger.info("[DirtyBirds] Random resolution selected: %s", dimension)
             # Resolution is stored as a "WIDTHxHEIGHT" string (ratio grid + custom
             # picker). Prefer the named preset, else parse the raw WxH directly.
