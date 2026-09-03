@@ -92,7 +92,7 @@ def test_seed_row_is_first_and_cycler_travels_through_db_pipe():
     assert prompt_source.count('className = "db-prompt-primary-col"') == 2
     assert 'primaryDivider.className = "db-prompt-primary-divider"' in prompt_source
     assert (
-        "toyboxGrid.append(loadBtn, booruBtn, captionBtn, cyclerBtn)" in prompt_source
+        "toyboxGrid.append(loadBtn, booruBtn, cyclerBtn)" in prompt_source
     )
     assert 'makeSectionLabel("User Prompt")' in prompt_source
     assert 'makeCollapsibleSectionLabel("Prompt Tools"' in prompt_source
@@ -150,7 +150,8 @@ def test_optional_panels_share_the_collapsible_ui_contract():
     enhance = read_source(ROOT / "web" / "jsdirtybirds_prompt_enhance.js")
     savePrompt = read_source(ROOT / "web" / "jsdirtybirds_saveprompt.js")
 
-    assert "export function addCollapsibleTitle" in shared
+    assert "export function makeCollapsibleSectionLabel" in shared
+    assert "export function addCollapsibleTitle" not in shared
     assert "export function setDOMWidgetShown" in shared
     assert 'section("Embeddings", "embeddings", state, applyLayout)' in loader
     assert 'section("LoRAs", "loras", state, applyLayout)' in loader
@@ -248,9 +249,8 @@ def test_generation_setup_has_truthful_grouping_and_stable_resizing():
     assert "function naturalNodeHeight(panelHeight)" in loader
     assert "node.min_height = 0" in loader
     assert "applyLayout(false, savedUiVersion < UI_VERSION)" in loader
-    # Only the plain label builder is reused, never the widget-registering
-    # helpers (a comment documents why; check the call form, not the mention).
-    assert "addCollapsibleTitle(" not in loader
+    # Only the plain label builder is reused, never another widget-registering
+    # helper: the Loader's panel remains its sole DOM widget.
     assert "setDOMWidgetShown(" not in loader
     assert "formerWidgetNames" not in loader
     assert "db_generation_ui_version" in loader
@@ -633,13 +633,18 @@ def test_dirty_talk_optional_tool_states_are_clear_and_persisted():
     assert "Peep Show" not in image_backend
 
     # Image-dependent tools are unavailable until Image Loader has an image.
-    assert "button.disabled = !available" in prompt
+    assert "booruBtn.disabled = !available" in prompt
     assert (
-        'button.title = available ? "" : "Load an image in Image Loader first"'
+        'booruBtn.title = available ? "" : "Load an image in Image Loader first"'
         in prompt
     )
     assert 'new CustomEvent("dirtybirds:image-source-changed")' in image
     assert ".db-prompt-tool-grid .db-lib-btn:disabled" in style
+
+    # Image captioning belongs to the standalone Wildcard Editor, not Prompt Builder.
+    assert 'captionBtn.textContent = "Caption"' not in prompt
+    assert "/dirtybirds/url-caption" not in prompt
+    assert "DirtyBirds.CaptionEndpoint" not in prompt
 
     # The preview is named for what it shows and empty headings are subdued.
     assert 'makeSectionLabel("Preview")' in prompt
@@ -652,6 +657,38 @@ def test_dirty_talk_optional_tool_states_are_clear_and_persisted():
     assert "node.properties.db_toybox_expanded = toyboxExpanded" in prompt
     assert "!!node.properties?.db_toybox_expanded" in prompt
     assert "node._dbRestoreToyboxState" in prompt
+
+
+def test_image_loader_captioning_uses_shared_controls_and_supports_batch():
+    frontend = read_source(ROOT / "web" / "jsdirtybirds_image.js")
+    shared = read_source(ROOT / "web" / "db_shared.js")
+    style = read_source(ROOT / "web" / "css" / "style.css")
+    backend = read_source(ROOT / "nodes" / "image" / "__init__.py")
+    captioning = read_source(ROOT / "nodes" / "image" / "captioning.py")
+
+    assert 'makeCollapsibleSectionLabel("Captioning"' in frontend
+    assert "const captionModes = [\"off\", \"single\", \"batch_folder\"]" in frontend
+    assert "makeInput()" in frontend
+    assert "makeTextarea()" in frontend
+    assert 'RETURN_NAMES = ("image", "mask", "caption", "all_captions")' in backend
+    assert "run_caption_directory(" in backend
+    assert 'sidecar = os.path.splitext(path)[0] + ".txt"' in captioning
+    assert 'NVIDIA_ENDPOINT = "https://integrate.api.nvidia.com/v1"' in captioning
+    assert "def caption_image_local(" in captioning
+    assert "def build_caption_prompt(" in captioning
+    assert 'DEFAULT_HOST_ENDPOINT = "http://127.0.0.1:8000/v1"' in captioning
+    assert '"MODEL"' in frontend
+    assert "db-generation-two-column" in frontend
+    assert "db-image-actions" in frontend
+    assert "makeSelect" in frontend
+    assert ".db-image-panel .db-seg-opt" in style
+    for option in ("clothing", "pose", "background", "camera_angle", "lighting", "age", "use_vulgar", "nsfw", "hair_style"):
+        assert option in frontend
+    assert "caption_prompt_type" in frontend
+    assert "caption_temperature" in frontend
+    assert "caption_options" in frontend
+    assert 'w.type = "hidden"' in shared
+    assert "w.draw = () => {}" in shared
 
 
 def test_prompt_enhance_is_a_plain_text_in_text_out_node():
@@ -673,14 +710,10 @@ def test_prompt_enhance_is_a_plain_text_in_text_out_node():
     assert "text_in: sourceText" in frontend
     assert 'responseBox.addEventListener("input"' in frontend
     assert "node.resizable = true" in frontend
-    # Status probes recover from a transient startup miss and overlapping
-    # workflow-restore checks cannot overwrite a newer successful result.
-    assert "requestId !== lmStatusRequest" in frontend
-    assert "setInterval(refreshLmStatus, 10000)" in frontend
-    assert 'endpoint: "http://127.0.0.1:1234/v1"' in frontend
-    assert "if (!node._dbEnhanceLmStatus)" in frontend
-    assert "no model loaded" in frontend
-
+    # A workflow load/restore must not probe optional LM Studio.
+    assert "refreshLmStatus" not in frontend
+    assert '`${LM_STUDIO.label}: not checked`' in frontend
+    assert '"/dirtybirds/lm-models?endpoint="' not in frontend
     # The old auto-detect-and-apply-to-Prompt-Builder machinery is gone.
     assert "promptBuildersByDistance" not in frontend
     assert "db_muse_source_node_id" not in frontend

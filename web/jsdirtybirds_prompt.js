@@ -334,13 +334,6 @@ app.registerExtension({
       btn.addEventListener("click", (e) => openWildcardMenu(e));
 
       // ── "Load Prompt" button → menu of saved positive prompts ────────────
-      function itemLabel(item) {
-        const text = String(item?.text || "");
-        const short = text.length > 54 ? text.slice(0, 54) + "…" : text;
-        const file = item?.file ? `${item.file}:` : "";
-        return `<span style="color:#69b7ff;font-weight:700;">${escapeHTML(file)}#${item?.line ?? "?"}</span> <span style="color:#d8e1e8;">${escapeHTML(short)}</span>`;
-      }
-
       function normalizePromptItems(data) {
         if (Array.isArray(data?.items)) return data.items;
         return (data?.prompts || []).map((text, i) => ({
@@ -722,7 +715,7 @@ app.registerExtension({
       };
       // ── Booru / Caption tools ───────────────────────────────────────────
       function absolutize(u) {
-        // The caption/booru routes fetch the image server-side with urllib,
+        // The Booru route fetches the image server-side with urllib,
         // which cannot open a root-relative "/view?..." path.
         if (!u) return "";
         try {
@@ -823,58 +816,10 @@ app.registerExtension({
         };
       }
 
-      const captionBtn = makeButton();
-      captionBtn.className = "db-lib-btn db-lora-add-open-btn";
-      captionBtn.textContent = "Caption";
-      captionBtn.addEventListener("click", async () => {
-        const flyout = openCaptionFlyout("Caption", captionBtn);
-        flyout.setStatus("Checking LM Studio...");
-        const lmData = await fetchJSON(
-          "/dirtybirds/lm-models?endpoint=http%3A%2F%2Flocalhost%3A1234%2Fv1",
-        );
-        const models = lmData?.models || [];
-        if (!models.length) {
-          flyout.setStatus(
-            lmData?.error ||
-              "LM Studio offline -- start it and load a vision model.",
-            "err",
-          );
-          return;
-        }
-        flyout.setStatus(`LM Studio: ${models[0]}`);
-        const url = currentImageUrl();
-        if (!url) {
-          flyout.setStatus(
-            "No image -- load one in Image Loader first.",
-            "err",
-          );
-          return;
-        }
-        flyout.setStatus("Captioning image...");
-        const params = new URLSearchParams({
-          url,
-          endpoint: "http://localhost:1234/v1",
-          instruction:
-            "Describe this image as comma-separated image-generation tags. Output only the tags.",
-        });
-        const data = await fetchJSON(
-          `/dirtybirds/url-caption?${params.toString()}`,
-        );
-        const caption = (data?.caption || "").trim();
-        if (!caption) {
-          flyout.setStatus(data?.error || "Caption returned empty.", "err");
-          return;
-        }
-        replaceText(caption);
-        flyout.setStatus("Caption replaced.", "ok");
-        setTimeout(() => flyout.close(), 1200);
-      });
       function paintImageToolAvailability() {
         const available = !!currentImageUrl();
-        for (const button of [booruBtn, captionBtn]) {
-          button.disabled = !available;
-          button.title = available ? "" : "Load an image in Image Loader first";
-        }
+        booruBtn.disabled = !available;
+        booruBtn.title = available ? "" : "Load an image in Image Loader first";
       }
       window.addEventListener(
         "dirtybirds:image-source-changed",
@@ -968,7 +913,7 @@ app.registerExtension({
       cyclerBtn.addEventListener("click", openCyclerFlyout);
       paintCyclerButton();
 
-      toyboxGrid.append(loadBtn, booruBtn, captionBtn, cyclerBtn);
+      toyboxGrid.append(loadBtn, booruBtn, cyclerBtn);
 
       const previewLabel = makeSectionLabel("Preview");
       const previewSplit = document.createElement("div");

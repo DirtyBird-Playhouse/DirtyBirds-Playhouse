@@ -1,0 +1,6 @@
+{
+  "node_type": "DirtyBirdsPrompt",
+  "ordered_widgets": ["positive", "negative", "seed", "reroll_each_run", "cycler_text", "step_enabled", "wildcard_step"],
+  "legacy_shift_value": "(off)",
+  "compatibility": "Only boolean true or integer 1 enables step mode; new widgets append after wildcard_step."
+}

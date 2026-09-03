@@ -98,3 +98,4 @@ async def open_folder(request):
         logger.warning("open-folder failed for %s: %s", key, err)
         return web.json_response({"error": err, "path": path}, status=500)
     return web.json_response({"success": True, "path": path})
+

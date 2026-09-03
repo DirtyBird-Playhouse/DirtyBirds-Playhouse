@@ -19,6 +19,13 @@ Navigation with rough token estimates. Load the minimum that answers the task.
 | Edit a `web/*.js` extension     | `docs/learnings/web-extension-patterns.md` | ~500        |
 | Build/adjust node UI            | `docs/learnings/ui-conventions.md`         | ~400        |
 | Node I/O contract or HTTP route | `docs/learnings/api-design.md`             | ~400        |
+| Behavior-preserving refactor    | `docs/refactor/BASELINE.md`                 | ~700        |
+| Dead-code deletion record       | `docs/refactor/PASS_1_DEAD_CODE.md`         | ~450        |
+| OpenAI protocol refactor        | `docs/refactor/PASS_2_PROTOCOL_HELPERS.md`  | ~500        |
+| Loader library boundaries       | `docs/refactor/PASS_3_LIBRARY_BOUNDARIES.md` | ~550       |
+| Image Loader entrypoint         | `docs/refactor/PASS_4_IMAGE_ENTRYPOINT.md`  | ~450        |
+| Shared Sampler components       | `docs/refactor/PASS_5_SHARED_SAMPLER_COMPONENTS.md` | ~400   |
+| Sampler picker state            | `docs/refactor/PASS_6_PICK_STATE.md`          | ~250        |
 | Avoid anti-patterns             | `docs/learnings/common-pitfalls.md`        | ~400        |
 | Optimize VRAM/tensor/UI         | `docs/learnings/performance.md`            | ~400        |
 | Wildcard engine work            | `docs/learnings/wildcard-engine.md`        | ~400        |

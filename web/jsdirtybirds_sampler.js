@@ -20,7 +20,8 @@ import {
   makeButton,
   makeSegment,
   makeTwoColumn,
-  makeInput,
+  makeFlyoutBtn as makeSharedFlyoutBtn,
+  makeSlider as makeSharedSlider,
   openPickerModal,
   openImageViewer,
 } from "./db_shared.js";
@@ -215,57 +216,6 @@ api.addEventListener(PICK_EVENT, (e) => {
 // Expose for the per-node inline controls (defined in onNodeCreated).
 const PICK = { sendPick, cancelPick, openPickerPopup, viewURL: _viewURL };
 
-// Compact list flyout (ported from the loader, reusing the global .db-flyout* CSS).
-function showListFlyout(title, names, current, onPick) {
-  document.querySelector(".db-flyout-overlay")?.remove();
-  document.querySelector(".db-flyout")?.remove();
-
-  const overlay = document.createElement("div");
-  overlay.className = "db-flyout-overlay";
-  const panel = document.createElement("div");
-  panel.className = "db-flyout";
-  panel.style.width = "min(320px, 90vw)";
-  panel.style.left = Math.max(20, (window.innerWidth - 320) / 2) + "px";
-  panel.style.top = Math.max(40, window.innerHeight / 2 - 220) + "px";
-
-  const header = document.createElement("div");
-  header.className = "db-flyout-header";
-  const titleEl = document.createElement("span");
-  titleEl.className = "db-flyout-title";
-  titleEl.textContent = title;
-  const closeBtn = makeButton("✕", null, "db-flyout-close");
-  header.append(titleEl, closeBtn);
-  panel.appendChild(header);
-
-  const list = document.createElement("div");
-  list.className = "db-flyout-list";
-  list.style.cssText = "max-height:60vh;overflow:auto;";
-  panel.appendChild(list);
-
-  (names || []).forEach((name) => {
-    const row = document.createElement("div");
-    row.className = "db-res-opt" + (name === current ? " db-selected" : "");
-    const label = document.createElement("span");
-    label.className = "db-res-opt-label";
-    label.textContent = name;
-    label.title = name;
-    row.appendChild(label);
-    row.addEventListener("click", () => {
-      close();
-      onPick(name);
-    });
-    list.appendChild(row);
-  });
-
-  function close() {
-    overlay.remove();
-    panel.remove();
-  }
-  closeBtn.addEventListener("click", close);
-  overlay.addEventListener("click", close);
-  document.body.append(overlay, panel);
-}
-
 app.registerExtension({
   name: "DirtyBirds.Sampler",
 
@@ -321,62 +271,6 @@ app.registerExtension({
         });
         widthEls.push(el);
       }
-      function makeFlyoutBtn(tag, getLabel, getValues, getCurrent, onPick) {
-        const row = document.createElement("div");
-        row.className = "db-sel-row";
-        row.style.cursor = "pointer";
-        const tagEl = document.createElement("span");
-        tagEl.className = "db-model-tag";
-        tagEl.textContent = tag;
-        const nameEl = document.createElement("span");
-        nameEl.className = "db-sel-name";
-        nameEl.style.flex = "1";
-        const caretEl = document.createElement("span");
-        caretEl.className = "db-model-caret";
-        caretEl.textContent = "▾";
-        row.append(tagEl, nameEl, caretEl);
-        function refresh() {
-          nameEl.textContent = getLabel();
-          nameEl.title = getLabel();
-        }
-        row.addEventListener("click", () => {
-          showListFlyout(tag, getValues(), getCurrent(), (v) => {
-            onPick(v);
-            refresh();
-            node.setDirtyCanvas(true);
-          });
-        });
-        refresh();
-        return { row, refresh };
-      }
-      function makeSlider(label, min, max, step, getVal, setVal, fmt) {
-        const row = document.createElement("div");
-        row.className = "db-slider-row";
-        row.style.justifyContent = "space-between";
-        const lbl = document.createElement("span");
-        lbl.className = "db-slider-label";
-        lbl.textContent = label;
-        const sl = makeInput("range", "", "db-sel-slider");
-        sl.min = String(min);
-        sl.max = String(max);
-        sl.step = String(step);
-        sl.style.flex = "1";
-        const val = document.createElement("span");
-        val.className = "db-sel-val";
-        function paint() {
-          const v = getVal();
-          sl.value = String(v);
-          val.textContent = fmt(v);
-        }
-        sl.addEventListener("input", () => {
-          setVal(parseFloat(sl.value));
-          val.textContent = fmt(getVal());
-        });
-        paint();
-        row.append(lbl, sl, val);
-        return { row, paint };
-      }
-
       // ── hidden native widgets ─────────────────────────────────────────────
       const samplerWidget = hideWidget("sampler_name");
       const schedulerWidget = hideWidget("scheduler");
@@ -390,24 +284,22 @@ app.registerExtension({
       // ── 1. THE METHOD — buttons left | splitter | sliders right ───────────
       addTitle("db_methodlabel", "The Method");
 
-      const samplerBtn = makeFlyoutBtn(
-        "SMPL",
-        () => samplerWidget?.value ?? "—",
-        () => samplerWidget?.options?.values || [],
-        () => samplerWidget?.value,
-        (v) => {
+      const samplerBtn = makeSharedFlyoutBtn(node, "SMPL", {
+        getLabel: () => samplerWidget?.value ?? "—",
+        getValues: () => samplerWidget?.options?.values || [],
+        getCurrent: () => samplerWidget?.value,
+        onPick: (v) => {
           if (samplerWidget) samplerWidget.value = v;
         },
-      );
-      const schedulerBtn = makeFlyoutBtn(
-        "SCHD",
-        () => schedulerWidget?.value ?? "—",
-        () => schedulerWidget?.options?.values || [],
-        () => schedulerWidget?.value,
-        (v) => {
+      });
+      const schedulerBtn = makeSharedFlyoutBtn(node, "SCHD", {
+        getLabel: () => schedulerWidget?.value ?? "—",
+        getValues: () => schedulerWidget?.options?.values || [],
+        getCurrent: () => schedulerWidget?.value,
+        onPick: (v) => {
           if (schedulerWidget) schedulerWidget.value = v;
         },
-      );
+      });
 
       // Noise: 3-segment toggle (CPU / CPU+GPU / GPU) instead of a slider.
       const noise = (() => {
@@ -437,7 +329,7 @@ app.registerExtension({
         row.append(seg);
         return { row, paint };
       })();
-      const steps = makeSlider(
+      const steps = makeSharedSlider(
         "Steps",
         1,
         100,
@@ -448,7 +340,7 @@ app.registerExtension({
         },
         (v) => String(Math.round(v)),
       );
-      const cfg = makeSlider(
+      const cfg = makeSharedSlider(
         "CFG",
         0,
         20,
@@ -713,7 +605,7 @@ app.registerExtension({
       widthEls.push(outputControls);
 
       // Picker timeout — how long a blocking pick waits before sending no images.
-      const pickTimeout = makeSlider(
+      const pickTimeout = makeSharedSlider(
         "Pick Timeout",
         5,
         600,
@@ -873,47 +765,6 @@ app.registerExtension({
           ? `${n} selected · click to keep`
           : "Click images to keep";
       }
-      function inlineCard(info, i) {
-        const card = document.createElement("div");
-        card.className =
-          "db-pick-card" + (node._dbSel.has(i) ? " db-pick-sel" : "");
-        const img = document.createElement("img");
-        // Build /view URL directly (same construction as _dbRenderImages, which
-        // renders reliably) rather than routing through api.apiURL.
-        const q = `filename=${encodeURIComponent(info.filename || "")}&subfolder=${encodeURIComponent(info.subfolder || "")}&type=${encodeURIComponent(info.type || "temp")}`;
-        img.src = `/view?${q}`;
-        img.onload = syncImgH;
-        img.onerror = () => {
-          console.error("[DirtyBirds] picker image failed:", img.src, info);
-        };
-        const badge = document.createElement("span");
-        badge.className = "db-pick-badge";
-        badge.textContent = "#" + i;
-        const check = document.createElement("span");
-        check.className = "db-pick-check";
-        check.textContent = "✓";
-        card.append(img, badge, check);
-        const dims = dimsLabel(info);
-        if (dims) {
-          const d = document.createElement("span");
-          d.className = "db-pick-dims";
-          d.textContent = dims;
-          card.appendChild(d);
-        }
-        card.addEventListener("click", () => {
-          const sel = node._dbSel;
-          if (sel.has(i)) {
-            sel.delete(i);
-            card.classList.remove("db-pick-sel");
-          } else {
-            sel.add(i);
-            card.classList.add("db-pick-sel");
-          }
-          inlineStatus();
-        });
-        return card;
-      }
-
       // Pick start: keep the node compact and open the image picker as a
       // standalone modal, avoiding canvas/DOM widget layout conflicts.
       node._dbStartPick = (token, images) => {

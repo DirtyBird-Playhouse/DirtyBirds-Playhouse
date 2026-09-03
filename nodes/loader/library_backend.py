@@ -1,8 +1,6 @@
 import os
-import re
 import json
 import struct
-import hashlib
 import logging
 import asyncio
 import urllib.request
@@ -10,6 +8,18 @@ import urllib.parse
 import folder_paths
 from aiohttp import web
 from server import PromptServer
+
+from .civitai_client import (
+    api_get as _civitai_api_get,  # noqa: F401 - compatibility facade
+    download_file as _download_file,
+    lookup_by_hash as _civitai_by_hash,
+    model_url as _civitai_url,
+    parse_ids as _parse_civitai_ids,  # noqa: F401 - compatibility facade
+    resolve_download as _resolve_download,
+    sha256_file as _sha256,
+    stream_download as _stream_download,
+)
+from .library_store import JsonStore
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +39,9 @@ _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 # ---------------------------------------------------------------------------
 
 
-def _load_settings():
-    if os.path.exists(_SETTINGS_FILE):
-        try:
-            with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def _save_settings(s):
-    try:
-        with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(s, f, indent=2)
-    except Exception as e:
-        logger.warning(f"[DirtyBirds] Failed to save settings: {e}")
+_settings_store = JsonStore(_SETTINGS_FILE, logger, "Failed to save settings")
+_load_settings = _settings_store.load
+_save_settings = _settings_store.save
 
 
 # ---------------------------------------------------------------------------
@@ -52,22 +49,9 @@ def _save_settings(s):
 # ---------------------------------------------------------------------------
 
 
-def _load_cache():
-    if os.path.exists(_CACHE_FILE):
-        try:
-            with open(_CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def _save_cache(cache):
-    try:
-        with open(_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2)
-    except Exception as e:
-        logger.warning(f"[DirtyBirds] Failed to save lora cache: {e}")
+_cache_store = JsonStore(_CACHE_FILE, logger, "Failed to save lora cache")
+_load_cache = _cache_store.load
+_save_cache = _cache_store.save
 
 
 _meta_cache = _load_cache()
@@ -293,66 +277,6 @@ def _lm_cache_lookup(prefix, name):
     except Exception as e:
         logger.debug(f"[DirtyBirds] LM cache lookup failed for {prefix}/{name}: {e}")
         return None
-
-
-# ---------------------------------------------------------------------------
-# SHA-256 (used for Civitai lookup)
-# ---------------------------------------------------------------------------
-
-
-def _sha256(path, chunk=65536):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            buf = f.read(chunk)
-            if not buf:
-                break
-            h.update(buf)
-    return h.hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Civitai lookup
-# ---------------------------------------------------------------------------
-
-
-def _civitai_by_hash(sha256):
-    url = f"https://civitai.com/api/v1/model-versions/by-hash/{sha256}"
-    try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "DirtyBirds-Playhouse/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
-    except Exception as e:
-        logger.debug(f"[DirtyBirds] Civitai lookup failed ({sha256[:8]}...): {e}")
-        return None
-
-
-def _civitai_url(model_id, version_id=None, nsfw=False):
-    """Build a Civitai model page URL. Mature models now live on civitai.red."""
-    if not model_id:
-        return ""
-    domain = "civitai.red" if nsfw else "civitai.com"
-    url = f"https://{domain}/models/{model_id}"
-    if version_id:
-        url += f"?modelVersionId={version_id}"
-    return url
-
-
-def _download_file(url, dest):
-    try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "DirtyBirds-Playhouse/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            with open(dest, "wb") as f:
-                f.write(resp.read())
-        return True
-    except Exception as e:
-        logger.debug(f"[DirtyBirds] Download failed {url}: {e}")
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1093,94 +1017,6 @@ def _list_subfolders(asset):
     except Exception as e:
         logger.debug("[DirtyBirds] subfolder scan failed for %s: %s", asset, e)
     return sorted(folders, key=lambda s: (s != "", s.lower()))
-
-
-def _civitai_api_get(url, token=None):
-    headers = {"User-Agent": "DirtyBirds-Playhouse/1.0"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read())
-
-
-def _parse_civitai_ids(url):
-    """Extract (model_id, version_id) from a civitai.com / civitai.red URL."""
-    model_id = None
-    version_id = None
-    m = re.search(r"/models/(\d+)", url)
-    if m:
-        model_id = m.group(1)
-    m = re.search(r"[?&]modelVersionId=(\d+)", url)
-    if m:
-        version_id = m.group(1)
-    # Direct API download URL: /api/download/models/{versionId}
-    m = re.search(r"/api/download/models/(\d+)", url)
-    if m:
-        version_id = m.group(1)
-    return model_id, version_id
-
-
-def _resolve_download(url, token):
-    """Given a Civitai URL, return (download_url, filename, model_type, version_id)."""
-    model_id, version_id = _parse_civitai_ids(url)
-    if not model_id and not version_id:
-        raise ValueError("Could not find a model id in that URL")
-
-    if version_id:
-        ver = _civitai_api_get(
-            f"https://civitai.com/api/v1/model-versions/{version_id}", token
-        )
-    else:
-        model = _civitai_api_get(f"https://civitai.com/api/v1/models/{model_id}", token)
-        versions = model.get("modelVersions") or []
-        if not versions:
-            raise ValueError("Model has no downloadable versions")
-        ver = versions[0]
-        version_id = str(ver.get("id"))
-
-    model_type = (
-        (ver.get("model") or {}).get("type") or ""
-    ).lower()  # "lora" / "textualinversion" / ...
-
-    # Choose the primary file (or the first model-type file)
-    files = ver.get("files") or []
-    chosen = None
-    for f in files:
-        if f.get("primary"):
-            chosen = f
-            break
-    if not chosen and files:
-        chosen = files[0]
-    if not chosen:
-        raise ValueError("Version has no files")
-
-    download_url = (
-        chosen.get("downloadUrl")
-        or f"https://civitai.com/api/download/models/{version_id}"
-    )
-    filename = chosen.get("name") or f"model_{version_id}.safetensors"
-    return download_url, filename, model_type, version_id
-
-
-def _stream_download(url, dest, token, chunk=1 << 20):
-    headers = {"User-Agent": "DirtyBirds-Playhouse/1.0"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    tmp = dest + ".part"
-    req = urllib.request.Request(url, headers=headers)
-    total = 0
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        with open(tmp, "wb") as f:
-            while True:
-                buf = resp.read(chunk)
-                if not buf:
-                    break
-                f.write(buf)
-                total += len(buf)
-    os.replace(tmp, dest)
-    return total
 
 
 @PromptServer.instance.routes.get("/dirtybirds/folders")

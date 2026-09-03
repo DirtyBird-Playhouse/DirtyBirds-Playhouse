@@ -23,3 +23,7 @@ spandrel_extra_arches
 # to the canonical 512 template and inverse-warp paste-back, so GFPGAN /
 # CodeFormer restore angled faces without distorting eyes/mouth.
 facexlib
+
+# Local JoyCaption captioning (loaded lazily only when selected).
+accelerate
+bitsandbytes

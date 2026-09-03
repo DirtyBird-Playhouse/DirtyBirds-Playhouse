@@ -17,13 +17,11 @@ from server import PromptServer
 from aiohttp import web
 
 from ..utils.paths import pack_root, user_files_dir
+from .._openai_compat import clean_completion, list_models, resolve_first_model
 
 logger = logging.getLogger(__name__)
 
-# LM Studio commonly binds IPv4 only on Windows. Using ``localhost`` can try
-# ::1 first and make a healthy server look offline until the IPv6 attempt times
-# out, so use the loopback address explicitly.
-DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1"
+DEFAULT_ENDPOINT = "http://localhost:1234/v1"
 BACKEND_LABEL = "LM Studio"
 
 
@@ -94,15 +92,11 @@ def _load_system_prompt(prompt_file=""):
 
 
 def _resolve_lmstudio_model(endpoint):
-    endpoint = (endpoint or DEFAULT_ENDPOINT).strip()
-    url = endpoint.rstrip("/") + "/models"
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer lm-studio"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    for item in data.get("data", []):
-        if isinstance(item, dict) and item.get("id"):
-            return item["id"]
-    raise ValueError("LM Studio is running, but no served model was found")
+    return resolve_first_model(
+        endpoint,
+        default_endpoint=DEFAULT_ENDPOINT,
+        empty_message="LM Studio is running, but no served model was found",
+    )
 
 
 _MARK_POS_RE = re.compile(r"^\s*POSITIVE\s*:\s*", re.IGNORECASE | re.MULTILINE)
@@ -165,18 +159,7 @@ def _chat_completion(endpoint, payload, timeout=120):
     }
 
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
-
-
-def _clean_completion(content):
-    """Strip inline <think> blocks and surrounding code fences/whitespace."""
-    text = _THINK_RE.sub("", content or "").strip()
-    if text.startswith("```"):
-        # Drop a leading ```lang fence and the trailing ```.
-        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
-        if text.rstrip().endswith("```"):
-            text = text.rstrip()[:-3]
-    return text.strip()
+_clean_completion = clean_completion
 
 
 class DirtyBirdsPromptEnhance:
@@ -427,15 +410,11 @@ async def api_lm_models(request):
     endpoint = (request.rel_url.query.get("endpoint") or DEFAULT_ENDPOINT).strip()
     url = endpoint.rstrip("/") + "/models"
     try:
-        req = urllib.request.Request(url, headers={"Authorization": "Bearer lm-studio"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        ids = [
-            m.get("id")
-            for m in data.get("data", [])
-            if isinstance(m, dict) and m.get("id")
-        ]
-        return web.json_response({"models": ids})
+        return web.json_response({"models": list_models(endpoint)})
+    except urllib.error.URLError as e:
+        # LM Studio is optional. A local server that is not running is not a
+        # ComfyUI warning, including while an old browser page reloads.
+        return web.json_response({"models": [], "error": str(e)})
     except Exception as e:
         logger.warning("[DirtyBirds] lm-models fetch failed (%s): %s", url, e)
         return web.json_response({"models": [], "error": str(e)})

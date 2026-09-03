@@ -1052,7 +1052,10 @@
    the overlaid DOM panel should intercept the pointer. */
 .db-image-panel button,
 .db-image-panel input,
+.db-image-panel select,
+.db-image-panel textarea,
 .db-image-panel .db-collapsible-label,
+.db-image-panel .db-seg-opt,
 .db-image-panel .db-sel-row {
   pointer-events: auto;
 }
@@ -1806,41 +1809,6 @@
   height: 150px;
   object-fit: contain;
   background: #0d0d0f;
-}
-.db-pick-badge {
-  position: absolute;
-  top: 5px;
-  left: 5px;
-  font-size: 9px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.62);
-  color: #d6e6f2;
-  pointer-events: none;
-}
-.db-pick-check {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  background: #5acc8a;
-  color: #06210f;
-  opacity: 0;
-  transform: scale(0.6);
-  transition: all 0.12s ease;
-  pointer-events: none;
-}
-.db-pick-card.db-pick-sel .db-pick-check {
-  opacity: 1;
-  transform: scale(1);
 }
 .db-pick-dims {
   position: absolute;

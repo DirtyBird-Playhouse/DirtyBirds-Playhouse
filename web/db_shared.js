@@ -189,20 +189,6 @@ export function makeCollapsibleSectionLabel(
   };
 }
 
-// Register a collapsible section heading as a DOM widget.
-export function addCollapsibleTitle(node, name, text, options = {}, h = 30) {
-  const section = makeCollapsibleSectionLabel(text, options);
-  const reserved = reserveHeight(Math.max(h || 0, SECTION_LABEL_H));
-  section.label.style.cssText +=
-    "box-sizing:border-box;overflow:visible;padding:0;margin:0;";
-  section.widget = node.addDOMWidget(name, "customhtml", section.label, {
-    serialize: false,
-    height: reserved,
-    getMinHeight: () => reserved,
-  });
-  return section;
-}
-
 // Collapse a DOM widget without touching its value or serialization state.
 //
 // ComfyUI's frontend sizes DOM widgets through computeLayoutSize(), which
@@ -235,6 +221,13 @@ export function setDOMWidgetShown(node, widget, shown) {
 export function hideWidget(node, name) {
   const w = node.widgets?.find((w) => w.name === name);
   if (!w) return undefined;
+  // Recent LiteGraph builds can still paint native canvas widgets after their
+  // computed height is collapsed.  Every caller of hideWidget supplies a
+  // custom replacement UI, so suppress native drawing and hit-testing while
+  // leaving the widget in node.widgets for workflow serialization.
+  w.type = "hidden";
+  w.draw = () => {};
+  w.mouse = () => false;
   w.computeSize = () => [0, -4];
   w.getMinHeight = () => -4;
   w.computedHeight = 0;
@@ -266,11 +259,13 @@ export function hideWidget(node, name) {
   } else {
     w.serializeValue = () => w.value;
   }
-  w.options = { ...(w.options || {}), hidden: true };
   if (w.element?.style) w.element.style.display = "none";
   if (w.inputEl?.style) w.inputEl.style.display = "none";
-  if (typeof w.setHidden === "function") w.setHidden(true);
-  else if ("hidden" in w) w.hidden = true;
+  // Do not call ComfyUI's setHidden(true): current frontends can treat that as
+  // “do not serialize”. The UI replacement owns visibility; this backing
+  // widget must remain in the queued workflow payload after a refresh.
+  w.serialize = true;
+  if ("hidden" in w) w.hidden = false;
   return w;
 }
 

@@ -10,6 +10,8 @@
 
 import importlib.util
 import random
+import sys
+import types
 from pathlib import Path
 
 
@@ -113,7 +115,13 @@ def test_trigger_word_sets_are_kept_whole():
     ensure_comfy()
     root = Path(__file__).resolve().parents[1]
     path = root / "nodes" / "loader" / "library_backend.py"
-    spec = importlib.util.spec_from_file_location("db_library_backend", path)
+    package_name = "db_loader_backend_test"
+    package = types.ModuleType(package_name)
+    package.__path__ = [str(path.parent)]
+    sys.modules[package_name] = package
+    spec = importlib.util.spec_from_file_location(
+        f"{package_name}.library_backend", path
+    )
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
 

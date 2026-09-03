@@ -20,7 +20,6 @@ import {
   makeButton,
   makeTextarea,
   makeInput,
-  makeSlider,
   reserveHeight,
 } from "./db_shared.js";
 
@@ -49,7 +48,7 @@ const ENHANCE_RESPONSE_H = 90;
 const LM_STUDIO = {
   label: "LM Studio",
   tag: "LM",
-  endpoint: "http://127.0.0.1:1234/v1",
+  endpoint: "http://localhost:1234/v1",
 };
 
 function showPromptFlyout(title, prompts, current, onPick) {
@@ -184,8 +183,6 @@ app.registerExtension({
       const promptFileWidget = hideWidget("prompt_file");
 
       let promptOptions = [];
-      let lmStatusRequest = 0;
-      let lmStatusTimer = null;
 
       const panel = document.createElement("div");
       panel.className = "db-enhance-panel";
@@ -290,7 +287,7 @@ app.registerExtension({
         power.setAttribute("aria-pressed", on ? "true" : "false");
         powerText.textContent = on ? "On" : "Off";
         lmStatus.textContent = on
-          ? node._dbEnhanceLmStatus || `${LM_STUDIO.label}: checking`
+          ? node._dbEnhanceLmStatus || `${LM_STUDIO.label}: not checked`
           : "Prompt Enhance: off";
         lmStatus.dataset.tone = on ? node._dbEnhanceLmTone || "" : "off";
         promptRow.classList.toggle("db-disabled", !on);
@@ -423,51 +420,6 @@ app.registerExtension({
         refreshPromptRow();
       }
 
-      async function refreshLmStatus() {
-        if (!isEnabled()) {
-          paintPower();
-          return;
-        }
-        const info = LM_STUDIO;
-        const requestId = ++lmStatusRequest;
-        // Only show "checking" before the first result. Background probes must
-        // not replace a known-good state with a several-second loading flash.
-        if (!node._dbEnhanceLmStatus) {
-          node._dbEnhanceLmStatus = `${info.label}: checking`;
-          lmStatus.textContent = node._dbEnhanceLmStatus;
-          lmStatus.dataset.tone = "";
-        }
-        let data = null;
-        try {
-          const response = await fetch(
-            "/dirtybirds/lm-models?endpoint=" + encodeURIComponent(info.endpoint),
-            { cache: "no-store" },
-          );
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          data = await response.json();
-        } catch (error) {
-          data = { models: [], error: error?.message || String(error) };
-        }
-        // Node creation and workflow restoration can start overlapping probes.
-        // Never let an older, slower result replace the latest status.
-        if (requestId !== lmStatusRequest) return;
-        const models = data?.models || [];
-        if (models.length) {
-          node._dbEnhanceLmStatus = `${info.label}: ready`;
-          lmStatus.title = models[0];
-          node._dbEnhanceLmTone = "ok";
-        } else if (!data?.error) {
-          node._dbEnhanceLmStatus = `${info.label}: no model loaded`;
-          lmStatus.title = `LM Studio is reachable at ${info.endpoint}`;
-          node._dbEnhanceLmTone = "err";
-        } else {
-          node._dbEnhanceLmStatus = `${info.label}: offline`;
-          lmStatus.title = data?.error || `No model served at ${info.endpoint}`;
-          node._dbEnhanceLmTone = "err";
-        }
-        paintPower();
-      }
-
       promptRow.addEventListener("click", async () => {
         if (!isEnabled()) return;
         if (!promptOptions.length) await loadPromptOptions();
@@ -578,22 +530,9 @@ app.registerExtension({
       };
       node.resizable = true;
       node.min_height = 280;
-      node._dbEnhanceRestorePreferences = () => {
-        refreshLmStatus();
-      };
-
-      const previousOnRemoved = node.onRemoved;
-      node.onRemoved = function () {
-        if (lmStatusTimer) clearInterval(lmStatusTimer);
-        lmStatusTimer = null;
-        return previousOnRemoved?.apply(this, arguments);
-      };
+      node._dbEnhanceRestorePreferences = paintPower;
 
       loadPromptOptions();
-      refreshLmStatus();
-      // A temporary startup miss must not leave the node falsely offline for
-      // the rest of the session. Keep the indicator aligned with LM Studio.
-      lmStatusTimer = setInterval(refreshLmStatus, 10000);
       paintPower();
       node._dbEnhancePaintResponse();
       requestAnimationFrame(syncPanelH);

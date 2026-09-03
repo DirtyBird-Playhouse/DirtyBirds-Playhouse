@@ -16,6 +16,10 @@ import {
   nodeInnerW,
   makeButton,
   makeInput,
+  makeTextarea,
+  makeSelect,
+  makeSegment,
+  makeFlyoutBtn,
   reserveHeight,
 } from "./db_shared.js";
 
@@ -103,6 +107,21 @@ app.registerExtension({
       const resizeHeightWidget = hideNative(node, "resize_height");
       hideNative(node, "allow_upscale"); // legacy serialized workflows
       const sharpenWidget = hideNative(node, "sharpen");
+      const captionModeWidget = hideNative(node, "caption_mode");
+      const captionDirectoryWidget = hideNative(node, "caption_directory");
+      const captionApiKeyWidget = hideNative(node, "caption_api_key");
+      const captionProviderWidget = hideNative(node, "caption_provider");
+      const captionEndpointWidget = hideNative(node, "caption_endpoint");
+      const captionModelWidget = hideNative(node, "caption_model");
+      const captionQuantWidget = hideNative(node, "caption_quantization");
+      const captionUnloadWidget = hideNative(node, "caption_unload_after");
+      const captionPromptWidget = hideNative(node, "caption_prompt");
+      const captionSkipWidget = hideNative(node, "caption_skip_existing");
+      const captionCacheWidget = hideNative(node, "caption_use_cache");
+      const captionPromptTypeWidget = hideNative(node, "caption_prompt_type");
+      const captionOptionsWidget = hideNative(node, "caption_options");
+      const captionTemperatureWidget = hideNative(node, "caption_temperature");
+      const captionSystemPromptWidget = hideNative(node, "caption_system_prompt");
       // Numeric widgets (resize_max/width/height, sharpen strength, …) are
       // guarded against serializing "" centrally in db_shared's hideWidget.
 
@@ -490,6 +509,315 @@ app.registerExtension({
       resizeCol.append(resizeLabel, resizeToggle, sizeControls, resizeHint);
       toolsSplit.append(sharpenCol, toolsDivider, resizeCol);
 
+      // ── NVIDIA captioning ────────────────────────────────────────────────
+      const captionContent = document.createElement("div");
+      captionContent.className =
+        "db-collapsible-content db-image-caption-content";
+      captionContent.style.display = "none";
+
+      const captionModes = ["off", "single", "batch_folder"];
+      // Copy Sampler's full CPU / Both / GPU control structure, including its
+      // compact slider-row wrapper and flex sizing.
+      const captionModeRow = document.createElement("div");
+      captionModeRow.className = "db-slider-row";
+      const captionModeControl = makeSegment();
+      captionModeControl.style.flex = "1";
+      const captionModeButtons = new Map();
+      [["off", "Off"], ["single", "Single"], ["batch_folder", "Batch"]].forEach(([value, label]) => {
+        const button = document.createElement("div");
+        button.className = "db-seg-opt";
+        button.textContent = label;
+        button.addEventListener("click", () => {
+          if (captionModeWidget) captionModeWidget.value = value;
+          paintCaptionMode();
+        });
+        captionModeButtons.set(value, button);
+        captionModeControl.appendChild(button);
+      });
+      captionModeRow.append(captionModeControl);
+      const captionFields = document.createElement("div");
+      captionFields.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+
+      const captionDirectoryInput = makeInput();
+      captionDirectoryInput.type = "text";
+      captionDirectoryInput.className = "db-text-input";
+      captionDirectoryInput.placeholder = "Paste folder path containing images";
+      captionDirectoryInput.value = String(captionDirectoryWidget?.value || "");
+      captionDirectoryInput.addEventListener("input", () => {
+        if (captionDirectoryWidget)
+          captionDirectoryWidget.value = captionDirectoryInput.value;
+      });
+
+      const captionKeyInput = makeInput();
+      captionKeyInput.type = "password";
+      captionKeyInput.className = "db-text-input";
+      captionKeyInput.placeholder = "NVIDIA API key (or use NVIDIA_API_KEY)";
+      captionKeyInput.value = String(captionApiKeyWidget?.value || "");
+      captionKeyInput.addEventListener("input", () => {
+        if (captionApiKeyWidget) captionApiKeyWidget.value = captionKeyInput.value;
+      });
+
+      const captionEndpointInput = makeInput();
+      captionEndpointInput.type = "text";
+      captionEndpointInput.className = "db-text-input";
+      captionEndpointInput.placeholder = "http://host:port/v1";
+      captionEndpointInput.value = String(
+        captionEndpointWidget?.value || "http://127.0.0.1:8000/v1",
+      );
+      captionEndpointInput.addEventListener("input", () => {
+        if (captionEndpointWidget)
+          captionEndpointWidget.value = captionEndpointInput.value;
+      });
+      const captionProviderLabels = {
+        joycaption_local: "Local JoyCaption",
+        openai_host: "OpenAI-compatible host",
+        nvidia: "NVIDIA",
+      };
+      const captionProviderControl = makeFlyoutBtn(node, "MODEL", {
+        getValues: () => ["joycaption_local", "openai_host", "nvidia"],
+        getCurrent: () => String(captionProviderWidget?.value || "joycaption_local"),
+        displayFn: (value) => captionProviderLabels[value] || value,
+        onPick: (value) => setCaptionProvider(value),
+      });
+
+      const captionModelInput = makeInput();
+      captionModelInput.type = "text";
+      captionModelInput.className = "db-text-input";
+      captionModelInput.placeholder = "vision model ID";
+      captionModelInput.value = String(captionModelWidget?.value || "");
+      captionModelInput.addEventListener("input", () => {
+        if (captionModelWidget) captionModelWidget.value = captionModelInput.value;
+      });
+
+      const captionLocalOptions = document.createElement("div");
+      captionLocalOptions.className = "db-image-actions";
+      const captionQuantButton = makeButton();
+      const captionUnloadButton = makeButton();
+      for (const button of [captionQuantButton, captionUnloadButton])
+        button.className = "db-lib-btn db-lora-add-open-btn";
+      const captionQuants = ["4bit", "8bit", "bf16"];
+      function paintCaptionLocalOptions() {
+        captionQuantButton.textContent = `Precision: ${captionQuantWidget?.value || "4bit"}`;
+        captionUnloadButton.textContent = `Unload: ${captionUnloadWidget?.value ? "on" : "off"}`;
+      }
+      captionQuantButton.addEventListener("click", () => {
+        const current = String(captionQuantWidget?.value || "4bit");
+        const next = captionQuants[(captionQuants.indexOf(current) + 1) % captionQuants.length];
+        if (captionQuantWidget) captionQuantWidget.value = next;
+        paintCaptionLocalOptions();
+      });
+      captionUnloadButton.addEventListener("click", () => {
+        if (captionUnloadWidget) captionUnloadWidget.value = !captionUnloadWidget.value;
+        paintCaptionLocalOptions();
+      });
+      captionLocalOptions.append(captionQuantButton, captionUnloadButton);
+
+      const captionPromptInput = makeTextarea();
+      captionPromptInput.className = "db-script-textarea";
+      captionPromptInput.placeholder = "Write a custom caption style";
+      captionPromptInput.value = String(captionPromptWidget?.value || "");
+      captionPromptInput.style.cssText += "height:72px;min-height:72px;resize:vertical;";
+      captionPromptInput.addEventListener("input", () => {
+        if (captionPromptWidget) captionPromptWidget.value = captionPromptInput.value;
+      });
+      const captionSystemPromptInput = makeTextarea();
+      captionSystemPromptInput.className = "db-script-textarea";
+      captionSystemPromptInput.placeholder = "System prompt (optional)";
+      captionSystemPromptInput.value = String(captionSystemPromptWidget?.value || "");
+      captionSystemPromptInput.style.cssText += "height:48px;min-height:48px;resize:vertical;";
+      captionSystemPromptInput.addEventListener("input", () => {
+        if (captionSystemPromptWidget)
+          captionSystemPromptWidget.value = captionSystemPromptInput.value;
+      });
+      const captionSystemPromptContent = document.createElement("div");
+      captionSystemPromptContent.className = "db-collapsible-content";
+      captionSystemPromptContent.style.display = "none";
+      captionSystemPromptContent.append(captionSystemPromptInput);
+      let captionSystemPromptExpanded = false;
+      const captionSystemPromptSection = makeCollapsibleSectionLabel("System Prompt", {
+        expanded: false,
+        onChange: (expanded) => {
+          captionSystemPromptExpanded = expanded;
+          captionSystemPromptContent.style.display = expanded ? "flex" : "none";
+          requestAnimationFrame(() => {
+            node.setSize(node.computeSize());
+            node.setDirtyCanvas(true, true);
+          });
+        },
+      });
+
+      const promptTypes = [
+        ["descriptive", "Descriptive"],
+        ["natural_language", "Natural language"],
+        ["tags", "Tags"],
+        ["danbooru", "Danbooru tags"],
+        ["custom", "Custom"],
+      ];
+      const promptTypeLabels = Object.fromEntries(promptTypes);
+      const normalizePromptType = (value) =>
+        value === "detailed" ? "descriptive" : value === "booru" ? "danbooru" : value;
+      function paintCaptionPromptInput() {
+        const style = normalizePromptType(
+          String(captionStyleSelect?.value || captionPromptTypeWidget?.value || "descriptive"),
+        );
+        captionPromptInput.style.display = style === "custom" ? "block" : "none";
+      }
+      const captionPromptStyle = document.createElement("div");
+      captionPromptStyle.className = "db-slider-row";
+      const captionStyleLabel = document.createElement("span");
+      captionStyleLabel.className = "db-slider-label";
+      captionStyleLabel.textContent = "Style";
+      const captionStyleSelect = makeSelect("db-text-input db-inpaint-select");
+      promptTypes.forEach(([value, label]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        captionStyleSelect.appendChild(option);
+      });
+      const savedStyle = normalizePromptType(
+        String(captionPromptTypeWidget?.value || "descriptive"),
+      );
+      captionStyleSelect.value = promptTypeLabels[savedStyle]
+        ? savedStyle
+        : "descriptive";
+      captionStyleSelect.addEventListener("change", () => {
+        if (captionPromptTypeWidget)
+          captionPromptTypeWidget.value = captionStyleSelect.value;
+        paintCaptionPromptInput();
+        requestAnimationFrame(() => node.setSize(node.computeSize()));
+      });
+      captionPromptStyle.append(captionStyleLabel, captionStyleSelect);
+      paintCaptionPromptInput();
+
+      if (captionTemperatureWidget && Number(captionTemperatureWidget.value) < 0)
+        captionTemperatureWidget.value = 0.6;
+      const captionTemperature = makeSlider("Temperature", 0, 2, 0.05,
+        () => Number(captionTemperatureWidget?.value ?? 0.6),
+        (value) => { if (captionTemperatureWidget) captionTemperatureWidget.value = value; },
+        (value) => Number(value).toFixed(2));
+
+      const optionDefs = [
+        ["clothing", "Clothing", true], ["pose", "Pose", true],
+        ["background", "Background", true], ["camera_angle", "Camera angle", true],
+        ["lighting", "Lighting", true], ["age", "Age", true],
+        ["use_vulgar", "Use vulgar", false], ["nsfw", "NSFW", false],
+        ["hair_style", "Hair style", true],
+      ];
+      function readCaptionOptions() {
+        try { const value = JSON.parse(String(captionOptionsWidget?.value || "{}")); return value && typeof value === "object" ? value : {}; }
+        catch (_) { return {}; }
+      }
+      const captionOptionValues = {
+        ...Object.fromEntries(optionDefs.map(([key, , defaultValue]) => [key, defaultValue])),
+        ...readCaptionOptions(),
+      };
+      const captionOptionRows = [];
+      for (let index = 0; index < optionDefs.length; index += 2) {
+        const row = document.createElement("div");
+        row.className = "db-image-actions";
+        optionDefs.slice(index, index + 2).forEach(([key, label]) => {
+          const option = makeButton(label);
+          option.className = "db-seg-opt";
+          function paint() {
+            option.classList.toggle("db-seg-active", Boolean(captionOptionValues[key]));
+          }
+          option.addEventListener("click", () => {
+            captionOptionValues[key] = !captionOptionValues[key];
+            if (captionOptionsWidget)
+              captionOptionsWidget.value = JSON.stringify(captionOptionValues);
+            paint();
+          });
+          paint();
+          row.appendChild(option);
+        });
+        captionOptionRows.push(row);
+      }
+
+      const captionHint = document.createElement("div");
+      captionHint.className = "db-image-tool-hint";
+      captionHint.textContent =
+        "Batch mode captions every image in the folder and writes matching .txt sidecars";
+      // Captioning intentionally uses the same expanded two-column card layout
+      // as Generation Setup's Embeddings and LoRAs sections.
+      const captionSplit = document.createElement("div");
+      captionSplit.className = "db-generation-two-column";
+      const captionLeft = document.createElement("div");
+      captionLeft.className = "db-generation-card";
+      const captionRight = document.createElement("div");
+      captionRight.className = "db-generation-card";
+      const captionOptionsLabel = document.createElement("span");
+      captionOptionsLabel.className = "db-generation-card-label";
+      captionOptionsLabel.textContent = "Options";
+      const captionPromptLabel = document.createElement("span");
+      captionPromptLabel.className = "db-generation-card-label";
+      captionPromptLabel.textContent = "Prompt";
+      captionLeft.append(captionOptionsLabel, ...captionOptionRows);
+      captionRight.append(captionPromptLabel, captionPromptStyle, captionTemperature.row, captionPromptInput, captionSystemPromptSection.label, captionSystemPromptContent);
+      captionSplit.append(captionLeft, captionRight);
+      captionFields.append(
+        captionDirectoryInput,
+        captionProviderControl.row,
+        captionEndpointInput,
+        captionKeyInput,
+        captionModelInput,
+        captionLocalOptions,
+        captionSplit,
+        captionHint,
+      );
+      captionContent.append(captionModeRow, captionFields);
+
+      function paintCaptionProvider() {
+        const provider = String(
+          captionProviderWidget?.value || "joycaption_local",
+        );
+        const hosted = provider === "openai_host";
+        const local = provider === "joycaption_local";
+        captionEndpointInput.style.display = hosted ? "block" : "none";
+        captionKeyInput.style.display = local ? "none" : "block";
+        captionKeyInput.placeholder = hosted
+          ? "API key (optional for local hosts)"
+          : "NVIDIA API key (or use NVIDIA_API_KEY)";
+        captionLocalOptions.style.display = local ? "grid" : "none";
+        // Local JoyCaption has one supported model, so showing a model field
+        // implies a choice that does not exist. Remote backends retain it.
+        captionModelInput.style.display = local ? "none" : "block";
+      }
+      function setCaptionProvider(next) {
+        if (captionProviderWidget) captionProviderWidget.value = next;
+        if (next === "joycaption_local") {
+          captionModelInput.value =
+            "fancyfeast/llama-joycaption-beta-one-hf-llava";
+          if (captionModelWidget) captionModelWidget.value = captionModelInput.value;
+        } else if (next === "nvidia") {
+          captionModelInput.value = "meta/llama-3.2-11b-vision-instruct";
+          if (captionModelWidget) captionModelWidget.value = captionModelInput.value;
+        }
+        paintCaptionProvider();
+        syncPanelH();
+      }
+
+      function paintCaptionMode() {
+        const mode = String(captionModeWidget?.value || "off");
+        captionModeButtons.forEach((button, value) =>
+          button.classList.toggle("db-seg-active", value === mode),
+        );
+        captionFields.style.display = mode === "off" ? "none" : "flex";
+        captionDirectoryInput.style.display =
+          mode === "batch_folder" ? "block" : "none";
+        syncPanelH();
+      }
+
+      const captionSection = makeCollapsibleSectionLabel("Captioning", {
+        expanded: false,
+        onChange: (expanded) => {
+          captionContent.style.display = expanded ? "flex" : "none";
+          requestAnimationFrame(() => {
+            node.setSize(node.computeSize());
+            node.setDirtyCanvas(true, true);
+          });
+        },
+      });
+
       // ── Optional controls ─────────────────────────────────────────────────
       const optionalContent = document.createElement("div");
       optionalContent.className =
@@ -517,12 +845,24 @@ app.registerExtension({
         previewWrap,
         optionalSection.label,
         optionalContent,
+        captionSection.label,
+        captionContent,
       );
 
       node.addDOMWidget("db_image_tools_panel", "customhtml", panel, {
         serialize: false,
         getMinHeight: () => {
-          const controls = optionalSection.isExpanded() ? 330 : 132;
+          const controls =
+            (optionalSection.isExpanded() ? 330 : 132) +
+            (captionSection.isExpanded()
+              ? String(captionModeWidget?.value || "off") === "off"
+                ? 58
+                : 286 +
+                  (normalizePromptType(
+                    String(captionPromptTypeWidget?.value || "descriptive"),
+                  ) === "custom" ? 78 : 0) +
+                  (captionSystemPromptExpanded ? 58 : 0)
+              : 30);
           const preview =
             previewWrap.style.display === "none"
               ? 0
@@ -554,6 +894,9 @@ app.registerExtension({
       paintResizeWidth();
       paintResizeHeight();
       paintSharpen();
+      paintCaptionProvider();
+      paintCaptionLocalOptions();
+      paintCaptionMode();
       requestAnimationFrame(() => {
         hideStockWidgets();
         clearDefaultImageWidget(node);

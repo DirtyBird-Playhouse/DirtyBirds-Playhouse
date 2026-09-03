@@ -9,7 +9,6 @@ Outputs latent + decoded image with live preview in the node.
 import time
 import uuid
 import logging
-import threading
 
 import numpy as np
 import torch
@@ -22,6 +21,8 @@ import latent_preview
 from server import PromptServer
 from .._compare import save_preview
 from .text_overlay import add_text_overlay, should_bypass_picker
+from .batch_collation import collate_spatial_batch
+from .pick_state import PickState as _PickState
 from .._pipe_type import PIPE_INPUT, PIPE_TYPE
 from comfy.model_management import (
     InterruptProcessingException,
@@ -47,45 +48,6 @@ ROUTE = "/dirtybirds/sampler-pick"
 # On timeout we send NO images and stop the graph cleanly, rather than passing
 # an unreviewed batch downstream.
 PICK_TIMEOUT = 30
-
-
-class _PickState:
-    """Token-keyed pick requests, safe when more than one prompt is active."""
-
-    _PENDING = object()
-    _requests = {}
-    _lock = threading.Lock()
-
-    @classmethod
-    def start(cls, token):
-        with cls._lock:
-            cls._requests[str(token)] = cls._PENDING
-
-    @classmethod
-    def waiting(cls, token):
-        with cls._lock:
-            return cls._requests.get(str(token)) is cls._PENDING
-
-    @classmethod
-    def deliver(cls, token, selection):
-        key = str(token)
-        with cls._lock:
-            if cls._requests.get(key) is not cls._PENDING:
-                return False
-            clean = []
-            for item in selection or []:
-                try:
-                    clean.append(int(item))
-                except (TypeError, ValueError):
-                    continue
-            cls._requests[key] = clean
-            return True
-
-    @classmethod
-    def take(cls, token):
-        with cls._lock:
-            sel = cls._requests.pop(str(token), cls._PENDING)
-        return None if sel is cls._PENDING else sel
 
 
 @PromptServer.instance.routes.post(ROUTE)
@@ -302,7 +264,8 @@ class DirtyBirdsSampler:
             # keeps memory bounded vs. decoding the doubled latent at once).
             image_parts.append(vae.decode(samples_pass))
 
-        # Single "make batch" output carrying every requested pass.
+        # Single "make batch" output carrying every requested pass. These
+        # passes came from one latent, so their spatial shapes already match.
         samples = torch.cat(latent_parts, dim=0)
         image = torch.cat(image_parts, dim=0)
 
@@ -370,8 +333,11 @@ class DirtyBirdsSampler:
             latent_parts.append(samples)
             image_parts.append(image)
 
-        samples = torch.cat(latent_parts, dim=0)
-        image = torch.cat(image_parts, dim=0)
+        # Random resolution is resolved independently for each Cycler entry.
+        # Preserve every result without distortion by placing unlike sizes on
+        # the smallest common canvas before making the picker batch.
+        samples = collate_spatial_batch(latent_parts, layout="BCHW")
+        image = collate_spatial_batch(image_parts, layout="BHWC")
         latent_out = first_latent.copy()
         batch = image.shape[0]
 

@@ -24,6 +24,8 @@ import json
 from aiohttp import web
 from server import PromptServer
 
+from .._openai_compat import clean_completion, message_text, resolve_first_model
+
 logger = logging.getLogger(__name__)
 
 _AIBOORU_POST_URL = "https://aibooru.online/posts/{post_id}.json"
@@ -34,9 +36,6 @@ _AIBOORU_TAG_FIELDS = (
     "tag_string_artist",
     "tag_string_meta",
 )
-_THINK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
-
-
 def _aibooru_post_id(url):
     parsed = urllib.parse.urlparse((url or "").strip())
     host = parsed.netloc.lower()
@@ -114,31 +113,28 @@ def _fetch_image_data_uri(url, timeout=30, max_bytes=30 * 1024 * 1024):
     return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
 
 
-def _clean_completion(content):
-    text = _THINK_RE.sub("", content or "").strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
-        if text.rstrip().endswith("```"):
-            text = text.rstrip()[:-3]
-    return text.strip()
+_clean_completion = clean_completion
+
+
+def _message_text(message):
+    """Extract text from string or OpenAI-compatible multipart content."""
+    return message_text(message, reasoning_fallback=True)
 
 
 _DEFAULT_CAPTION_INSTRUCTION = (
     "Describe this image as comma-separated image-generation tags."
 )
 
+_DEFAULT_CAPTION_ENDPOINT = "http://127.0.0.1:8765/v1"
+
 
 def _resolve_lmstudio_model(endpoint):
     """First model LM Studio is serving, for captioning when none was named."""
-    endpoint = (endpoint or "http://localhost:1234/v1").strip()
-    url = endpoint.rstrip("/") + "/models"
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer lm-studio"})
-    with urllib.request.urlopen(req, timeout=10) as r:
-        data = json.loads(r.read().decode("utf-8"))
-    for item in data.get("data", []):
-        if isinstance(item, dict) and item.get("id"):
-            return item["id"]
-    raise ValueError("LM Studio is running, but no served model was found")
+    return resolve_first_model(
+        endpoint,
+        default_endpoint=_DEFAULT_CAPTION_ENDPOINT,
+        empty_message="LM Studio is running, but no served model was found",
+    )
 
 
 def _caption_data_uri_with_lmstudio(
@@ -152,7 +148,7 @@ def _caption_data_uri_with_lmstudio(
     to one (the root-relative /view handling in _fetch_image_data_uri, say)
     silently missed the other.
     """
-    endpoint = (endpoint or "http://localhost:1234/v1").strip()
+    endpoint = (endpoint or _DEFAULT_CAPTION_ENDPOINT).strip()
     model = (model or "").strip() or _resolve_lmstudio_model(endpoint)
     instruction = (instruction or _DEFAULT_CAPTION_INSTRUCTION).strip()
     if not str(data_uri or "").startswith("data:image/"):
@@ -194,8 +190,14 @@ def _caption_data_uri_with_lmstudio(
         except Exception:
             pass
         raise RuntimeError(f"LM Studio HTTP {e.code}: {detail or e.reason}") from None
-    msg = data["choices"][0].get("message", {})
-    return _clean_completion(msg.get("content") or msg.get("reasoning_content") or "")
+    choice = data["choices"][0]
+    text = _clean_completion(_message_text(choice.get("message", {})))
+    if not text:
+        finish = choice.get("finish_reason") or "unknown"
+        raise RuntimeError(
+            f"Caption model returned no text (finish_reason={finish})."
+        )
+    return text
 
 
 def _caption_url_with_lmstudio(
@@ -251,7 +253,7 @@ async def url_caption(request):
 
     source_url = request.rel_url.query.get("url", "").strip()
     model = request.rel_url.query.get("model", "").strip()
-    endpoint = request.rel_url.query.get("endpoint", "http://localhost:1234/v1").strip()
+    endpoint = request.rel_url.query.get("endpoint", _DEFAULT_CAPTION_ENDPOINT).strip()
     instruction = request.rel_url.query.get(
         "instruction",
         f"{_DEFAULT_CAPTION_INSTRUCTION} Output only the tags.",
@@ -287,7 +289,7 @@ async def image_caption(request):
 
     data_uri = str(data.get("image") or "").strip()
     model = str(data.get("model") or "").strip()
-    endpoint = str(data.get("endpoint") or "http://localhost:1234/v1").strip()
+    endpoint = str(data.get("endpoint") or _DEFAULT_CAPTION_ENDPOINT).strip()
     instruction = str(
         data.get("instruction", f"{_DEFAULT_CAPTION_INSTRUCTION} Output only the tags.")
     )

@@ -429,7 +429,7 @@ function field(label, control, valueElement = null) {
 
 // Centered "═ TITLE ▸ expand ═" heading — the same convention every other
 // DirtyBirds node uses for its optional sections (Prompt Enhance, Image Loader, Save
-// Prompt). Only the label markup is reused here, not `addCollapsibleTitle`:
+// Prompt). Only the label markup is reused here; the Loader keeps one DOM owner:
 // this node's sections stay plain children of the single owning panel widget,
 // with height driven by `state`/`applyLayout`, not a widget of their own.
 function section(title, key, state, applyLayout) {
